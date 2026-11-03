@@ -163,6 +163,24 @@ func TestDevSetupScriptWarnsWhenUnprovisionable(t *testing.T) {
 	}
 }
 
+// TestDevSetupScriptSubmodulePrePull pins the ci#756 submodule pre-pull: the
+// script must materialize the repo's submodules before the integration profile
+// set-up runs, guard the pull on a `.gitmodules` file so a submodule-absorbed
+// revision does not fail the sandbox, and degrade to the upstream discovery in
+// build_tools.sh when `git` is not present in the freshly-cloned image.
+func TestDevSetupScriptSubmodulePrePull(t *testing.T) {
+	script := DevSetupScript(DevSetupSpecForRepo("msgmate-io/open-chat-go"))
+	if !strings.Contains(script, "git submodule update --init --recursive") {
+		t.Fatalf("script must pre-pull the repository's submodules, got %q", script)
+	}
+	if !strings.Contains(script, `command -v git >/dev/null 2>&1`) {
+		t.Fatal("submodule pull must degrade when git is absent from the image")
+	}
+	if !strings.Contains(script, "submodule pull failed; continuing with upstream discovery") {
+		t.Fatal("a failed recursive submodule pull must warn and continue instead of failing the sandbox")
+	}
+}
+
 // TestDevSetupScriptIsValidShell parses every generated variant with the shell
 // it will actually run under. The set-up script is assembled from many string
 // fragments (quoting, `for` loops, `$(...)`), so a typo would only surface as an
@@ -228,6 +246,36 @@ func TestResolveDevSetupExplicit(t *testing.T) {
 	}
 	if _, ok := ResolveDevSetup(map[string]interface{}{DevSetupConfigKey: "rm -rf /"}); ok {
 		t.Fatal("values outside the profile charset must be rejected")
+	}
+
+	// The operator-provided escape hatch: a `setup_commands` list is parsed into
+	// SetupCommands and replaces the generated profile/submodule body verbatim
+	// (plus the marker). A non-empty list must win over the declared profile.
+	spec, ok = ResolveDevSetup(map[string]interface{}{
+		DevSetupConfigKey: map[string]interface{}{
+			"profile":        "full-android",
+			"submodules":     true,
+			"setup_commands": []interface{}{"command -v clang || sudo apt-get install -y clang", "make bootstrap"},
+		},
+	})
+	if !ok {
+		t.Fatal("map form with setup_commands must resolve a plan")
+	}
+	if len(spec.SetupCommands) != 2 {
+		t.Fatalf("setup_commands must carry the operator lines, got %#v", spec.SetupCommands)
+	}
+	script = DevSetupScript(spec)
+	if !strings.HasPrefix(script, "set -e") {
+		t.Fatal("script must remain fail-fast")
+	}
+	if !strings.Contains(script, "make bootstrap") {
+		t.Fatalf("script must render the setup_commands verbatim, got %q", script)
+	}
+	if strings.Contains(script, "prepare --profile") {
+		t.Fatalf("setup_commands must replace the generated profile body, got %q", script)
+	}
+	if !strings.Contains(script, "[ci#756 dev-setup]") {
+		t.Fatalf("script must carry the ci#756 marker, got %q", script)
 	}
 }
 

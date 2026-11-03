@@ -126,6 +126,33 @@ func TestAutoConsolidationKillSwitchRollsTheDefaultBack(t *testing.T) {
 	}
 }
 
+// TestDefaultAutoConsolidationTargetsDevTrunk pins the ci#833/ci#931 integration
+// trunk: a consolidation PR defaults to `dev` with only the lightweight
+// verification labels. The heavy post-deploy suites belong to the automatic
+// `dev` -> `main` promotion PR, never to a consolidation PR (a regression here
+// makes every feature PR burn the sandbox/AI suites again).
+func TestDefaultAutoConsolidationTargetsDevTrunk(t *testing.T) {
+	if DefaultAutoConsolidationBase != "dev" {
+		t.Fatalf("DefaultAutoConsolidationBase = %q, want \"dev\" (the integration trunk)", DefaultAutoConsolidationBase)
+	}
+	allowed := map[string]bool{"test": true, "e2e": true}
+	if len(DefaultAutoConsolidationLabels) != len(allowed) {
+		t.Fatalf("DefaultAutoConsolidationLabels = %v, want exactly %v", DefaultAutoConsolidationLabels, []string{"test", "e2e"})
+	}
+	heavy := map[string]bool{
+		"deploy": true, "sandbox-test": true, "build": true,
+		"test-core-only": true, "ai-test-mock": true, "ai-test-real": true,
+	}
+	for _, label := range DefaultAutoConsolidationLabels {
+		if !allowed[label] {
+			t.Fatalf("DefaultAutoConsolidationLabels contains %q; only test/e2e belong on a dev-targeted consolidation PR", label)
+		}
+		if heavy[label] {
+			t.Fatalf("DefaultAutoConsolidationLabels contains the heavy label %q; it belongs on the dev -> main promotion PR", label)
+		}
+	}
+}
+
 // TestResolvePolicyFromConfigDefaultsOn guards resolution: absent key -> default
 // ON (unless the deployment kill switch is set), map form -> overridden fields.
 func TestResolvePolicyFromConfigDefaultsOn(t *testing.T) {
@@ -135,7 +162,7 @@ func TestResolvePolicyFromConfigDefaultsOn(t *testing.T) {
 	if !policy.Enabled {
 		t.Fatalf("expected the default policy to be enabled")
 	}
-	if policy.Threshold != 1 || policy.Base != "main" || !policy.RequireGreen || !policy.RequireIssueLink || !policy.OneOpenAtATime {
+	if policy.Threshold != 1 || policy.Base != "dev" || !policy.RequireGreen || !policy.RequireIssueLink || !policy.OneOpenAtATime {
 		t.Fatalf("unexpected default policy: %#v", policy)
 	}
 

@@ -419,12 +419,7 @@ func NewPortAllocator(policy NetworkPolicy) (*PortAllocator, error) {
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
-	slots := (MaxAllocatablePort - policy.PortBase + 1) / policy.PortBlockSize
-	if slots > policy.MaxWorkspaces {
-		// The workspace bound of the ci#546 resource-contention policy, not the
-		// port range, is the effective ceiling.
-		slots = policy.MaxWorkspaces
-	}
+	slots := policySlots(policy)
 	if slots <= 0 {
 		return nil, fmt.Errorf("%w: port base %d and block size %d leave no block",
 			ErrInvalidNetworkPolicy, policy.PortBase, policy.PortBlockSize)

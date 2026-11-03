@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // requiredChecksServer stubs the three endpoints the required-check resolution
@@ -246,5 +247,283 @@ func TestRequiredStatusChecksCached(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("expected one ruleset read, got %d", requests)
+	}
+}
+
+// TestParseRunIDAndCheckTime guards the ordering inputs: the workflow-run id is
+// parsed out of `details_url` and a malformed/absent timestamp degrades to the
+// zero time instead of failing the resolution.
+func TestParseRunIDAndCheckTime(t *testing.T) {
+	if got := parseRunID("https://github.com/o/n/actions/runs/39892668623/job/120216647618"); got != 39892668623 {
+		t.Fatalf("run id = %d, want 39892668623", got)
+	}
+	for _, url := range []string{"", "https://github.com/o/n/runs/120215871330"} {
+		if got := parseRunID(url); got != 0 {
+			t.Fatalf("parseRunID(%q) = %d, want 0", url, got)
+		}
+	}
+	if !parseCheckTime("2026-10-23T03:03:29Z").Equal(time.Date(2026, 10, 23, 3, 3, 29, 0, time.UTC)) {
+		t.Fatal("RFC3339 timestamp was not parsed")
+	}
+	if !parseCheckTime("not-a-time").IsZero() || !parseCheckTime("").IsZero() {
+		t.Fatal("an unusable timestamp must degrade to the zero time")
+	}
+}
+
+// TestNewestCheckRunsKeepsTheNewestInstancePerContext is the ci#847 core case:
+// after a supersede, GitHub reports the dead run as CANCELLED *next to* the green
+// replacement of the same context. Branch protection evaluates only the newest
+// instance, so the resolver must collapse the rollup the same way - otherwise a
+// green consolidation PR is vetoed forever by its own superseded run.
+func TestNewestCheckRunsKeepsTheNewestInstancePerContext(t *testing.T) {
+	// Verbatim shape observed on PR #1057: the superseded run finished (in wall
+	// time) before the successful replacement even started.
+	facts := []checkRunFact{
+		{Name: "Run PR CI Tests and Deployments", Status: "completed", Conclusion: "cancelled", IntegrationID: 15368,
+			StartedAt: parseCheckTime("2026-10-23T03:00:14Z"), CompletedAt: parseCheckTime("2026-10-23T03:00:34Z"), RunID: 39892624806, CheckRunID: 120215677969},
+		{Name: "Run PR CI Tests and Deployments", Status: "completed", Conclusion: "success", IntegrationID: 15368,
+			StartedAt: parseCheckTime("2026-10-23T03:03:29Z"), CompletedAt: parseCheckTime("2026-10-23T03:03:49Z"), RunID: 39892668623, CheckRunID: 120216647618},
+	}
+	kept := newestCheckRuns(facts)
+	if len(kept) != 1 {
+		t.Fatalf("expected one instance per context, got %d: %#v", len(kept), kept)
+	}
+	if kept[0].Conclusion != "success" {
+		t.Fatalf("kept the superseded run: %#v", kept[0])
+	}
+}
+
+// TestNewestCheckRunsIgnoresCompleteBeforeStartAndFallsBackToRunID guards the
+// two ordering subtleties: a skipped run reports completed_at *before*
+// started_at, so the later of the two orders it, and when the timestamps are
+// identical the workflow-run / check-run id breaks the tie.
+func TestNewestCheckRunsIgnoresCompleteBeforeStartAndFallsBackToRunID(t *testing.T) {
+	skipped := checkRunFact{Name: "Update PR Comment After Release", Status: "completed", Conclusion: "skipped",
+		StartedAt: parseCheckTime("2026-10-23T03:00:12Z"), CompletedAt: parseCheckTime("2026-10-23T03:00:11Z"), RunID: 39892624806}
+	replacement := checkRunFact{Name: "Update PR Comment After Release", Status: "completed", Conclusion: "success",
+		StartedAt: parseCheckTime("2026-10-23T03:03:26Z"), CompletedAt: parseCheckTime("2026-10-23T03:03:26Z"), RunID: 39892668623}
+	if kept := newestCheckRuns([]checkRunFact{skipped, replacement}); len(kept) != 1 || kept[0].Conclusion != "success" {
+		t.Fatalf("a complete-before-start run was mis-ranked: %#v", kept)
+	}
+
+	stamp := parseCheckTime("2026-10-23T03:00:00Z")
+	older := checkRunFact{Name: "CodeQL", Status: "completed", Conclusion: "failure", StartedAt: stamp, CompletedAt: stamp, RunID: 100, CheckRunID: 7}
+	newer := checkRunFact{Name: "CodeQL", Status: "completed", Conclusion: "success", StartedAt: stamp, CompletedAt: stamp, RunID: 200, CheckRunID: 8}
+	if kept := newestCheckRuns([]checkRunFact{older, newer}); len(kept) != 1 || kept[0].RunID != 200 {
+		t.Fatalf("identical timestamps must fall back to the run id: %#v", kept)
+	}
+
+	// Distinct contexts and distinct apps of the same name stay separate.
+	mixed := newestCheckRuns([]checkRunFact{
+		{Name: "CodeQL", IntegrationID: 1, Status: "completed", Conclusion: "success"},
+		{Name: "CodeQL", IntegrationID: 2, Status: "completed", Conclusion: "failure"},
+		{Name: "Pin Freshness Gate", IntegrationID: 1, Status: "completed", Conclusion: "success"},
+	})
+	if len(mixed) != 3 {
+		t.Fatalf("distinct context/app pairs must not be merged: %#v", mixed)
+	}
+}
+
+// TestBranchCheckStatesPrefersNewestRequiredContextInstance is the same ci#847
+// case end to end: the required context is present twice (superseded CANCELLED
+// + green replacement) and the branch must resolve to success with no failing
+// required context named.
+func TestBranchCheckStatesPrefersNewestRequiredContextInstance(t *testing.T) {
+	checkRuns := `{"check_runs":[
+		{"id":11,"name":"Run PR CI Tests and Deployments","status":"completed","conclusion":"cancelled","started_at":"2026-10-23T03:00:14Z","completed_at":"2026-10-23T03:00:34Z","details_url":"https://github.com/o/n/actions/runs/39892624806/job/120215677969","app":{"id":15368}},
+		{"id":12,"name":"Run PR CI Tests and Deployments","status":"completed","conclusion":"success","started_at":"2026-10-23T03:03:29Z","completed_at":"2026-10-23T03:03:49Z","details_url":"https://github.com/o/n/actions/runs/39892668623/job/120216647618","app":{"id":15368}}]}`
+
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, checkRuns, `{"state":"failure","statuses":[]}`))
+	states, err := client.branchCheckStates(t.Context(), "main", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if states.RequiredState != "success" {
+		t.Fatalf("required state = %q, want success: the superseded CANCELLED run must not veto its green replacement (%v)", states.RequiredState, states.FailingRequired)
+	}
+	if len(states.FailingRequired) != 0 {
+		t.Fatalf("no required context is red, got %v", states.FailingRequired)
+	}
+	if len(states.Informational) != 0 {
+		t.Fatalf("the superseded instance is not a context of its own, got %v", states.Informational)
+	}
+
+	runs, statuses, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := combinedStateFromFacts(runs, statuses); got != "success" {
+		t.Fatalf("combined state = %q, want success once the rollup is normalized", got)
+	}
+}
+
+// TestNewestCheckRunsKeepsARealCancelledFailure guards the safety side of
+// ci#847: only a *superseded* instance is dropped. When the newest instance of a
+// context is itself cancelled/failed, the context stays red.
+func TestNewestCheckRunsKeepsARealCancelledFailure(t *testing.T) {
+	facts := []checkRunFact{
+		{Name: "Full Suite Gate", Status: "completed", Conclusion: "success",
+			StartedAt: parseCheckTime("2026-10-23T03:00:00Z"), RunID: 1},
+		{Name: "Full Suite Gate", Status: "completed", Conclusion: "cancelled",
+			StartedAt: parseCheckTime("2026-10-23T04:00:00Z"), RunID: 2},
+	}
+	kept := newestCheckRuns(facts)
+	if len(kept) != 1 || kept[0].Conclusion != "cancelled" {
+		t.Fatalf("the newest instance is the cancelled one: %#v", kept)
+	}
+	if got := combinedStateFromFacts(kept, nil); got != "failure" {
+		t.Fatalf("combined state = %q, want failure", got)
+	}
+}
+
+// TestStalePendingCombinedStatusIsNotABlock is the ci#928 incident: right after
+// a squash merge the combined-status endpoint can report `state: pending` with
+// an empty `statuses` list for a commit that has no commit statuses at all,
+// while `/check-runs` correctly returns no runs. A required context that has
+// never reported via a legacy status is simply un-reported — it stays pending
+// until a check actually exists to be pending — and the stale aggregate
+// `pending` must never read as a *pending check* or a pending required context.
+func TestStalePendingCombinedStatusIsNotABlock(t *testing.T) {
+	// The exact ci#928 shape: `pending` with no statuses, no check runs.
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	runs, facts, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want none", len(runs))
+	}
+	// The aggregate over all checks must read as unknown (no checks at all),
+	// never pending.
+	if got := combinedStateFromFacts(runs, facts); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown (a commit with no checks is not pending)", got)
+	}
+	// The required-context resolution must not turn the stale pending report
+	// into a pending required check: a context that has never reported is
+	// un-reported (not-found).
+	required := []RequiredCheck{{Context: "files-sync"}}
+	if _, found := requiredContextState(required[0], runs, facts); found {
+		t.Fatal("required context resolved from the stale empty status list; want not-found")
+	}
+}
+
+// TestCombinedEmptyNeverVetoesARedContext guards the safety side of ci#928: the
+// empty-status sentinel is dropped only when there is genuinely nothing else. A
+// real red legacy status still wins, and a commit whose combined-status list is
+// empty but that has real statuses constructed by hand is unaffected.
+func TestCombinedEmptyNeverVetoesARedContext(t *testing.T) {
+	// A real red legacy status next to the empty report: the red status decides.
+	statuses := []statusFact{
+		{Context: "private-sandbox-tests", State: "failure"},
+		{CombinedEmpty: true},
+	}
+	if got := combinedStateFromFacts(nil, statuses); got != "failure" {
+		t.Fatalf("combined state = %q, want failure", got)
+	}
+	if got := combinedStateFromFacts(nil, []statusFact{{CombinedEmpty: true}}); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+	// A hand-built empty fact (no context, no state, no sentinel) is not a real
+	// status either: the aggregate collapses to unknown, never pending.
+	if got := combinedStateFromFacts(nil, []statusFact{{Context: "", State: ""}}); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+}
+
+// TestRealPendingRequiredContextStillHolds is the ci#928 safety case: the empty
+// sentinel is dropped, but a genuine pending legacy status still reports the
+// required context as pending. The stale aggregate must not be able to *clear*
+// a real pending status.
+func TestRealPendingRequiredContextStillHolds(t *testing.T) {
+	statuses := []statusFact{
+		{Context: "files-sync", State: "pending"},
+		{CombinedEmpty: true},
+	}
+	state, found := requiredContextState(RequiredCheck{Context: "files-sync"}, nil, statuses)
+	if !found || state != "pending" {
+		t.Fatalf("required context state = %q found:%v, want pending/found (a real pending status survives the sentinel drop)", state, found)
+	}
+	state, failing := evaluateRequiredContexts([]RequiredCheck{{Context: "files-sync"}}, nil, statuses)
+	if state != "pending" || len(failing) != 1 || failing[0] != "files-sync" {
+		t.Fatalf("required state = %q failing:%v, want pending with the context reported", state, failing)
+	}
+}
+
+// TestStalePendingAggregateIsNotAPendingStatus guards the case the ci#928
+// follow-up closes: the combined-status endpoint reports a **stale pending
+// aggregate** (`state: pending`) *alongside* a real status. The aggregate never
+// names a check, so a required context that is pending only through the stale
+// aggregate stays not-found — it must not read as a pending required check.
+func TestStalePendingAggregateIsNotAPendingStatus(t *testing.T) {
+	statuses := []statusFact{
+		{Context: "files-sync", State: "success"},
+		{CombinedEmpty: true},
+	}
+	// The empty report is dropped even when a real (non-pending) status is
+	// present: it must not flip a green context into a stale pending block.
+	if state, found := requiredContextState(RequiredCheck{Context: "files-sync"}, nil, statuses); !found || state != "success" {
+		t.Fatalf("required context state = %q found:%v, want success", state, found)
+	}
+	state, failing := evaluateRequiredContexts([]RequiredCheck{{Context: "files-sync"}}, nil, statuses)
+	if state != "success" || len(failing) != 0 {
+		t.Fatalf("required state = %q failing:%v, want success with none failing", state, failing)
+	}
+	// A context that is pending only through the stale aggregate is not-found
+	// (un-reported), never a pending required check.
+	state, failing = evaluateRequiredContexts([]RequiredCheck{{Context: "other-sync"}}, nil, statuses)
+	if state != "pending" || len(failing) != 1 || failing[0] != "other-sync" {
+		t.Fatalf("required state = %q failing:%v, want pending (the ruleset names it but no check exists)", state, failing)
+	}
+}
+
+// TestJustMergedNoChecksCommitIsNotPending is the end-to-end case of ci#928 on
+// the integration trunk (tracked by the dev-tracker PR): after a squash merge
+// the base-branch commit is reported `pending` by /commits/{sha}/status with an
+// empty statuses list while /check-runs returns nothing. commitChecks records
+// the empty report as CombinedEmpty, the combined aggregate reads unknown
+// (never a stale pending block), and once the commit is scanned as
+// authoritatively merged the required context resolves green so the branch
+// stays mergeable.
+func TestJustMergedNoChecksCommitIsNotPending(t *testing.T) {
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	runs, statuses, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want none", len(runs))
+	}
+	empty := 0
+	for _, status := range statuses {
+		if status.CombinedEmpty {
+			empty++
+			continue
+		}
+		t.Fatalf("unexpected real status %+#v on a no-checks commit", status)
+	}
+	if empty != 1 {
+		t.Fatalf("CombinedEmpty sentinel = %d, want exactly 1 (the empty /status report)", empty)
+	}
+	// The combined aggregate over a commit with no checks is unknown, never a
+	// stale pending block.
+	if got := combinedStateFromFacts(runs, statuses); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+	// The commit is authoritatively merged (the incident's `/pulls` read), so
+	// the required context scanned as merged resolves green and the branch
+	// stays mergeable.
+	required := []RequiredCheck{{Context: "Run PR CI Tests and Deployments"}}
+	if state, found := requiredContextState(required[0], runs, []statusFact{
+		{Context: "Run PR CI Tests and Deployments", State: "success"},
+		{CombinedEmpty: true},
+	}); !found || state != "success" {
+		t.Fatalf("merged required context state = %q found:%v, want success/found", state, found)
+	}
+	state, failing := evaluateRequiredContexts(required, runs, []statusFact{
+		{Context: "Run PR CI Tests and Deployments", State: "success"},
+		{CombinedEmpty: true},
+	})
+	if state != "success" || len(failing) != 0 {
+		t.Fatalf("merged required state = %q failing:%v, want success with none failing", state, failing)
 	}
 }

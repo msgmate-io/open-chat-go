@@ -110,3 +110,29 @@ func TestRunPullRequestReviewNeedsToken(t *testing.T) {
 		t.Fatal("expected an error when no github token is configured")
 	}
 }
+
+// TestCI927ReviewPublishesAsPullRequestReview is the ci#927 (parent ci#622)
+// self-check pin: the review bot's durable output is a pull request review on
+// the fixture PR, never an issue comment. The self-check dispatch for the
+// `review` role must attach a `github_pull_request_review` post action with an
+// explicit verdict; this test pins the endpoint and the explicit-event
+// contract that dispatch depends on.
+func TestCI927ReviewPublishesAsPullRequestReview(t *testing.T) {
+	if got := NormalizeReviewEvent(""); got != reviewEventComment {
+		t.Fatalf("NormalizeReviewEvent(\"\") = %q, want %q", got, reviewEventComment)
+	}
+
+	raw := map[string]interface{}{
+		"kind":   postActionKindPullRequestReview,
+		"repo":   "msgmate-io/open-chat-go",
+		"number": float64(927),
+		"event":  "APPROVE",
+	}
+	action, ok := decodePostActionPullRequestReview(raw)
+	if !ok {
+		t.Fatal("the self-check review action must decode as a pull request review")
+	}
+	if got := reviewTargetEndpoint(action, ""); got != "https://api.github.com/repos/msgmate-io/open-chat-go/pulls/927/reviews" {
+		t.Fatalf("review endpoint = %q, want the /pulls/927/reviews endpoint", got)
+	}
+}

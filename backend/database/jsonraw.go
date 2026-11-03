@@ -32,10 +32,21 @@ func (j *JSONRaw) Scan(src any) error {
 	}
 }
 
-// Value implements driver.Valuer so writes are always persisted as BLOB/bytes.
+// jsonRawValueAsText selects how JSONRaw is encoded for writes. It is set once
+// by SetupDatabase: PostgreSQL jsonb columns need a text parameter (a []byte is
+// sent as bytea and rejected with "invalid input syntax for type json", 22P02,
+// ci#878), while SQLite keeps the historical []byte/BLOB encoding that eagerly
+// scans back into the json.RawMessage fields much of the codebase still uses.
+var jsonRawValueAsText bool
+
+// Value implements driver.Valuer. Whether it returns a string or []byte depends
+// on the active backend (see jsonRawValueAsText). Scan accepts both.
 func (j JSONRaw) Value() (driver.Value, error) {
 	if j == nil {
 		return nil, nil
+	}
+	if jsonRawValueAsText {
+		return string(j), nil
 	}
 	return []byte(j), nil
 }

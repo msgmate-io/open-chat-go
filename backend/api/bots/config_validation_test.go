@@ -109,6 +109,15 @@ func TestValidateAndAttachMCPIntegrationsForUserIgnoresBuiltInIntegrationNames(t
 	if !integrations.Has("mcp") {
 		t.Skip("mcp integration not available in current build")
 	}
+	// The test's "built-in" integration names (`ssh` and its tools) come from
+	// the private manifest and only exist in the `full` build profile; in a
+	// public `core-only` checkout they are not registered, so the built-in
+	// skip in validateAndAttachMCPIntegrationsForUser has nothing to observe
+	// and the test must fail fast with the same explicit skip the mcp check
+	// uses (mirroring requireIntegration in backend/api/integrations).
+	if !integrations.Has("ssh") {
+		t.Skip("built-in ssh integration not available in current build profile")
+	}
 
 	DB := setupBotsTestDB(t)
 	user := createUserForBotsTest(t, DB, "owner@example.com", false)

@@ -134,7 +134,7 @@ func (m *ToolInitDataManager) StoreToolInitDataForChat(chat *Chat, toolName stri
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&SharedChatConfig{}).Where("id = ?", sharedConfig.ID).Update("config_data", encoded).Error; err != nil {
+		if err := tx.Model(&SharedChatConfig{}).Where("id = ?", sharedConfig.ID).Update("config_data", JSONRaw(encoded)).Error; err != nil {
 			return err
 		}
 		sharedConfig.ConfigData = encoded
@@ -359,7 +359,7 @@ func (m *ToolInitDataManager) DisposeToolInitDataForChat(chat *Chat) error {
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&SharedChatConfig{}).Where("id = ?", sharedConfig.ID).Update("config_data", encoded).Error; err != nil {
+		if err := tx.Model(&SharedChatConfig{}).Where("id = ?", sharedConfig.ID).Update("config_data", JSONRaw(encoded)).Error; err != nil {
 			return err
 		}
 

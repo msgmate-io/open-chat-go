@@ -106,6 +106,7 @@ var capabilityClasses = []CapabilityClass{
 	{"tool_budget", CapabilityTierCore, "per-chat tool budgets cap runaway turns without losing the final summary"},
 	{"subagents", CapabilityTierCore, "coder_task sub-agents run in a fresh, restricted context"},
 	{"shell_modes", CapabilityTierCore, "foreground, background/streaming and interactive shell modes"},
+	{"todo_list", CapabilityTierCore, "a visible per-chat task list (coder_todo_write/coder_todo_read/todo plan state)"},
 	{"hive_mind", CapabilityTierCore, "cross-agent dispatch and observation through the hive mind"},
 	{"error_recovery", CapabilityTierCore, "tool/infra failures surface as errors and the agent recovers"},
 	{"observability", CapabilityTierCore, "tool calls and reasoning stay visible in the chat and its metadata"},
@@ -198,6 +199,27 @@ var capabilityScenarios = []CapabilityScenario{
 			"the reply contains the marker nonce",
 		},
 		Tracks: []int{390, 394, 514, 630},
+	},
+	{
+		ID:              "msgmate_coder_bugfix",
+		Title:           "Fix the inaccurate add() logic in mathops.py and confirm the probe test passes",
+		Role:            "repl",
+		Capability:      "edit_and_git",
+		Tags:            []string{"live", "sandbox", "bugfix"},
+		RequiresSandbox: true,
+		Tools:           []string{"coder_glob", "coder_read", "coder_edit", "coder_bash"},
+		Prompt: "Real-world capability scenario BUGFIX. In the bound workspace, locate the file mathops.py " +
+			"(use coder_glob in case it moved), read it and fix the inaccurate add() logic in it so the function " +
+			"returns the correct sum of its arguments. Then confirm the probe test passes by running it with " +
+			"coder_bash (report the verbatim command and its output). " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"mathops.py was located and read before being edited",
+			"the add() logic was corrected so the function returns the accurate sum of its arguments",
+			"the probe test was run with coder_bash and passes, with the verbatim command and output reported",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 915},
 	},
 	{
 		ID:              "search_semantics_paths",
@@ -499,6 +521,50 @@ var capabilityScenarios = []CapabilityScenario{
 		Tracks: []int{390, 602, 662},
 	},
 	{
+		ID:         "msgmate_coder_ask",
+		Title:      "A coder_ask question carries its options through to the user",
+		Role:       "repl",
+		Capability: "confirmation_policy",
+		Tags:       []string{"live", "sandbox", "ask"},
+		Tools:      []string{"coder_ask"},
+		Prompt: "Real-world capability scenario CODER ASK (ci#925). Pose exactly one question with coder_ask and " +
+			"stop. The question must present at least two distinct concrete options (each a short, actionable choice " +
+			"a user can pick from), for example: option 1: 'Write the marker to cap_ask.txt with coder_write'; " +
+			"option 2: 'Report the marker in this chat message only'. Marker nonce for this scenario: " +
+			capabilityMarkerToken + ". Ask the question now and do not answer it yourself, do not call any other " +
+			"tool, and do not finish with the marker token on its own line: the expected end-state is the question " +
+			"with its options pending for the user.",
+		Acceptance: []string{
+			"the only tool call invoked is coder_ask",
+			"the coder_ask question carries two or more distinct concrete options",
+			"the turn ends with the question pending for the user (never self-answered)",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 925},
+	},
+	{
+		ID:              "msgmate_coder_fibonacci_json",
+		Title:           "Create a fibonacci project with a python module and a JSON report of its output",
+		Role:            "repl",
+		Capability:      "sandbox_provisioning",
+		Tags:            []string{"live", "sandbox"},
+		RequiresSandbox: true,
+		Tools:           []string{"coder_bash", "coder_write", "coder_read"},
+		Prompt: "Real-world capability scenario FIBONACCI JSON (ci#939). In the bound workspace, create the directory " +
+			"fibonacci (for example with `mkdir -p fibonacci`), write a Python module fibonacci/fib.py that computes " +
+			"the first ten Fibonacci numbers, run it, and write a machine-readable fibonacci/fibonacci.json with the " +
+			"computed sequence. Report the verbatim files and the run output, and leave both files in place. " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"the fibonacci directory exists in the workspace",
+			"fibonacci/fib.py exists and computes the Fibonacci numbers",
+			"fibonacci/fibonacci.json exists and is valid JSON",
+			"the reported files and run output are verbatim",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 939},
+	},
+	{
 		ID:         "emergency_recovery_watchdog",
 		Title:      "A restricted second-deployment bot monitors and recovers a crashed server",
 		Role:       "admin",
@@ -520,6 +586,28 @@ var capabilityScenarios = []CapabilityScenario{
 			"the reply contains the marker nonce",
 		},
 		Tracks: []int{390, 658},
+	},
+	{
+		ID:              "todo_list_visible_plan",
+		Title:           "Keep a visible per-chat task list with coder_todo_write/coder_todo_read",
+		Role:            "repl",
+		Capability:      "todo_list",
+		Tags:            []string{"live", "sandbox", "mutating"},
+		RequiresSandbox: true,
+		Mutating:        true,
+		Tools:           []string{"coder_todo_write", "coder_todo_read"},
+		Prompt: "Real-world capability scenario TODO LIST. In the bound workspace: (1) write a 3-item plan with " +
+			"coder_todo_write (write the marker " + capabilityMarkerToken + " into the second item), (2) read the plan " +
+			"back with coder_todo_read and report its revision and items verbatim, (3) update the plan so the first " +
+			"item is completed and re-read it, (4) clear the plan and confirm it is empty. " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"coder_todo_write and coder_todo_read were both called",
+			"the plan kept its items and revision across write/read/update cycles",
+			"the reported plan state is verbatim tool output",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 394, 630},
 	},
 }
 

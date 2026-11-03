@@ -21,6 +21,42 @@ type TokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// PromptTokensDetails carries the provider's prompt-cache accounting.
+	// DeepSeek (directly, or via OpenRouter) reports how many prompt tokens
+	// were served from its context cache here. Cache reads are billed at a
+	// fraction of the normal prompt price, so this is the dominant cost lever
+	// for the long, tool-call-heavy msgmate-coder interactions: a consecutive
+	// turn that re-sends the whole (growing) context should hit the cache for
+	// the stable prefix, not pay full price for all ~15k prompt tokens again.
+	PromptTokensDetails PromptTokensDetails `json:"prompt_tokens_details"`
+}
+
+// PromptTokensDetails mirrors the OpenAI-compatible `prompt_tokens_details`
+// object. Providers that do not report caching leave CachedTokens at 0.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// CachedTokens is the number of prompt tokens served from the provider's
+// context cache (0 when the provider does not report caching).
+func (u TokenUsage) CachedTokens() int {
+	return u.PromptTokensDetails.CachedTokens
+}
+
+// CacheHitRatio is the fraction of prompt tokens that were cache reads for this
+// request, in [0,1]. It is 0 when the prompt is empty or nothing was cached.
+func (u TokenUsage) CacheHitRatio() float64 {
+	if u.PromptTokens <= 0 {
+		return 0
+	}
+	cached := u.CachedTokens()
+	if cached < 0 {
+		cached = 0
+	}
+	if cached > u.PromptTokens {
+		cached = u.PromptTokens
+	}
+	return float64(cached) / float64(u.PromptTokens)
 }
 
 type ToolCall struct {
@@ -112,6 +148,16 @@ const (
 	contextRetryTailFloorMessages = 4
 	contextRetryMaxMessageChars   = 4000
 )
+
+// reasoningChunkPrefix marks an in-band chunk on the single string chunk
+// channel that carries provider reasoning (OpenRouter `delta.reasoning`, or the
+// common `reasoning_content` alias) rather than user-visible assistant content.
+// Framing it in-band lets the reasoning ride the one existing channel into the
+// thinking/timeline pipeline without changing the streaming signatures that many
+// callers and tests depend on (ci#852). The NUL-delimited sentinel cannot occur
+// in model content, and the consumer strips it before anything is rendered or
+// persisted.
+const reasoningChunkPrefix = "\x00\x01reasoning\x01\x00"
 
 type ToolCallsResult struct {
 	ToolCalls []ToolCall
@@ -976,7 +1022,14 @@ type toolCallResult struct {
 	// carries the "stopped: repeated output detected" note instead of the junk
 	// (ci#670).
 	repetitionLoop bool
-	usage          *TokenUsage
+	// backpressure records that the round was stopped because provider
+	// admission saturation was detected (ci#909): the repeated "error" was a
+	// queue timeout. It is the semantic inverse of repetitionLoop — the loop
+	// is dropped without the note and the response carries
+	// failure_reason=provider_backpressure so the caller reports the
+	// saturation itself.
+	backpressure bool
+	usage        *TokenUsage
 	// calls holds every tool call of the round, in the order the model
 	// emitted them (ci#655). The singular id/toolName/result/... fields above
 	// mirror the last call for backwards compatibility.
@@ -1062,6 +1115,33 @@ func appendExecutedToolCalls(
 	return appended, messages, truncatedResults
 }
 
+// buildStreamingRequestBody assembles the OpenAI-compatible streaming request
+// body. It is separated from processStreamingRequest so the cache-relevant
+// shape can be pinned by tests: the messages prefix and the tools list must be
+// byte-stable across the consecutive tool-call turns of one interaction (that
+// stability is what lets the provider serve the growing prompt from its context
+// cache), and the final usage chunk — which carries the prompt-cache accounting
+// — must be requested.
+func buildStreamingRequestBody(backend, model string, normalizedMessages []map[string]interface{}, tools []interface{}, samplingParams SamplingParams) map[string]interface{} {
+	requestBody := map[string]interface{}{
+		"model":    model,
+		"messages": normalizedMessages,
+		"stream":   true,
+	}
+	if len(tools) > 0 {
+		requestBody["tools"] = tools
+	}
+	// include_usage makes the provider emit a final stream chunk carrying the
+	// token accounting (incl. prompt-cache reads). OpenRouter is OpenAI
+	// compatible and supports it, and without it the cache-hit accounting this
+	// cost optimization depends on is not returned.
+	if backend == "openai" || backend == "openrouter" {
+		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
+	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
+	return requestBody
+}
+
 func processStreamingRequest(
 	ctx context.Context,
 	host, model, backend string,
@@ -1087,18 +1167,7 @@ func processStreamingRequest(
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
 
-	requestBody := map[string]interface{}{
-		"model":    model,
-		"messages": normalizedMessages,
-		"stream":   true,
-	}
-	if len(tools) > 0 {
-		requestBody["tools"] = tools
-	}
-	if backend == "openai" {
-		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
-	}
-	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
+	requestBody := buildStreamingRequestBody(backend, model, normalizedMessages, tools, samplingParams)
 
 	middlewareCtx := &ProviderRequestContext{
 		ChatUUID:    meta.ChatUUID,
@@ -1195,6 +1264,8 @@ func processStreamingRequest(
 		// metrics see it without parsing the assistant text (ci#670).
 		if result.repetitionLoop {
 			response["failure_reason"] = FailureReasonRepetitionLoop
+		} else if result.backpressure {
+			response["failure_reason"] = FailureReasonProviderBackpressure
 		}
 		if result.toolName != "" {
 			toolCallRepr := map[string]interface{}{
@@ -1888,6 +1959,14 @@ func processStreamingResponseReader(
 				Delta struct {
 					Content   string        `json:"content"`
 					ToolCalls []interface{} `json:"tool_calls"`
+					// Provider reasoning deltas (ci#852): OpenRouter and the
+					// OpenAI-compatible reasoning models stream the chain of
+					// thought on a separate `reasoning` field (with the common
+					// `reasoning_content` alias) instead of embedding it in
+					// `content`. Dropping it left the timeline empty and made
+					// the coder look like it never reasoned between tool calls.
+					Reasoning        string `json:"reasoning"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *TokenUsage `json:"usage"`
@@ -1906,6 +1985,16 @@ func processStreamingResponseReader(
 			continue
 		}
 		delta := chunk.Choices[0].Delta
+
+		// Provider reasoning deltas (ci#852) are forwarded in-band, tagged with
+		// the reasoning sentinel, so the thinking pipeline can render them as
+		// the timeline's thought blocks. They are never written into
+		// aiResponseBuilder, so they never become the persisted assistant text.
+		if reasoningText := delta.Reasoning; reasoningText != "" {
+			chunkChan <- reasoningChunkPrefix + reasoningText
+		} else if reasoningText := delta.ReasoningContent; reasoningText != "" {
+			chunkChan <- reasoningChunkPrefix + reasoningText
+		}
 
 		if delta.Content != "" {
 			aiResponseBuilder.WriteString(delta.Content)
@@ -1938,8 +2027,17 @@ func processStreamingResponseReader(
 			// detail — so the runaway tail is stopped as soon as it forms.
 			// The one-line note is streamed so the persisted message (built
 			// from the streamed text) ends with a clear statement of why it
-			// stops.
+			// stops. A provider admission saturation (ci#909) can also be the
+			// "error" the tail detects (a queue timeout rendered into the
+			// stream's accumulated text); that case must be reported, not
+			// silently flattened into the repetition note, and the caller
+			// converts the classification back into a ProviderSaturationError
+			// so downstream back-pressure handling stays type-driven.
 			if _, looping := detectDegenerateTail(accumulated); looping {
+				if sat := ClassifyGenerationFailure(fmt.Errorf("%s", accumulated)); sat.Reason == FailureReasonProviderBackpressure {
+					repetitionLoopDetected = true
+					break
+				}
 				repetitionLoopDetected = true
 				chunkChan <- repetitionLoopNote
 				break
@@ -1998,12 +2096,22 @@ func processStreamingResponseReader(
 	// replace it with a clear one-line note, so the persisted message states
 	// why it ends instead of carrying the junk (ci#670). The mid-stream check
 	// and this one run on the same accumulated text, so a mid-stream trip
-	// always truncates here too; the flag is set from either signal.
-	truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
-	if responseTruncated {
-		result.aiResponse = truncatedResponse
+	// always truncates here too; the flag is set from either signal. A
+	// provider admission saturation (ci#909) detected as the repeated "error"
+	// must never be flattened into the repetition note: if the repeated unit
+	// classifies as provider back-pressure, the loop is dropped without the
+	// note, the round is flagged as backpressure, and the caller reports the
+	// saturation itself.
+	if sat := ClassifyGenerationFailure(fmt.Errorf("%s", result.aiResponse)); sat.Reason == FailureReasonProviderBackpressure {
+		result.repetitionLoop = false
+		result.backpressure = true
+	} else {
+		truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
+		if responseTruncated {
+			result.aiResponse = truncatedResponse
+		}
+		result.repetitionLoop = repetitionLoopDetected || responseTruncated
 	}
-	result.repetitionLoop = repetitionLoopDetected || responseTruncated
 
 	// A leaked context-compaction transcript is model bookkeeping, never a
 	// user-facing answer: strip it so it can never be stored as (or posted as)
