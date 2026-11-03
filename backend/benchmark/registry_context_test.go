@@ -5,12 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-// dirTSV is a tiny helper that materializes small registry/config trees used
-// by the generator? (unused placeholder; kept trivial to avoid dead code)
-func dirTSV(t *testing.T, files map[string]string) string {
+// writeRegistryTree materializes a minimal registry config tree (the same
+// relative layout LoadFreeModels reads) under a temp dir.
+func writeRegistryTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	d := t.TempDir()
 	for rel, content := range files {
@@ -48,7 +47,7 @@ func TestLoadFreeModelsCarriesContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	d := dirTSV(t, map[string]string{
+	d := writeRegistryTree(t, map[string]string{
 		"database/data/default_model_configs.json":       string(raw),
 		"database/data/extra_default_models_config.json": "[]",
 	})
@@ -82,6 +81,4 @@ func TestModelReportContextString(t *testing.T) {
 	if m.Context != "262k" {
 		t.Fatalf("context string not populated")
 	}
-	_ = m
-	_ = time.Now() // keep time import used (artifact renderers stamp generated_at)
 }
