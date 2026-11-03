@@ -237,12 +237,7 @@ func postGithubInteractionComment(action postActionGithubComment, replyText stri
 
 // postGithubIssueComment POSTs a comment body to the action's target.
 func postGithubIssueComment(token string, action postActionGithubComment, body string) error {
-	endpoint := ""
-	if action.Issue != nil && strings.TrimSpace(*action.Issue) != "" {
-		endpoint = strings.TrimSuffix(strings.TrimSpace(*action.Issue), "/") + "/comments"
-	} else if strings.TrimSpace(action.Repo) != "" && action.Number != 0 {
-		endpoint = fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", action.Repo, action.Number)
-	}
+	endpoint := strings.TrimSpace(commentTargetEndpoint(action, "https://api.github.com"))
 	if endpoint == "" {
 		return fmt.Errorf("no github target endpoint could be derived from the post action")
 	}
@@ -266,6 +261,76 @@ func postGithubIssueComment(token string, action postActionGithubComment, body s
 		return fmt.Errorf("github api returned status %d posting issue comment", resp.StatusCode)
 	}
 	return nil
+}
+
+// postPlanAutoImplementCommentTo posts the finished plan as the plan role's
+// plan comment on the triggering issue (the `plan_comment_posted` self-check
+// contract, ci#940/ci#622). It is the delivery helper behind the
+// `plan_auto_implement` post action's comment half, pointed at a local API
+// base in tests.
+func postPlanAutoImplementCommentTo(apiBase, token string, action postActionPlanAutoImplement, replyText string) error {
+	if strings.TrimSpace(action.Bot) == "" {
+		return fmt.Errorf("plan_auto_implement action has no bot configured")
+	}
+	comment := postActionGithubComment{
+		Repo:   action.Repo,
+		Number: action.Number,
+		Issue:  action.Issue,
+		Header: action.Header,
+		Footer: action.Footer,
+		MaxLen: action.MaxLen,
+	}
+	if comment.Header == nil || strings.TrimSpace(*comment.Header) == "" {
+		header := postActionPlanImplementHeader
+		comment.Header = &header
+	}
+	body := composePostCommentBody(comment, replyText, postActionPlanImplementHeader)
+	endpoint := strings.TrimSpace(commentTargetEndpoint(comment, apiBase))
+	if endpoint == "" {
+		return fmt.Errorf("no github target endpoint could be derived from the plan post action")
+	}
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: postGithubCommentTimeout}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("github api returned status %d posting the plan comment", resp.StatusCode)
+	}
+	return nil
+}
+
+// commentTargetEndpoint derives the comment collection endpoint of a github
+// comment action. An explicit `issue_url` wins; otherwise repo+number is used.
+// A non-empty apiBase overrides the public GitHub API host (used by tests).
+func commentTargetEndpoint(action postActionGithubComment, apiBase string) string {
+	base := strings.TrimSuffix(strings.TrimSpace(apiBase), "/")
+	issue := ""
+	if action.Issue != nil {
+		issue = strings.TrimSpace(*action.Issue)
+	}
+	if issue != "" {
+		return strings.TrimSuffix(issue, "/") + "/comments"
+	}
+	if strings.TrimSpace(action.Repo) == "" || action.Number == 0 {
+		return ""
+	}
+	repo := strings.Trim(strings.TrimSpace(action.Repo), "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	return fmt.Sprintf("%s/repos/%s/issues/%d/comments", base, repo, action.Number)
 }
 
 // postActionsAlreadyRan reports whether the interaction's post-actions were
@@ -309,7 +374,7 @@ func markPostActionsRan(db *gorm.DB, chatID uint) {
 		_ = db.Create(&database.ChatSettings{ChatId: chatID, ConfigData: encoded}).Error
 		return
 	}
-	_ = db.Model(&settings).Update("config_data", encoded).Error
+	_ = db.Model(&settings).Update("config_data", database.JSONRaw(encoded)).Error
 }
 
 // runPlanAutoImplement executes a plan_auto_implement action: it posts the
@@ -323,19 +388,13 @@ func runPlanAutoImplement(db *gorm.DB, queueClient *asynq.Client, queueInspector
 	if strings.TrimSpace(action.Bot) == "" {
 		return fmt.Errorf("plan_auto_implement action has no bot configured")
 	}
-	comment := postActionGithubComment{
-		Repo:   action.Repo,
-		Number: action.Number,
-		Issue:  action.Issue,
-		Header: action.Header,
-		Footer: action.Footer,
-		MaxLen: action.MaxLen,
+	token := strings.TrimSpace(os.Getenv(postGithubTokenEnv))
+	var commentErr error
+	if token == "" {
+		commentErr = fmt.Errorf("%s is not configured; skipping plan comment post action", postGithubTokenEnv)
+	} else {
+		commentErr = postPlanAutoImplementCommentTo("", token, action, replyText)
 	}
-	if comment.Header == nil || strings.TrimSpace(*comment.Header) == "" {
-		header := postActionPlanImplementHeader
-		comment.Header = &header
-	}
-	commentErr := postGithubInteractionComment(comment, replyText)
 	dispatchErr := dispatchPlanImplementation(db, queueClient, queueInspector, chat, action, replyText)
 	if dispatchErr != nil {
 		if commentErr != nil {

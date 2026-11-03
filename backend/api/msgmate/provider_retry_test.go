@@ -70,6 +70,18 @@ func TestIsRetryableProviderRequestError(t *testing.T) {
 	if !isRetryableProviderRequestError(fmt.Errorf("request failed: Post \"https://x\": connection reset by peer")) {
 		t.Fatal("transient connect failures should be retryable")
 	}
+	// ci#909: provider admission saturation is retryable back-pressure, not a
+	// provider fault and not a provider HTTP status: the per-key slot cap was
+	// exhausted and no slot freed up within the queue timeout, so the request
+	// never reached the provider. It must take the bounded retry path as an
+	// honest back-pressure signal (surfaced immediately, distinct from
+	// 402/429/5xx) instead of being absorbed and blurred by the provider loop.
+	if !isRetryableProviderRequestError(&ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"}) {
+		t.Fatal("provider admission saturation should be retryable back-pressure")
+	}
+	if isRetryableProviderRequestError(fmt.Errorf("provider admission slot cap exhausted (key=openrouter) after 15s")) {
+		t.Fatal("saturation must be detected by type, not by message text")
+	}
 }
 
 func TestIsPreStreamProviderFailure(t *testing.T) {
@@ -143,9 +155,15 @@ func TestClassifyGenerationFailure(t *testing.T) {
 			wantReason: FailureReasonLeakedCompaction,
 		},
 		{
-			name:        "provider http failure",
+			// ci#927 / ci#619/#620: an HTTP 429 (rate limit) or 402 (credits
+			// exhausted) is a provider back-pressure condition, not a provider
+			// fault. Retrying it is fine, but when the retries are exhausted
+			// the turn must classify as back-pressure so the pipeline lowers
+			// concurrency instead of looping on a repeating per-request
+			// provider error.
+			name:        "provider http 429 is back-pressure",
 			err:         &ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"rate limited"}}`, Attempts: 2},
-			wantReason:  FailureReasonProviderError,
+			wantReason:  FailureReasonProviderBackpressure,
 			wantSummary: true,
 		},
 		{
@@ -182,6 +200,24 @@ func TestClassifyGenerationFailure(t *testing.T) {
 			name:       "user cancel is not classified as a timeout",
 			err:        context.Canceled,
 			wantReason: FailureReasonInternal,
+		},
+		{
+			// ci#909: provider admission saturation is back-pressure (the
+			// per-key slot cap was exhausted and no slot freed up within the
+			// queue timeout, so the request never reached the provider). It
+			// must never be conflated with a provider fault: no credit/outage
+			// speculation, and no provider-HTTP retry absorption.
+			name:       "provider admission saturation is back-pressure",
+			err:        &ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"},
+			wantReason: FailureReasonProviderBackpressure,
+		},
+		{
+			// ci#909: a *wrapped* saturation error must classify identically
+			// (the messages bubble the native coder error up through several
+			// layers of fmt.Errorf wrapping).
+			name:       "wrapped provider admission saturation is back-pressure",
+			err:        fmt.Errorf("turn failed: %w", &ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"}),
+			wantReason: FailureReasonProviderBackpressure,
 		},
 	}
 
@@ -337,4 +373,29 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+func TestIsProviderBackpressureStatus(t *testing.T) {
+	for _, code := range []int{402, 429} {
+		if !isProviderBackpressureStatus(code) {
+			t.Errorf("status %d should be classified as provider back-pressure", code)
+		}
+	}
+	for _, code := range []int{400, 401, 403, 404, 408, 500, 502, 503} {
+		if isProviderBackpressureStatus(code) {
+			t.Errorf("status %d should not be classified as provider back-pressure", code)
+		}
+	}
+}
+
+func TestIsRetryableBackpressureError(t *testing.T) {
+	if isRetryableBackpressureError(nil) {
+		t.Fatal("nil error is not a back-pressure condition")
+	}
+	if !isRetryableBackpressureError(&ProviderSaturationError{}) {
+		t.Fatal("admission saturation must be retryable back-pressure (ci#909/ci#927)")
+	}
+	if isRetryableBackpressureError(fmt.Errorf("boom")) {
+		t.Fatal("generic errors are not back-pressure")
+	}
 }

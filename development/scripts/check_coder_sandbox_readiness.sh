@@ -117,6 +117,12 @@ fi
 if [ "$status" -eq 0 ]; then
   note "== ready: local targeted Go checks can run =="
 else
-  note "== NOT ready: see the MISS lines above. If a private module is the only blocker,\n     keep the change and let PR CI be the authoritative full-suite gate (ci#739). =="
+  # `note` is `printf '%s\n' "$*"`, which does NOT interpret escapes inside its
+  # argument, so an embedded `\n` used to reach the caller as the two literal
+  # characters `\` `n`. That mangled exactly the line an agent reads to decide
+  # whether to keep the change, so the two halves are separate note calls.
+  note "== NOT ready: see the MISS lines above. =="
+  note "   If a private module is the only blocker, keep the change and let PR CI be the"
+  note "   authoritative full-suite gate (ci#739). =="
 fi
 exit "$status"

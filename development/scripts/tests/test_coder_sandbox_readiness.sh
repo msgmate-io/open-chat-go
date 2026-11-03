@@ -51,6 +51,20 @@ case "$out" in
   *) fail "probe recovery hint must use the full-ci profile" ;;
 esac
 
+# 2b. The verdict is read by an agent deciding whether to keep an unverified
+#     change, so it must be plain text: `note` is `printf '%s\n' "$*"`, and
+#     `printf %s` does NOT expand escapes inside its argument, so an embedded
+#     `\n` in a note string reaches the reader as the two literal characters
+#     backslash+n instead of a line break.
+case "$out" in
+  *'\n'*) fail "probe output must not contain a literal backslash-n sequence (use separate note calls)" ;;
+  *) : ;;
+esac
+case "$out" in
+  *"authoritative full-suite gate"*) : ;;
+  *) fail "probe must tell the agent that PR CI is the authoritative gate" ;;
+esac
+
 # 3. A directory that does not exist is a usage error, not a readiness verdict.
 bash "$SCRIPT" "$empty_root/nope" >/dev/null 2>&1
 rc=$?

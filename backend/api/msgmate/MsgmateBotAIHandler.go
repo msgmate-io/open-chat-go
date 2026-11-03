@@ -154,6 +154,167 @@ func parseConfirmActionPayload(raw string) (map[string]interface{}, bool) {
 	return payload, true
 }
 
+// askPayloadType is the discriminator a tool result (or a promoted tool-call
+// row) carries to be surfaced as an open question with selectable options. The
+// related coder tools surface their questions through it; the frontend already
+// understands it.
+const askPayloadType = "open_question"
+
+// parseAskPayload detects an open_question payload in a tool result. It returns
+// false for any other tool result so unrelated tool outputs are left untouched.
+func parseAskPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != askPayloadType {
+		return nil, false
+	}
+	return payload, true
+}
+
+// toolAskPayload tries to surface an open question that a paused coder ask call
+// (eg coder_ask in an interactive session) carries. The tool call pauses with a
+// pending confirmation whose result is the generic confirm-action payload, so
+// the question text and its selectable options would otherwise be lost: the
+// ask tool only stores the question in its persisted tool input, and the
+// earlier confirmaction backcompat path drops any options key the model sent
+// with it. The answer is keyed by the raw argument name, which is what the ask
+// tool re-emits as its resolved input.
+//
+// The payload carries the raw option values so the interactive frontend renders
+// them verbatim as a selectable widget. The options arm below accepts both a
+// []interface{} list (the shape tool inputs persist as) and a []string list (a
+// caller that built the arguments from a typed struct); a typed []string list
+// is converted to []interface{} so downstream JSON round-trips (map re-serialization
+// in the interactive confirm path) never turn it into a []float64.
+func toolAskPayload(toolCall map[string]interface{}) (map[string]interface{}, bool) {
+	name, _ := toolCall["name"].(string)
+	if strings.TrimSpace(name) != "coder_ask" {
+		return nil, false
+	}
+	status, _ := toolCall["status"].(string)
+	switch status {
+	case ToolCallStatusFailed:
+		return nil, false
+	case ToolCallStatusPendingConfirmation, ToolCallStatusOngoing, ToolCallStatusSucceeded, "pending", "":
+		// Promotable statuses: a pending/pending-confirmation call pauses the
+		// turn waiting for the answer, an ongoing call is mid-flight, a
+		// succeeded call carries the already-resolved arguments (the promoted
+		// tool-call row keeps the raw coder_ask input), and a missing status is
+		// treated as pending for robustness against varied persistence shapes.
+		// Only an explicit failure must never surface an open question.
+	default:
+		return nil, false
+	}
+
+	var args map[string]interface{}
+	switch raw := toolCall["arguments"].(type) {
+	case string:
+		if strings.TrimSpace(raw) == "" {
+			return nil, false
+		}
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			return nil, false
+		}
+	case map[string]interface{}:
+		args = raw
+	case nil:
+		return nil, false
+	default:
+		return nil, false
+	}
+
+	payload := map[string]interface{}{
+		"type":       askPayloadType,
+		"status":     "pending",
+		"confirmed":  false,
+		"prompt":     "",
+		"default":    "",
+		"options":    []interface{}{},
+		"answer_key": "",
+	}
+	if question, ok := args["question"].(string); ok && strings.TrimSpace(question) != "" {
+		payload["prompt"] = strings.TrimSpace(question)
+	}
+	if title, ok := args["title"].(string); ok && strings.TrimSpace(title) != "" {
+		payload["title"] = strings.TrimSpace(title)
+	}
+	if description, ok := args["description"].(string); ok && strings.TrimSpace(description) != "" {
+		payload["description"] = strings.TrimSpace(description)
+	}
+	if answerKey, ok := args["answer_key"].(string); ok && strings.TrimSpace(answerKey) != "" {
+		payload["answer_key"] = strings.TrimSpace(answerKey)
+	}
+	if defaultAnswer, ok := args["default"].(string); ok && strings.TrimSpace(defaultAnswer) != "" {
+		payload["default"] = strings.TrimSpace(defaultAnswer)
+	}
+	if options, ok := args["options"].([]interface{}); ok && len(options) > 0 {
+		payload["options"] = options
+	} else if options, ok := args["options"].([]string); ok && len(options) > 0 {
+		// Normalize a typed []string list into []interface{} so the JSON
+		// round-trip through a map never degrades it to []float64 (#945).
+		asInterface := make([]interface{}, len(options))
+		for i, option := range options {
+			asInterface[i] = option
+		}
+		payload["options"] = asInterface
+	}
+	return payload, true
+}
+
+// buildAskActionFromToolCall builds the user-facing open_question action from a
+// persisted tool-call row. The promote path keeps the raw coder_ask arguments
+// on the row (ci#724 promotion), so the title, description and selectable
+// options the model sent reach the chat UI unchanged.
+func buildAskActionFromToolCall(toolCall map[string]interface{}) (map[string]interface{}, bool) {
+	payload, ok := toolAskPayload(toolCall)
+	if !ok {
+		return nil, false
+	}
+
+	actionID, _ := toolCall["id"].(string)
+	if actionID == "" {
+		return nil, false
+	}
+	action := map[string]interface{}{
+		"action_id":        actionID,
+		"source_tool_name": toolCall["name"],
+		"target_tool_name": toolCall["name"],
+		"status":           "pending",
+		"type":             askPayloadType,
+		"created_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	for _, key := range []string{"title", "description", "prompt", "default", "options", "answer_key"} {
+		if value, exists := payload[key]; exists {
+			action[key] = value
+		}
+	}
+	return action, true
+}
+
+// collectAskActions finds every pending coder ask call in the turn and promotes
+// it into a structured open_question that the chat UI renders as a selectable
+// options widget (ci#753).
+func collectAskActions(toolCalls []interface{}) []interface{} {
+	actions := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		action, promoted := buildAskActionFromToolCall(toolCall)
+		if promoted {
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
 func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	actions := make([]interface{}, 0)
 	for _, rawToolCall := range toolCalls {
@@ -1025,7 +1186,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var reasoningEntries []string
 	var thinkingSteps []map[string]string
 	var isThinking bool
-	const thinkStartTag = "<think>"
+	// providerReasoningOpen records that the currently-open thought block was
+	// opened by a provider reasoning delta rather than by an inline ` thinking`
+	// tag, so it can be finalized when visible content or a tool call follows
+	// (ci#852).
+	var providerReasoningOpen bool
+	const thinkStartTag = " thinking"
 	const thinkEndTag = "</think>"
 	var currentBuffer strings.Builder
 	// The turn timeline (ci#569) records the assistant's reasoning blocks in
@@ -1302,6 +1468,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\n" + guidance
 				}
+			case FailureReasonProviderBackpressure:
+				// ci#909: the per-key provider admission slot cap was
+				// exhausted and no slot freed up within the queue timeout, so
+				// the request never reached the provider. This is OpenChat's
+				// own concurrency back-pressure - never a provider fault, so
+				// the reply must not suggest switching model/provider or blame
+				// credits/outage (the provider_error metadata will not be
+				// populated either, because there is no provider status).
+				guidance := "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
+				reasoningEntry = "Response stopped due to provider admission back-pressure: the per-key slot cap was exhausted and no slot freed up within the queue timeout."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
@@ -1340,6 +1521,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if streamFailure.ProviderSummary != "" {
 				metadata["provider_error"] = streamFailure.ProviderSummary
 			}
+			// ci#909: provider admission saturation is back-pressure (the
+			// request never reached the provider), so it must never populate
+			// the provider-oriented error_code / provider_error metadata the
+			// way a real provider HTTP status does.
 			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
 				metadata["error_code"] = code
 				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
@@ -1356,6 +1541,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			} else if streamFailure.ProviderAttempts > 1 {
 				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
 			}
+			// ci#909: surface the back-pressure decision itself as structured
+			// metadata (the per-key cap and the time spent waiting for a free
+			// admission slot), so the pipeline can lower concurrency without
+			// parsing an error string.
+			var saturationErr *ProviderSaturationError
+			if errors.As(streamErr, &saturationErr) {
+				metadata["provider_backpressure"] = map[string]interface{}{
+					"key":             saturationErr.Key,
+					"max_concurrency": saturationErr.MaxConcurrency,
+					"in_flight":       saturationErr.InFlight,
+					"queue_waiting":   saturationErr.QueueWaiting,
+					"waited":          saturationErr.Waited.Round(time.Millisecond).String(),
+				}
+				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
+			}
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
@@ -1369,13 +1569,24 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				text = confirmableTurnPrompt(confirmableActions)
 			}
 		}
+		// ci#753: a pending coder ask call is promoted into an open_question the
+		// chat UI renders as a selectable options widget. The call already
+		// paused with a confirmable action, so this rides alongside rather than
+		// replacing that flow (and it is what carries the model-provided options
+		// that were previously dropped).
+		if askActions := collectAskActions(allToolCalls); len(askActions) > 0 {
+			metadata["ask_actions"] = askActions
+		}
 		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 			metadata["runtime_selectors"] = runtimeSelectors
 		}
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
 		}
-		if reasoning {
+		// Provider reasoning (ci#852) can populate thinking_steps even when the
+		// `reasoning` config is unset, so the block is emitted whenever there is
+		// anything to report, not only for the legacy inline-tag path.
+		if reasoning || len(thinkingSteps) > 0 {
 			metadata["thinking_time"] = thinkingTime.Round(time.Millisecond).String()
 			if len(thinkingSteps) > 0 {
 				metadata["thinking_steps"] = thinkingSteps
@@ -1561,7 +1772,50 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		persistStreamSnapshot()
 	}
 
+	// processProviderReasoningChunk renders a provider reasoning delta (ci#852)
+	// as the currently-open thought block. Unlike inline model ` thinking` tags
+	// this is deliberately not gated on the `reasoning` config: a provider that
+	// streams a dedicated reasoning field is explicitly returning context the
+	// user should be able to watch, and it can never be mistaken for visible
+	// text because it arrives only on the sentinel-tagged path.
+	processProviderReasoningChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		if !isThinking {
+			isThinking = true
+			providerReasoningOpen = true
+			thinkingStart = time.Now()
+		}
+		sendThinkingChunk(chunk)
+	}
+
+	// closeProviderReasoning finalizes a thought block opened by provider
+	// reasoning deltas, so the block is recorded on the timeline (and in
+	// thinking_steps) before whatever visible content or tool call follows it.
+	closeProviderReasoning := func() {
+		if !providerReasoningOpen {
+			return
+		}
+		providerReasoningOpen = false
+		isThinking = false
+		stepDuration := time.Since(thinkingStart)
+		if stepDuration < 0 {
+			stepDuration = 0
+		}
+		thinkingTime += stepDuration
+		finalizeThinkingStep(stepDuration)
+		thinkingStart = time.Time{}
+	}
+
 	processChunk := func(chunk string) {
+		if strings.HasPrefix(chunk, reasoningChunkPrefix) {
+			processProviderReasoningChunk(strings.TrimPrefix(chunk, reasoningChunkPrefix))
+			return
+		}
+		// Any visible content closes a provider-reasoning block that was still
+		// open, so the following chunk is never mis-parsed as thinking.
+		closeProviderReasoning()
 		if !reasoning {
 			sendRespondingChunk(chunk)
 			return
@@ -1662,6 +1916,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if !ok {
 				toolCalls = nil
 			} else {
+				// A provider-reasoning thought that is still open belongs before
+				// this call in the timeline (ci#852).
+				closeProviderReasoning()
 				// Every call captures the narration the model emitted before it.
 				// The message body keeps only the text that came after the
 				// *final* call, so a turn that ran several tools would otherwise
@@ -1823,6 +2080,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
 				}
+				// ci#753: the streaming frame mirrors the finished-turn
+				// open_question promotion, so a pending coder ask call carries
+				// its selectable options even before the turn completes.
+				if askActions := collectAskActions(allToolCalls); len(askActions) > 0 {
+					partialMeta["ask_actions"] = askActions
+				}
 				if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 					partialMeta["runtime_selectors"] = runtimeSelectors
 				}
@@ -1857,6 +2120,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			break
 		}
 	}
+
+	// Flush a provider-reasoning block that was still streaming when the model
+	// stopped, so its thought reaches the timeline/turn metadata (ci#852).
+	closeProviderReasoning()
 
 	if reasoning {
 		remaining := currentBuffer.String()

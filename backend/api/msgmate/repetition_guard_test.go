@@ -330,3 +330,22 @@ func TestRepetitionLoopResponseCarriesFailureReason(t *testing.T) {
 		t.Fatalf("expected failure_reason=repetition_loop, got %q", got)
 	}
 }
+
+// provider admission saturation (ci#909) reported through the same response
+// record: the round was stopped on a repeated queue-timeout "error", which the
+// callers surface as provider_backpressure, not as a repetition loop.
+func TestBackpressureResponseCarriesFailureReason(t *testing.T) {
+	res := &toolCallResult{backpressure: true, aiResponse: "provider openrouter:https://openrouter.ai/api/v1/:sk-x is saturated"}
+	var response map[string]interface{}
+	if res.aiResponse != "" {
+		response = map[string]interface{}{"content": res.aiResponse}
+	}
+	if res.repetitionLoop {
+		response["failure_reason"] = FailureReasonRepetitionLoop
+	} else if res.backpressure {
+		response["failure_reason"] = FailureReasonProviderBackpressure
+	}
+	if got, _ := response["failure_reason"].(string); got != FailureReasonProviderBackpressure {
+		t.Fatalf("expected failure_reason=provider_backpressure, got %q", got)
+	}
+}

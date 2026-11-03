@@ -68,6 +68,10 @@ backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
 backend/integrations/externalintegrations/sources_gen.go
 
+# Local database archives (large and sensitive; never commit)
+full_open_chat_backup_pre_archive/
+full_open_chat_backup_pre_archive.zip
+
 # Build-tools virtualenv (development/scripts/build_tools.sh)
 .venv/
 

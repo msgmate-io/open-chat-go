@@ -94,12 +94,43 @@ type BashRetirementPhaseCriteria struct {
 	Blockers []string `json:"blockers,omitempty"`
 }
 
+// BashRetirementEvidence is the evidence bundle the criteria evaluator checks a
+// phase against. Every field may be empty/nil, in which case the criteria it
+// would attest stay unattested instead of silently passing.
+type BashRetirementEvidence struct {
+	// Coverage is the shell-call coverage report, the same evidence the
+	// category gate uses.
+	Coverage BashCoverageReport
+	// GitHub is the phase-1 GitHub shell translation report.
+	GitHub *GitHubShellTranslationReport
+	// CoderSystemPrompt is the rendered coder system prompt a run really uses,
+	// so the typed-first criterion is measured rather than assumed.
+	CoderSystemPrompt string
+	// WriteVerification is the phase-1 write-verification report
+	// (githubwriteverify.go): one verdict per recorded mutating typed GitHub
+	// write and its read-back. Criterion 4 is attested from it. An empty or
+	// nil report leaves that criterion unattested rather than silently passing.
+	WriteVerification []GitHubWriteVerificationResult
+}
+
 // EvaluateBashRetirementCriteria turns the plan's prose exit criteria into
 // machine-checked evidence, using the same coverage report as the category
 // gate. `github` is the phase-1 GitHub shell translation report; it may be nil,
 // in which case the criteria it would attest stay unattested instead of
 // silently passing.
 func EvaluateBashRetirementCriteria(report BashCoverageReport, github *GitHubShellTranslationReport) []BashRetirementPhaseCriteria {
+	return EvaluateBashRetirementCriteriaWithEvidence(BashRetirementEvidence{
+		Coverage: report,
+		GitHub:   github,
+	})
+}
+
+// EvaluateBashRetirementCriteriaWithEvidence is the full evaluator: it checks
+// every phase against the whole evidence bundle (coverage, GitHub translation
+// and the rendered coder system prompt).
+func EvaluateBashRetirementCriteriaWithEvidence(evidence BashRetirementEvidence) []BashRetirementPhaseCriteria {
+	report := evidence.Coverage
+	github := evidence.GitHub
 	plan := BashRetirementPlanSnapshot()
 	gates := make(map[string]BashRetirementPhaseGate)
 	for _, gate := range EvaluateBashRetirementPhases(report) {
@@ -123,7 +154,7 @@ func EvaluateBashRetirementCriteria(report BashCoverageReport, github *GitHubShe
 				Text:    text,
 			}
 			if phase.ID == bashRetirementGitHubPhaseID {
-				criterion = evaluateGitHubPhaseCriterion(criterion, phase, gate, report, github)
+				criterion = evaluateGitHubPhaseCriterion(criterion, phase, gate, report, github, evidence.WriteVerification, evidence.CoderSystemPrompt)
 			} else {
 				criterion.Status = BashCriterionUnattested
 				criterion.Blockers = append(criterion.Blockers,
@@ -156,7 +187,7 @@ func EvaluateBashRetirementCriteria(report BashCoverageReport, github *GitHubShe
 // evaluateGitHubPhaseCriterion checks one phase-1 criterion. The criterion
 // order is the plan's, so a reordered plan fails loudly in the tests instead of
 // silently checking the wrong thing.
-func evaluateGitHubPhaseCriterion(criterion BashRetirementCriterionEvidence, phase BashRetirementPhase, gate BashRetirementPhaseGate, report BashCoverageReport, github *GitHubShellTranslationReport) BashRetirementCriterionEvidence {
+func evaluateGitHubPhaseCriterion(criterion BashRetirementCriterionEvidence, phase BashRetirementPhase, gate BashRetirementPhaseGate, report BashCoverageReport, github *GitHubShellTranslationReport, writeVerification []GitHubWriteVerificationResult, coderSystemPrompt string) BashRetirementCriterionEvidence {
 	switch criterion.Index {
 	case 1:
 		// "the typed GitHub tools are shipped and declared by the coding
@@ -191,6 +222,29 @@ func evaluateGitHubPhaseCriterion(criterion BashRetirementCriterionEvidence, pha
 		}
 		if criterion.Status != BashCriterionBlocked {
 			criterion.Status = BashCriterionSatisfied
+		}
+		return criterion
+	case 2:
+		// "the coder system prompt prefers the typed tools for every GitHub
+		// workflow": attested from the prompt the run really uses, so the
+		// criterion cannot be met by the mere existence of a constant.
+		if strings.TrimSpace(coderSystemPrompt) == "" {
+			criterion.Status = BashCriterionUnattested
+			criterion.Blockers = append(criterion.Blockers, "no rendered coder system prompt was supplied")
+			return criterion
+		}
+		prompt := MeasureGitHubTypedFirstPrompt(coderSystemPrompt)
+		if prompt.Ready {
+			criterion.Status = BashCriterionSatisfied
+			criterion.Evidence = append(criterion.Evidence, fmt.Sprintf("coder system prompt carries the typed-first block and names all %d typed GitHub tools", len(prompt.Tools)))
+			return criterion
+		}
+		criterion.Status = BashCriterionBlocked
+		if !prompt.GuidanceApplied {
+			criterion.Blockers = append(criterion.Blockers, "the coder system prompt does not carry the typed-first GitHub block")
+		}
+		if len(prompt.Missing) > 0 {
+			criterion.Blockers = append(criterion.Blockers, "the coder system prompt does not name: "+strings.Join(prompt.Missing, ", "))
 		}
 		return criterion
 	case 3:
@@ -234,10 +288,44 @@ func evaluateGitHubPhaseCriterion(criterion BashRetirementCriterionEvidence, pha
 		criterion.Status = BashCriterionBlocked
 		criterion.Blockers = append(criterion.Blockers, fmt.Sprintf("github_cli translation: %d of %d commands translated, %d residual, phase ready=%t", github.TranslatedCommands, github.GitHubCommands, github.ResidualCommands, github.PhaseReady))
 		return criterion
+	case 4:
+		// "a write (comment/review/PR) is re-read and reported as verified
+		// instead of claimed": attested from the write-verification report
+		// (githubwriteverify.go), which pairs every mutating typed GitHub write
+		// with the read-back that confirms it. Empty evidence stays
+		// unattested: the honest answer to "have the writes been verified?" is
+		// "no report was supplied", not a silent pass.
+		if len(writeVerification) == 0 {
+			criterion.Status = BashCriterionUnattested
+			criterion.Blockers = append(criterion.Blockers, "no write-verification report was supplied")
+			return criterion
+		}
+		verified := 0
+		for _, result := range writeVerification {
+			if !result.Verified {
+				criterion.Status = BashCriterionBlocked
+				criterion.Blockers = append(criterion.Blockers, fmt.Sprintf("%s is not verified: %s", result.Tool, result.Reason))
+				continue
+			}
+			if result.Weak {
+				// A weak verdict is an honest re-read that proves no payload
+				// landed; the phase cannot close on it any more than on an
+				// unverified claim, so it blocks with the reason.
+				criterion.Status = BashCriterionBlocked
+				criterion.Blockers = append(criterion.Blockers, fmt.Sprintf("%s is only weakly verified: %s", result.Tool, result.Reason))
+				continue
+			}
+			verified++
+			criterion.Evidence = append(criterion.Evidence, result.Tool+" verified via "+result.ReadTool+" re-read")
+		}
+		if criterion.Status != BashCriterionBlocked {
+			criterion.Status = BashCriterionSatisfied
+			criterion.Evidence = append(criterion.Evidence, fmt.Sprintf("all %d recorded writes verified by re-read", verified))
+		}
+		return criterion
 	default:
-		// Criteria 2 (typed-first prompt) and 4 (write re-read and verified)
-		// need evidence sources that are not wired into this evaluator yet.
-		// They are reported unattested rather than assumed.
+		// A criterion index that the GitHub phase does not handle yet is
+		// reported unattested rather than assumed.
 		criterion.Status = BashCriterionUnattested
 		criterion.Blockers = append(criterion.Blockers, "no machine-checked evidence is wired for this criterion yet")
 		return criterion

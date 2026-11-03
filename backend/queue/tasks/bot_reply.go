@@ -3,6 +3,7 @@ package tasks
 import (
 	"backend/api/msgmate"
 	wsapi "backend/api/websocket"
+	"backend/botloop"
 	"backend/database"
 	"backend/workqueue"
 	"context"
@@ -79,6 +80,26 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
+	}
+
+	// ci#747 RC-8: refuse to add another turn to a bot-to-bot loop. Only an
+	// automated peer can loop, so the check is gated on that; a long
+	// all-automated run, a run of identical messages, or a burst of turns
+	// seconds apart stops the spin (the peer never gets a reply, so the loop
+	// ends). Legitimate slow agent-to-agent coordination never trips it, and a
+	// single automated sender that is still making progress (ci#915) is treated
+	// as an ongoing run rather than a loop. When the breaker does refuse a
+	// mid-round coder run, surface the reason in the task result so the
+	// per-run agent (a msgmate_coder_* probe) sees a concrete failure instead
+	// of a silent completion it can only attribute to its own tool output.
+	if senderUser.IsAutomated {
+		if decision := botloop.DetectForChat(deps.DB, incomingMessage.ChatId, botloop.ConfigFromEnv(), time.Now()); decision.Loop {
+			logging.Warnf("bot-reply loop breaker (ci#747): refusing to answer chat %s (%s: %s)", payload.ChatUUID, decision.Reason, decision.Detail)
+			failure := ToolExecutionResult{Success: false, Error: "bot-reply loop breaker: " + decision.Reason + ": " + decision.Detail}
+			_ = writeResult(task, failure)
+			persistTaskResult(deps.DB, task, failure)
+			return fmt.Errorf("bot reply loop breaker (%s): %w", decision.Reason, asynq.SkipRetry)
+		}
 	}
 
 	// The session must outlive the whole turn, not just a fixed 15 minutes:
@@ -288,6 +309,13 @@ func botReplyFailureMessage(err error) string {
 		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
 	case msgmate.FailureReasonContextWindow:
 		return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+	case msgmate.FailureReasonProviderBackpressure:
+		// ci#909: provider admission saturation (the per-key slot cap was
+		// exhausted and no slot freed up within the queue timeout, so the
+		// request never reached the provider) is OpenChat's own concurrency
+		// back-pressure, never a provider fault. It must not suggest switching
+		// model/provider or blame credits/outage.
+		return "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
 	case msgmate.FailureReasonTimeout:
 		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
 	}

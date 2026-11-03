@@ -128,6 +128,25 @@ func TestMatchRestrictedTokenRoute(t *testing.T) {
 		{database.AudienceMCPInteraction, http.MethodGet, "/admin/users", false},
 		{database.AudienceMCPInteraction, http.MethodPost, "/bots/bot/config", false},
 
+		// coder-mcp may dispatch and manage agent interactions, plus the
+		// hive-mind read/influence surface; it cannot reach unrelated APIs.
+		{database.AudienceCoderMCP, http.MethodGet, "/bots/list", true},
+		{database.AudienceCoderMCP, http.MethodPost, "/agents/dispatch", true},
+		{database.AudienceCoderMCP, http.MethodGet, "/agents/interactions", true},
+		{database.AudienceCoderMCP, http.MethodGet, "/agents/interactions/chat-uuid", true},
+		{database.AudienceCoderMCP, http.MethodPost, "/agents/interactions/chat-uuid/continue", true},
+		{database.AudienceCoderMCP, http.MethodPost, "/agents/interactions/chat-uuid/stop", true},
+		{database.AudienceCoderMCP, http.MethodGet, "/integrations/hive_mind/lookup", true},
+		{database.AudienceCoderMCP, http.MethodGet, "/integrations/hive_mind/observations", true},
+		{database.AudienceCoderMCP, http.MethodGet, "/integrations/hive_mind/observations/obs-uuid", true},
+		{database.AudienceCoderMCP, http.MethodPost, "/integrations/hive_mind/influences", true},
+		{database.AudienceCoderMCP, http.MethodPost, "/chats/create", false},
+		{database.AudienceCoderMCP, http.MethodGet, "/contacts/list", false},
+		{database.AudienceCoderMCP, http.MethodGet, "/admin/users", false},
+		{database.AudienceCoderMCP, http.MethodPost, "/user/access-tokens", false},
+		{database.AudienceCoderMCP, http.MethodGet, "/agents/interactions/chat-uuid/extra", false},
+		{database.AudienceCoderMCP, http.MethodGet, "/agents/dispatch", false},
+
 		// unknown audiences never resolve
 		{"something-else", http.MethodGet, "/user/self", false},
 		{"", http.MethodGet, "/user/self", false},
