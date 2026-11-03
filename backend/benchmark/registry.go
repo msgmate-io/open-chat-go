@@ -23,6 +23,13 @@ var registrySources = []string{
 type entryConfiguration struct {
 	Model   string `json:"model"`
 	Backend string `json:"backend"`
+	// The `context` field mirrors database/model_config.go's modelConfigFileEntry
+	// and is carried through as a display hint for the capability matrix
+	// (context-window column). It is informational only and never used to gate
+	// dispatch. OpenRouter registry metadata (e.g. 1M-token windows) is not
+	// present in these config files, so the column renders only what the
+	// registry carries.
+	Context int `json:"context"`
 	// The `tier` field is a registry-level hint (e.g. "free" / "paid") parsed
 	// for documentation only; the authoritative free marker is the ":free"
 	// suffix OpenRouter assigns to free-tier model identifiers.
@@ -62,7 +69,12 @@ func LoadFreeModels(backendRoot string) ([]FreeModel, error) {
 				continue
 			}
 			seen[id] = true
-			out = append(out, FreeModel{ID: id, Title: e.Title, Source: rel})
+			out = append(out, FreeModel{
+				ID:      id,
+				Title:   e.Title,
+				Context: e.Configuration.Context,
+				Source:  rel,
+			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
