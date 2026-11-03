@@ -31,6 +31,14 @@ else
   FAILS=$((FAILS + 1))
 fi
 
+echo "== committed-baseline self-test (no Go) =="
+if python3 "$ROOT/development/scripts/tests/test_committed_baselines.py"; then
+  echo "ok: committed-baseline self-test"
+else
+  echo "FAIL: committed-baseline self-test"
+  FAILS=$((FAILS + 1))
+fi
+
 if [ "$FAILS" -ne 0 ]; then
   echo "$FAILS ci#423 boundary checks failed"
   exit 1
