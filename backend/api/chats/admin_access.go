@@ -1,10 +1,95 @@
 package chats
 
 import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
 	"backend/database"
+	"backend/logging"
 
 	"gorm.io/gorm"
 )
+
+// actingScopeUserIDs returns the participant ids a session may read chats and
+// messages for.
+//
+// ci#865: an interaction created through POST /bots/{identifier}/interactions is
+// stored owner-scoped — its participant is the *acting user* (the owner of the
+// bot runtime, see createBotInteraction) — while the chat read/follow routes
+// scoped by the raw session principal. For an automated (bot) session the raw
+// principal is the bot user itself, so the session that had just created a
+// dispatched interaction could not read or follow it back and the dispatched run
+// never started (the same defect behind the silent_idle_freeze failures on
+// ci#848).
+//
+// Mirroring the bots API's resolveActingUser, an automated session additionally
+// scopes by the owner of its active runtime config. The resolution is strictly
+// additive — the raw session principal stays in scope — so a bot session still
+// reads every chat it participates in (for example an interaction dispatched by
+// a non-owner acting user) and no visibility is lost. It is a no-op for
+// non-automated sessions and for bots without an active runtime config, so
+// authorisation for unrelated users is unchanged.
+func actingScopeUserIDs(db *gorm.DB, user *database.User) []uint {
+	if user == nil {
+		return nil
+	}
+	ids := []uint{user.ID}
+	if db == nil || !user.IsAutomated {
+		return ids
+	}
+	var runtime database.BotRuntimeConfig
+	err := db.Where("bot_user_id = ? AND is_active = ?", user.ID, true).First(&runtime).Error
+	if err != nil || runtime.OwnerUserId == 0 || runtime.OwnerUserId == user.ID {
+		return ids
+	}
+	return append(ids, runtime.OwnerUserId)
+}
+
+// resolveChatActingUserID maps a session principal to the user a chat share is
+// created for and removed from.
+//
+// ci#865: the bots API stores a dispatched interaction owner-scoped — the
+// participant is the acting user, ie the owner of the bot runtime (see
+// createBotInteraction) — and the completion notification looks the
+// interaction's share up under that owner id
+// (interaction_completed_notification.go). Publish/Unpublish therefore key the
+// share on the resolved acting user instead of the raw session principal. It is
+// a no-op for non-automated sessions and for bots without an active runtime
+// config, so ownership for ordinary users is unchanged.
+func resolveChatActingUserID(db *gorm.DB, user *database.User) uint {
+	if user == nil {
+		return 0
+	}
+	if db == nil || !user.IsAutomated {
+		return user.ID
+	}
+	var runtime database.BotRuntimeConfig
+	if err := db.Where("bot_user_id = ? AND is_active = ?", user.ID, true).First(&runtime).Error; err != nil {
+		return user.ID
+	}
+	if runtime.OwnerUserId == 0 || runtime.OwnerUserId == user.ID {
+		return user.ID
+	}
+	return runtime.OwnerUserId
+}
+
+// scopeByParticipant restricts a query to rows where one of the given columns
+// matches any of the ids.
+func scopeByParticipant(db *gorm.DB, ids []uint, columns ...string) *gorm.DB {
+	conditions := make([]string, 0, len(columns))
+	args := make([]interface{}, 0, len(columns))
+	for _, column := range columns {
+		if len(ids) == 1 {
+			conditions = append(conditions, column+" = ?")
+			args = append(args, ids[0])
+			continue
+		}
+		conditions = append(conditions, column+" IN ?")
+		args = append(args, ids)
+	}
+	return db.Where(strings.Join(conditions, " OR "), args...)
+}
 
 // scopedChatQuery restricts a chats query to the chats the user participates
 // in. Admins may inspect any chat so they can view and manage other users'
@@ -13,7 +98,11 @@ func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
 	if user != nil && user.IsAdmin {
 		return db
 	}
-	return db.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	ids := actingScopeUserIDs(db, user)
+	if len(ids) == 0 {
+		return db.Where("1 = 0")
+	}
+	return scopeByParticipant(db, ids, "user1_id", "user2_id")
 }
 
 // scopedMessageQuery restricts a messages query to the messages the user
@@ -22,7 +111,11 @@ func scopedMessageQuery(db *gorm.DB, user *database.User) *gorm.DB {
 	if user != nil && user.IsAdmin {
 		return db
 	}
-	return db.Where("receiver_id = ? OR sender_id = ?", user.ID, user.ID)
+	ids := actingScopeUserIDs(db, user)
+	if len(ids) == 0 {
+		return db.Where("1 = 0")
+	}
+	return scopeByParticipant(db, ids, "receiver_id", "sender_id")
 }
 
 // findAccessibleChat loads a chat by UUID for the given user. Admins may load
@@ -31,6 +124,22 @@ func findAccessibleChat(db *gorm.DB, user *database.User, chatUUID string) (data
 	var chat database.Chat
 	err := scopedChatQuery(db, user).Where("uuid = ?", chatUUID).First(&chat).Error
 	return chat, err
+}
+
+// writeChatErrorJSON writes a JSON error body, keeping the HTTP status code the
+// read routes used to return.
+//
+// ci#865: those routes answered with http.Error's plain-text body, so the
+// generated CI client — which reads the body as JSON on that failure path —
+// died in its JSON decoder ("JSONDecodeError: Expecting value: line 1 column 1")
+// instead of surfacing the actual failure. Consumers can now always parse the
+// body and read .error.
+func writeChatErrorJSON(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		logging.Errorf("failed to encode chat error response: %v", err)
+	}
 }
 
 // adminIsExternalViewer reports whether an admin is looking at a chat they do

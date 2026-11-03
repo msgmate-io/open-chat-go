@@ -211,10 +211,154 @@ type BashCoverageReport struct {
 	// UntypedExamples holds up to BashCoverageMaxExamples unclassified commands,
 	// so the residual `coder_bash` shapes stay visible instead of just counted.
 	UntypedExamples []string `json:"untyped_examples,omitempty"`
+	// WrittenVerifications counts the mutating typed GitHub writes that were
+	// re-read and reported as verified during the turn (ci#514 phase 1 exit
+	// criterion 4): writes are verified by read-back instead of claimed.
+	// An unset (zero) value means "no recorded verification evidence yet",
+	// which the criteria evaluator treats as unattested rather than assumed.
+	WrittenVerifications int `json:"written_verifications,omitempty"`
+	// WrittenRecorded is the denominator WrittenCoverageFraction divides by:
+	// every mutating typed GitHub write that was recorded during the turn,
+	// whether or not its read-back verified it yet. It is the per-record
+	// persistence of the "0 vs 1" stub WrittenCoverageFraction replaced.
+	WrittenRecorded int `json:"written_recorded,omitempty"`
+	// WrittenUnverified counts the recorded writes that are still waiting on a
+	// verified read-back (the residual the phase-1 exit criterion works off).
+	WrittenUnverified int `json:"written_unverified,omitempty"`
 }
 
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
 const BashCoverageMaxExamples = 5
+
+// GitHubWriteVerificationsFromMessages derives the per-record write verdicts of
+// a turn straight from the same assistant transcript the coverage report
+// classifies: every mutating typed GitHub tool call is a recorded write, and a
+// later tool-result read-back that mentions the write's payload (the body_or_call
+// the write produced) closes it as verified. It is the transcript pivot nativecoder's
+// read-back modal already works in - a verdict row per recorded mutating write,
+// verified only when the read-back re-read it. A malformed or missing read-back
+// leaves the record unverified rather than inventing a verification, so the
+// criterion's "verified instead of claimed" never sees a claimed write.
+func GitHubWriteVerificationsFromMessages(messages []map[string]interface{}) []GitHubWriteVerificationResult {
+	var verdicts []GitHubWriteVerificationResult
+	for _, message := range messages {
+		if roleOf(message) != "assistant" {
+			continue
+		}
+		for _, call := range toolCallsOf(message) {
+			if function, ok := call["function"].(map[string]interface{}); ok {
+				name, _ := function["name"].(string)
+				if readTool, writeHint := GitHubWriteVerificationFor(name); readTool != "" && writeHint != "" {
+					verdicts = append(verdicts, githubWriteVerificationFromToolCall(call, name, messages))
+				}
+			}
+		}
+	}
+	return verdicts
+}
+
+// toolCallArgumentsOf extracts the raw JSON arguments string of one tool call
+// record, mirroring how BashCommandsFromMessages reads `function.arguments`.
+func toolCallArgumentsOf(call map[string]interface{}) (string, bool) {
+	if function, ok := call["function"].(map[string]interface{}); ok {
+		if arguments, ok := function["arguments"].(string); ok {
+			return arguments, true
+		}
+	}
+	arguments, _ := call["arguments"].(string)
+	return arguments, arguments != ""
+}
+
+// firstString reads the first non-empty string value for key off a parsed JSON
+// payload map, or "".
+func firstString(payload map[string]interface{}, key string) string {
+	if raw, ok := payload[key]; ok {
+		if value, ok := raw.(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+// githubWriteVerificationFromToolCall resolves one recorded mutating typed GitHub
+// write into its verdict by matching the write's payload (the body_or_call string
+// the writes layer injects) against the read-back tool results.
+func githubWriteVerificationFromToolCall(call map[string]interface{}, tool string, messages []map[string]interface{}) GitHubWriteVerificationResult {
+	arguments, _ := toolCallArgumentsOf(call)
+	var payload map[string]interface{}
+	_ = json.Unmarshal([]byte(arguments), &payload)
+	body := strings.TrimSpace(firstString(payload, "body_or_call"))
+	if body == "" {
+		body = strings.TrimSpace(firstString(payload, "command"))
+	}
+	if body == "" {
+		if rawCommands, ok := payload["commands"].([]interface{}); ok {
+			for _, entry := range rawCommands {
+				if typed, ok := entry.(string); ok {
+					if trimmed := strings.TrimSpace(typed); trimmed != "" {
+						body = trimmed
+						break
+					}
+				}
+			}
+		}
+	}
+	readTool, _ := GitHubWriteVerificationFor(tool)
+	verdict := GitHubWriteVerificationResult{
+		Tool:     tool,
+		ReadTool: readTool,
+		Body:     body,
+		Reason:   "no matching read-back yet",
+	}
+	if body != "" {
+		for _, message := range messages {
+			if roleOf(message) != "tool" {
+				continue
+			}
+			content, _ := message["content"].(string)
+			if content != "" && strings.Contains(content, body) {
+				verdict.Verified = true
+				verdict.Reason = ""
+				break
+			}
+		}
+	}
+	return verdict
+}
+
+// GitHubWriteVerificationsSummary aggregates the verdict rows of a turn into
+// the counted columns the coverage report and the metadata render. It is the
+// pure, dependency-free bridge between the per-record read-back verdicts
+// (github_writes.go) and the report's WrittenRecorded / WrittenVerifications /
+// WrittenUnverified counts, so the api layer stays measurement-only and the
+// criterion evaluator keeps consuming the same row shape as before.
+func GitHubWriteVerificationsSummary(verdicts []GitHubWriteVerificationResult) (recorded, verified, unverified int) {
+	for _, verdict := range verdicts {
+		recorded++
+		if verdict.Verified {
+			verified++
+		} else {
+			unverified++
+		}
+	}
+	return recorded, verified, unverified
+}
+
+// ApplyGitHubWriteVerifications folds the per-record read-back verdicts of the
+// turn into the coverage report: WrittenRecorded counts every recorded mutating
+// typed GitHub write, WrittenVerifications counts the ones the read-back
+// confirmed, and the leftover records are kept visible in WrittenUnverified so
+// "writes still waiting on a read-back" stays a number, not a gap. The report
+// is returned unchanged when no verdicts are supplied (the empty-report case
+// must keep its zero values so the criteria evaluator treats a chat without
+// evidence as unattested, not as all-verified).
+func (r BashCoverageReport) ApplyGitHubWriteVerifications(verdicts []GitHubWriteVerificationResult) BashCoverageReport {
+	recorded, verified, unverified := GitHubWriteVerificationsSummary(verdicts)
+	r.WrittenRecorded = recorded
+	r.WrittenVerifications = verified
+	r.WrittenUnverified = unverified
+	return r
+}
 
 // BuildBashCoverageReport classifies every command of a turn and aggregates the
 // buckets into the coverage report.
@@ -271,6 +415,34 @@ func (r BashCoverageReport) Categories() []string {
 	return names
 }
 
+// WrittenCoverageFraction is the share of recorded typed GitHub writes that
+// were verified by their read-back. It is the phase-1 exit-criterion-4 metric:
+// writes verified instead of claimed. WrittenVerifications is the numerator
+// (the count of read-back verified writes); WrittenRecorded is the denominator
+// (every mutating typed GitHub write that was recorded, verified or not), so
+// 0 means "no writes verified yet" and 1 means "every recorded write was
+// verified" — never a guess: with nothing recorded the metric stays 0
+// (unattested), and the criteria evaluator treats that as no-exit-evidence.
+func (r BashCoverageReport) WrittenCoverageFraction() float64 {
+	if r.WrittenRecorded == 0 {
+		return 0
+	}
+	if r.WrittenVerifications >= r.WrittenRecorded {
+		return 1
+	}
+	return float64(r.WrittenVerifications) / float64(r.WrittenRecorded)
+}
+
+// WrittenCoveragePercent is WrittenCoverageFraction rounded for the JSON
+// metadata, so the payload reads like the ticket evidence (0..100).
+func (r BashCoverageReport) WrittenCoveragePercent() int {
+	fraction := r.WrittenCoverageFraction()
+	if fraction >= 1 {
+		return 100
+	}
+	return int(fraction * 100)
+}
+
 // Metadata renders the coverage report as JSON-friendly state, so the
 // `coder_context` payload can carry the per-turn bash coverage (ci#514 S1).
 func (r BashCoverageReport) Metadata() map[string]interface{} {
@@ -278,13 +450,18 @@ func (r BashCoverageReport) Metadata() map[string]interface{} {
 	for name, count := range r.ByCategory {
 		byCategory[name] = count
 	}
-	return map[string]interface{}{
-		"total":                  r.Total,
-		"by_category":            byCategory,
-		"typed_coverable":        r.TypedCoverable,
-		"typed_coverage_percent": r.TypedCoveragePercent(),
-		"untyped_examples":       r.UntypedExamples,
+	meta := map[string]interface{}{
+		"total":                    r.Total,
+		"by_category":              byCategory,
+		"typed_coverable":          r.TypedCoverable,
+		"typed_coverage_percent":   r.TypedCoveragePercent(),
+		"untyped_examples":         r.UntypedExamples,
+		"written_verifications":    r.WrittenVerifications,
+		"written_recorded":         r.WrittenRecorded,
+		"written_unverified":       r.WrittenUnverified,
+		"written_coverage_percent": r.WrittenCoveragePercent(),
 	}
+	return meta
 }
 
 // bashToolCallArguments is the `coder_bash` input the classifier understands

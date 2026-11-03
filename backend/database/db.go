@@ -49,21 +49,46 @@ func GetGlobalDB() *gorm.DB {
 	return globalDB
 }
 
+// gormConfig is the shared GORM config for every backend. Foreign-key
+// constraints are not created (ci#878): SQLite, the original backend, does not
+// enforce FKs by default and the data carries dangling references (e.g.
+// bot_user_id=0 meaning "none"), so an enforced PostgreSQL schema rejects
+// inserts the app has always made. Matching SQLite's behaviour keeps the two
+// backends interchangeable.
+func gormConfig() *gorm.Config {
+	return &gorm.Config{
+		Logger:                                   gormLoggerFor(false),
+		DisableForeignKeyConstraintWhenMigrating: true,
+	}
+}
+
 func SetupDatabase(config DBConfig) *gorm.DB {
 	var db *gorm.DB
 	var err error
 
 	switch config.Backend {
 	case "sqlite":
+		jsonRawValueAsText = false
 		db, err = openSQLite(config.FilePath)
 	case "postgres":
-		db, err = gorm.Open(postgres.Open(config.FilePath), &gorm.Config{Logger: gormLoggerFor(false)})
+		// jsonb columns need a text parameter; see JSONRaw.Value (ci#878).
+		jsonRawValueAsText = true
+		// Guard against a DSN query mode that turns []byte JSON writes into
+		// bytea (SQLSTATE 22P02); see ensureJSONSafeQueryMode (ci#878).
+		db, err = gorm.Open(postgres.Open(ensureJSONSafeQueryMode(config.FilePath)), gormConfig())
 	default:
 		panic(fmt.Sprintf("Unsupported database backend: %s", config.Backend))
 	}
 
 	if err != nil {
 		panic(fmt.Sprintf("Failed to connect to database: %v", err))
+	}
+
+	// ci#850: keep the SQLite WAL bounded under the write burst of a large
+	// bot-reply backlog. The connection pragmas already auto-checkpoint, and
+	// this periodic truncating checkpoint reclaims the WAL file's space.
+	if config.Backend == "sqlite" {
+		StartWALCheckpointer(db, defaultWALCheckpointInterval)
 	}
 
 	stmt := &gorm.Statement{DB: db}

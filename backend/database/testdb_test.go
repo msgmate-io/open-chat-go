@@ -387,8 +387,10 @@ var asyncDBWriterHandshakeMarkers = []string{
 // is drained by their own stop function (cancel + <-done) instead of the shared
 // tracker. An entry that stops matching fails the test, so the list cannot rot.
 var knownAsyncDBWriterViolations = map[string]string{
-	"backend/database/session_cleanup.go":  "session sweeper is stopped by its own stop func (cancel + <-done)",
-	"backend/database/session_lifetime.go": "session refresh is stopped by its own stop func (cancel + <-done)",
+	"backend/database/message_retention.go":  "message retention prune is stopped by its own stop func (cancel + <-done)",
+	"backend/database/session_cleanup.go":    "session sweeper is stopped by its own stop func (cancel + <-done)",
+	"backend/database/session_lifetime.go":   "session refresh is stopped by its own stop func (cancel + <-done)",
+	"backend/database/sqlite_maintenance.go": "WAL checkpointer is stopped by StopWALCheckpointer (cancel + <-done)",
 }
 
 var asyncDBGoroutinePattern = regexp.MustCompile(`^\s*go\s+\S`)

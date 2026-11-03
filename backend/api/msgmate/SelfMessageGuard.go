@@ -183,6 +183,25 @@ func (g *SelfMessageGuard) RecordError(key string, err error) {
 	}
 }
 
+// RecordSkip records a deferral that the run policy did not decide itself
+// (ci#845: the coordination-owner gate) for the status/observability surface.
+func (g *SelfMessageGuard) RecordSkip(key, reason string) bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	entry, ok := g.slots[key]
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = selfMessageSkipLiveTurn
+	}
+	recordSelfMessageSkip(entry, reason)
+	return true
+}
+
 // Retire stops future runs of a schedule and reports whether it was active.
 func (g *SelfMessageGuard) Retire(key, reason string) bool {
 	if g == nil {

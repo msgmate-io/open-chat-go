@@ -102,7 +102,8 @@ func TestIsSQLiteBusyError(t *testing.T) {
 
 // TestOpenSQLiteSetsBusyTimeoutAndWAL guards the connection pragmas the startup
 // bootstrap relies on: without them a second process fails instantly instead of
-// waiting for the write lock.
+// waiting for the write lock, and the WAL can grow unbounded under a write
+// burst (ci#850).
 func TestOpenSQLiteSetsBusyTimeoutAndWAL(t *testing.T) {
 	DB, err := openSQLite(filepath.Join(t.TempDir(), "pragma_test.db"))
 	if err != nil {
@@ -114,8 +115,8 @@ func TestOpenSQLiteSetsBusyTimeoutAndWAL(t *testing.T) {
 	if err := DB.Raw("PRAGMA busy_timeout").Scan(&busyTimeout).Error; err != nil {
 		t.Fatalf("failed to read busy_timeout: %v", err)
 	}
-	if busyTimeout != 10000 {
-		t.Fatalf("expected busy_timeout 10000, got %d", busyTimeout)
+	if busyTimeout != 30000 {
+		t.Fatalf("expected busy_timeout 30000, got %d", busyTimeout)
 	}
 
 	var journalMode string
@@ -124,6 +125,22 @@ func TestOpenSQLiteSetsBusyTimeoutAndWAL(t *testing.T) {
 	}
 	if strings.ToLower(journalMode) != "wal" {
 		t.Fatalf("expected journal_mode wal, got %q", journalMode)
+	}
+
+	var synchronous int
+	if err := DB.Raw("PRAGMA synchronous").Scan(&synchronous).Error; err != nil {
+		t.Fatalf("failed to read synchronous: %v", err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("expected synchronous NORMAL (1), got %d", synchronous)
+	}
+
+	var autoCheckpoint int
+	if err := DB.Raw("PRAGMA wal_autocheckpoint").Scan(&autoCheckpoint).Error; err != nil {
+		t.Fatalf("failed to read wal_autocheckpoint: %v", err)
+	}
+	if autoCheckpoint != 1000 {
+		t.Fatalf("expected wal_autocheckpoint 1000, got %d", autoCheckpoint)
 	}
 }
 

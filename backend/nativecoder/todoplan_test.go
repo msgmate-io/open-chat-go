@@ -99,6 +99,24 @@ func TestRenderCoderTodoPlan(t *testing.T) {
 	if strings.Index(rendered, "going") > strings.Index(rendered, "later") {
 		t.Fatal("in-progress items must render before pending ones")
 	}
+
+	// The structured JSON metadata form carries only revision / version / status
+	// counts — never command or output text — so it is safe to render anywhere.
+	encoded, err := CoderTodoPlanJSON(plan)
+	if err != nil {
+		t.Fatalf("plan json: %v", err)
+	}
+	for _, want := range []string{`"revision":3`, `"completed":1`, `"total":4`} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("plan json missing %q: %s", want, encoded)
+		}
+	}
+	for _, leak := range []string{"going", "later", "secret", "token", "password"} {
+		if strings.Contains(encoded, leak) {
+			t.Fatalf("plan json must not carry %q: %s", leak, encoded)
+		}
+	}
+
 	if next, ok := plan.NextItem(); !ok || next.ID != "2" {
 		t.Fatalf("next item: %+v ok=%v", next, ok)
 	}
@@ -109,7 +127,7 @@ func TestRenderCoderTodoPlan(t *testing.T) {
 	if meta["revision"] != 3 || meta["next_item_id"] != "2" || meta["completed"] != 1 {
 		t.Fatalf("metadata: %+v", meta)
 	}
-	if got := RenderCoderTodoPlan(CoderTodoPlan{Revision: 2}); got != "Todo plan (revision 2): none." {
+	if got := RenderCoderTodoPlan(CoderTodoPlan{Revision: 2}); got != "Todo plan (revision 2): all done." {
 		t.Fatalf("cleared render: %q", got)
 	}
 }

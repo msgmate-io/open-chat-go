@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 
-import { BookOpen, PlayCircle } from "lucide-react"
+import { BookOpen, Sparkles } from "lucide-react"
 import { CinematicLogo } from "@/components/CinematicLogo"
 import { ConnectedThemeSelector } from "@open-chat-go/ui"
 import {
@@ -431,11 +431,11 @@ export function LandingHero({
                     variant="ghost"
                     size="sm"
                     className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => setIsVideoOpen(true)}
+                    onClick={() => navigateTo("/overview")}
                 >
-                    <PlayCircle className="size-3.5" aria-hidden="true" />
-                    <span className="hidden sm:inline">Watch Release Announcement</span>
-                    <span className="sm:hidden">Demo</span>
+                    <Sparkles className="size-3.5" aria-hidden="true" />
+                    <span className="hidden sm:inline">What can Open-Chat do?</span>
+                    <span className="sm:hidden">Product</span>
                 </Button>
             </div>
         </div>

@@ -155,6 +155,9 @@ func TestCapabilityPlanTracksKnownTickets(t *testing.T) {
 		"consolidation_merge_ready_prs":      {653, 683},
 		"hive_mind_dispatch_observe":         {540},
 		"typed_github_pr_flow":               {514, 649},
+		"msgmate_coder_bugfix":               {915},
+		"msgmate_coder_ask":                  {925},
+		"msgmate_coder_fibonacci_json":       {939},
 	}
 	for id, tickets := range expectations {
 		scenario, ok := ScenarioByID(id)
