@@ -297,6 +297,64 @@ func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
 	return selectors
 }
 
+// coderAskPayloadType is the discriminator a coder_ask tool result carries so
+// the ask is surfaced as an interactive question. The private msgmate-coder
+// integration's autonomous resolver emits exactly this shape (ci#925); the
+// coder sandbox regression (ci#947) failed because the resolved ask question
+// reached the frontend without its options.
+const coderAskPayloadType = "ask-question"
+
+// parseCoderAskPayload detects a coder_ask question returned as a tool result.
+// It returns false for any other payload so unrelated tool results are left
+// untouched.
+func parseCoderAskPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != coderAskPayloadType {
+		return nil, false
+	}
+	// A question without at least one option cannot render as an interactive
+	// choice; do not surface a broken widget.
+	if options, ok := payload["options"].([]interface{}); !ok || len(options) == 0 {
+		return nil, false
+	}
+	return payload, true
+}
+
+// collectCoderAskQuestions gathers the coder_ask question payloads attached to
+// the finished tool calls so they can be persisted alongside the message meta.
+// The frontend renders them as the interactive question widget.
+func collectCoderAskQuestions(toolCalls []interface{}) []interface{} {
+	questions := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		question, ok := toolCall["ask_question"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// A message can carry more than one question; give each a stable id so
+		// the frontend can target a specific one. The LLM tool-call id is
+		// unique within the message and stable across partial/final
+		// deliveries.
+		if id, _ := question["id"].(string); strings.TrimSpace(id) == "" {
+			if toolCallID, _ := toolCall["id"].(string); strings.TrimSpace(toolCallID) != "" {
+				question["id"] = toolCallID
+			}
+		}
+		questions = append(questions, question)
+	}
+	return questions
+}
+
 // trustedRuntimeSelfHost returns the base URL an in-process tool execution can
 // use to call back into the backend API. It mirrors the confirmable-action
 // executor's toolRuntimeSelfHost: the bot client normally carries the
@@ -1411,6 +1469,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 			metadata["runtime_selectors"] = runtimeSelectors
 		}
+		if askQuestions := collectCoderAskQuestions(allToolCalls); len(askQuestions) > 0 {
+			metadata["ask_questions"] = askQuestions
+		}
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
 		}
@@ -1867,6 +1928,15 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					toolCallRepr["runtime_selector"] = selectorMeta
 				}
 
+				// A coder_ask tool result whose resolver already answered
+				// carries an `ask-question` payload (ci#925). Surface it the
+				// same way as a runtime selector: the question reaches the
+				// frontend with options intact instead of being collapsed into
+				// a plain text tool result (ci#947).
+				if askMeta, ok := parseCoderAskPayload(toolCall.Result); ok {
+					toolCallRepr["ask_question"] = askMeta
+				}
+
 				updated := false
 				for i, registeredToolCall := range allToolCalls {
 					existing, ok := registeredToolCall.(map[string]interface{})
@@ -1913,6 +1983,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 				if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 					partialMeta["runtime_selectors"] = runtimeSelectors
+				}
+				if askQuestions := collectCoderAskQuestions(allToolCalls); len(askQuestions) > 0 {
+					partialMeta["ask_questions"] = askQuestions
 				}
 				seq := nextPartialSeq()
 				aih.botContext.WSHandler.MessageHandler.SendMessage(
