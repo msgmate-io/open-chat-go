@@ -264,7 +264,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "Looking at the environment and at running services: env vars, binaries on PATH, processes, logs, dev servers, outbound HTTP probes.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_4_integration_clis",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"env",
 			"command -v go",
@@ -286,7 +286,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "kubectl, docker, ssh, helm and friends: every one of these is a domain the platform already owns through an integration, so the typed tool must be owned by that integration and exposed through the Host boundary.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_4_integration_clis",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"kubectl get pods -n open-chat",
 			"kubectl describe deployment open-chat",
