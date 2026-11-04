@@ -99,6 +99,9 @@ func BashRetirementDriveRecordCheck(record BashRetirementDriveRecord) BashRetire
 		"git status":                                                BashCategoryRepoInspection,
 		"git log -5":                                                BashCategoryRepoInspection,
 		"git diff":                                                  BashCategoryRepoInspection,
+		"kubectl get pods -n a":                                     BashCategoryIntegrationCLI,
+		"docker ps":                                                 BashCategoryIntegrationCLI,
+		"gh pr checks 1 --watch":                                    BashCategoryGitHubWait,
 	}
 	for claim, category := range claims {
 		if got := ClassifyShellCommand(claim); got != category {
@@ -108,6 +111,7 @@ func BashRetirementDriveRecordCheck(record BashRetirementDriveRecord) BashRetire
 	if check.Checked {
 		check.Verified = []string{
 			"gh issue list/view/diff/api/auth status", "git status/log/diff",
+			"kubectl get pods / docker ps", "gh pr checks --watch",
 		}
 	}
 	return check
