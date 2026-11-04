@@ -76,13 +76,13 @@ export function clampCssSizeVh(
 // desktop keeps the side-by-side, vertically centered layout next to the
 // typewriter pane.
 export const AUTH_SHELL_CLASSES =
-  "relative flex h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent"
+  "relative flex h-full flex-col overflow-y-auto bg-red-600 md:h-full md:min-h-0 md:overflow-hidden md:bg-red-900"
 
 export const AUTH_BODY_CLASSES =
   "flex md:flex-row flex-col items-center justify-start md:justify-center content-center h-auto min-h-0 md:h-full flex-1"
 
 export const AUTH_PANEL_CLASSES =
-  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
+  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-red-600/40 text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
 
 export const AUTH_CONTENT_CLASSES =
   "flex flex-col items-center justify-start md:justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4"

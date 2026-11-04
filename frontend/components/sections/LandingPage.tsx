@@ -204,13 +204,13 @@ function IndexTab({
         setIsMobileRuntime(isMobileAppRuntime())
     }, [])
 
-    const pillClass = "rounded-full md:py-6 md:text-xl text-md py-4 font-bold w-full max-w-[240px] bg-transparent text-secondary-foreground hover:bg-accent hover:text-accent-foreground"
+    const pillClass = "rounded-full md:py-6 md:text-xl text-md py-4 font-bold w-full max-w-[240px] bg-red-800/60 text-white hover:bg-red-700 hover:text-white"
 
     return <div className="flex w-full flex-col items-center justify-center">
         {isLoggedIn ? (
             <>
                 <div className="mb-4 md:hidden [@media(max-height:700px)]:mb-2">
-                    <div className="flex flex-col items-center gap-3 rounded-3xl bg-secondary/70 p-5 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
+                    <div className="flex flex-col items-center gap-3 rounded-3xl bg-red-950/50 p-5 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
                         <ResponsiveLogo preferredPx={330} vminRatio={0.5} vhRatio={0.28} className="pointer-events-none" />
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
@@ -221,7 +221,7 @@ function IndexTab({
                     </div>
                 </div>
                 <div className="mb-6 hidden md:block">
-                    <div className="flex flex-col items-center gap-4 rounded-3xl bg-secondary/70 p-6">
+                    <div className="flex flex-col items-center gap-4 rounded-3xl bg-red-950/50 p-6">
                         <ResponsiveLogo preferredPx={480} vminRatio={0.6} className="pointer-events-none" />
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
@@ -244,7 +244,7 @@ function IndexTab({
                             <div className="absolute inset-0 flex items-center justify-center [backface-visibility:hidden]">
                                 <CinematicLogo fluid className={"pointer-events-none"} />
                             </div>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-3xl bg-secondary/70 p-5 [backface-visibility:hidden] [transform:rotateY(180deg)] [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-3xl bg-red-950/50 p-5 [backface-visibility:hidden] [transform:rotateY(180deg)] [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
                                 {hasSignupEnabled && <Button variant="ghost" className={pillClass} onClick={() => {
                                     navigateTo("/sign-up")
                                 }}>Sign-up</Button>}
@@ -270,7 +270,7 @@ function IndexTab({
                             <div className="absolute inset-0 flex items-center justify-center [backface-visibility:hidden]">
                                 <CinematicLogo fluid className={"pointer-events-none"} />
                             </div>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-3xl bg-secondary/70 p-6 [backface-visibility:hidden] [transform:rotateY(180deg)]">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-3xl bg-red-950/50 p-6 [backface-visibility:hidden] [transform:rotateY(180deg)]">
                                 {hasSignupEnabled && <Button variant="ghost" className={pillClass} onClick={() => {
                                     navigateTo("/sign-up")
                                 }}>Sign-up</Button>}
@@ -311,7 +311,7 @@ function RegisterTab({
     }
 
     return <div>
-        <div className="flex flex-col items-center content-center justify-center pb-2 text-secondary-foreground">
+        <div className="flex flex-col items-center content-center justify-center pb-2 text-red-50">
             <Text type={TextTypes.Heading5} tag="h1" bold center>
                 No Sign-up Yet!
             </Text>
@@ -369,7 +369,7 @@ export function LandingHero({
     return <>
         <div className={AUTH_SHELL_CLASSES}>
             <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
-                <div className="flex w-full flex-col items-start p-4 text-foreground md:flex-row md:bg-background/80 md:backdrop-blur">
+                <div className="flex w-full flex-col items-start p-4 text-white md:flex-row md:bg-red-900/60 md:backdrop-blur">
                     <Text type={TextTypes.Heading5} tag="div" bold>
                         Open-Chat
                     </Text>
@@ -379,7 +379,7 @@ export function LandingHero({
                 </div>
             </div>
             <div className={AUTH_BODY_CLASSES}>
-                <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
+                <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-red-900 md:w-2/3 h-full shadow-xl z-10 relative text-white">
                     <Typewriter
                         fullHeight
                         typingSpeed={10}
@@ -418,7 +418,7 @@ export function LandingHero({
             <Button
                 variant="ghost"
                 size="sm"
-                className="pointer-events-auto h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                className="pointer-events-auto h-7 select-none gap-1.5 rounded-full border border-white/20 bg-red-900/70 px-2.5 text-xs font-normal text-red-50 shadow-sm backdrop-blur-sm hover:bg-red-800 hover:text-white"
                 onClick={() => navigateTo("/docs")}
             >
                 <BookOpen className="size-3.5" aria-hidden="true" />
@@ -430,7 +430,7 @@ export function LandingHero({
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                    className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-white/20 bg-red-900/70 px-2.5 text-xs font-normal text-red-50 shadow-sm backdrop-blur-sm hover:bg-red-800 hover:text-white"
                     onClick={() => navigateTo("/overview")}
                 >
                     <Sparkles className="size-3.5" aria-hidden="true" />
@@ -455,7 +455,7 @@ export function LandingHero({
                             allowFullScreen
                         />
                     ) : (
-                        <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+                        <div className="flex h-full w-full items-center justify-center text-sm text-red-100">
                             Demo video coming soon
                         </div>
                     )}
