@@ -82,7 +82,7 @@ export const AUTH_BODY_CLASSES =
   "flex md:flex-row flex-col items-center justify-start md:justify-center content-center h-auto min-h-0 md:h-full flex-1"
 
 export const AUTH_PANEL_CLASSES =
-  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-red-600/40 text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
+  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-red-600/40 text-red-50 w-full md:w-1/3 h-auto md:h-full"
 
 export const AUTH_CONTENT_CLASSES =
   "flex flex-col items-center justify-start md:justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4"

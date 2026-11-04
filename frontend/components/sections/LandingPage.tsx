@@ -116,7 +116,7 @@ function GenerateTextForLoggedInUser(user: { name?: string }) {
 }
 
 const footerLinkClass =
-  "h-auto px-2 py-1 text-sm font-normal text-muted-foreground shadow-none hover:bg-muted hover:text-foreground";
+  "h-auto px-2 py-1 text-sm font-normal text-red-200/80 shadow-none hover:text-white";
 const SHOW_LANDING_FOOTER_LINKS = false
 
 // Landing release-announcement video (played by the floating
@@ -150,7 +150,7 @@ function DefaultFooter({ navigateTo }: { navigateTo: (to: string) => void }) {
             >
                 Documentation
             </Button>
-            <span className="text-muted-foreground/40 select-none" aria-hidden="true">|</span>
+            <span className="text-red-200/40 select-none" aria-hidden="true">|</span>
             <Button
                 variant="ghost"
                 className={footerLinkClass}
@@ -164,7 +164,7 @@ function DefaultFooter({ navigateTo }: { navigateTo: (to: string) => void }) {
                     Repository
                 </a>
             </Button>
-            <span className="text-muted-foreground/40 select-none" aria-hidden="true">|</span>
+            <span className="text-red-200/40 select-none" aria-hidden="true">|</span>
             <Button
                 variant="ghost"
                 className={footerLinkClass}
@@ -389,7 +389,7 @@ export function LandingHero({
                 </div>
                 <div className={AUTH_PANEL_CLASSES}>
                     <div className={AUTH_THEME_TOGGLE_CLASSES} data-testid="landing-theme-toggle">
-                        <div className="p-2 hover:bg-accent rounded-xl z-40">
+                        <div className="p-2 hover:bg-white/10 rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
                         </div>
                     </div>
