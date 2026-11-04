@@ -1296,6 +1296,34 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 	}
 
+	// recordExtractedThoughts mirrors final thoughts into thinking_steps when
+	// the inline streaming parser did not open a thinking block for them (for
+	// example when the reasoning config is unset but the model still emitted
+	// inline  thinking tags). The final extractThinkSections pass recovers the
+	// reasoning entries; without this the same response advertises reasoning
+	// but no structured thinking_steps (ci#852 regression coverage).
+	recordExtractedThoughts := func(entries []string) {
+		for _, entry := range entries {
+			trimmed := strings.TrimSpace(entry)
+			if trimmed == "" {
+				continue
+			}
+			alreadyExists := false
+			for _, step := range thinkingSteps {
+				if step["text"] == trimmed {
+					alreadyExists = true
+					break
+				}
+			}
+			if !alreadyExists {
+				thinkingSteps = append(thinkingSteps, map[string]string{
+					"text":     trimmed,
+					"duration": "0s",
+				})
+			}
+		}
+	}
+
 	finalizeThinkingStep := func(duration time.Duration) {
 		stepText := strings.TrimSpace(currentThoughtStep.String())
 		if stepText == "" {
@@ -1413,6 +1441,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 
 		text, extractedThoughts := extractThinkSections(fullText.String())
 		appendThoughtEntries(extractedThoughts)
+		recordExtractedThoughts(extractedThoughts)
 		if isCancelled {
 			text += "\nI paused this response. Send another message when you want me to continue."
 			if reasoning {
@@ -1950,6 +1979,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					timeline.addThought(trimmed, thoughtDurations[trimmed])
 				}
 				appendThoughtEntries(extractedThoughts)
+				recordExtractedThoughts(extractedThoughts)
 				if narration := strings.TrimSpace(capturedText); narration != "" {
 					timeline.addText(narration)
 				}
