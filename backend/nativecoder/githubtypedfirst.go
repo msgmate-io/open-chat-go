@@ -34,6 +34,10 @@ var GitHubTypedFirstPurpose = map[string]string{
 	GitHubToolAwait:        "block until a workflow run or PR checks settle, then return structured terminal state, never busy-wait (`gh pr checks --watch` / `gh run watch` / poll loops)",
 }
 
+// GitHubToolAwait is the awaited CI surface (githubawaitbridge.go); it is
+// listed in GitHubTypedFirstPurpose so the typed-first prompt block covers it.
+const GitHubToolAwait = "github_await"
+
 // GitHubTypedFirstTools returns the typed GitHub tool names in a stable order.
 func GitHubTypedFirstTools() []string {
 	tools := make([]string, 0, len(GitHubTypedFirstPurpose))
