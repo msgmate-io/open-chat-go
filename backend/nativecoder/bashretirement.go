@@ -219,7 +219,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "The toolchain: go/npm/cargo/python builds, tests and the produced programs. Wrapped as raw shell today, so exit codes and diagnostics have to be scraped from stdout.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_2_build_test_run",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"go build ./...",
 			"go test ./backend/nativecoder/...",
@@ -286,7 +286,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "kubectl, docker, ssh, helm and friends: every one of these is a domain the platform already owns through an integration, so the typed tool must be owned by that integration and exposed through the Host boundary.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_4_integration_clis",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"kubectl get pods -n open-chat",
 			"kubectl describe deployment open-chat",
