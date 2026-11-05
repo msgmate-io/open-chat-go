@@ -263,6 +263,22 @@ func TestTranslateGitHubShellCommandAuthAndAPI(t *testing.T) {
 	if !translation.Translated || translation.Call.Arguments["paginate"] != true {
 		t.Fatalf("--paginate must carry through: %+v", translation)
 	}
+
+	translation = TranslateGitHubShellCommand("gh run list --repo msgmate-io/open-chat-go --limit 5")
+	if !translation.Translated || translation.Call.Tool != GitHubToolRunList {
+		t.Fatalf("gh run list must translate to %s, got %+v", GitHubToolRunList, translation)
+	}
+	if translation.Call.Arguments["repo"] != "msgmate-io/open-chat-go" || translation.Call.Arguments["limit"] != 5 {
+		t.Fatalf("run list args = %v", translation.Call.Arguments)
+	}
+
+	translation = TranslateGitHubShellCommand("gh run view 123 --repo msgmate-io/open-chat-go --json status,jobs")
+	if !translation.Translated || translation.Call.Tool != GitHubToolRunView {
+		t.Fatalf("gh run view must translate to %s, got %+v", GitHubToolRunView, translation)
+	}
+	if translation.Call.Arguments["run_id"] != "123" || translation.Call.Arguments["json_fields"] != "status,jobs" {
+		t.Fatalf("run view args = %v", translation.Call.Arguments)
+	}
 }
 
 func TestTranslateGitHubShellCommandRefusesCredentialAndWriteEscapes(t *testing.T) {
