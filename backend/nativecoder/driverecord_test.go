@@ -30,9 +30,11 @@ func TestValidateBashRetirementDriveRecord(t *testing.T) {
 		Phases: []BashRetirementDrivePhase{
 			{ID: "phase_0_measure", State: BashRetirementDriveStateShipped, Targets: "classifier + bash_retirement_report", EvidenceAnchor: "bashretirement.go"},
 			{ID: "phase_1_github", Retires: BashCategoryGitHubCLI, State: BashRetirementDriveStateShipped, Targets: "githubshell.go bridge + github_* typed tools", EvidenceAnchor: "githubshell.go"},
+			{ID: "phase_6_github_wait", Retires: BashCategoryGitHubWait, State: BashRetirementDriveStateOpen, Targets: "github_await (githubawaitbridge.go)", EvidenceAnchor: "githubawaitbridge.go"},
 		},
 		Categories: []BashRetirementDriveCategory{
 			{Category: BashCategoryGitHubCLI, RetiredBy: "phase_1_github", Shipped: true},
+			{Category: BashCategoryGitHubWait, RetiredBy: "phase_6_github_wait", Shipped: false},
 		},
 	}
 	if err := validateBashRetirementDriveRecord(valid); err != nil {
