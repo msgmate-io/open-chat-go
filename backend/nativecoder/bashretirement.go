@@ -37,7 +37,8 @@ import (
 
 // BashRetirementPlanVersion is the plan schema version. It is reported with
 // every coverage run so evidence can be attributed to a plan revision.
-const BashRetirementPlanVersion = 1
+// Bumped to 2 when phase_6_github_wait was added to the plan (ci#514).
+const BashRetirementPlanVersion = 2
 
 const (
 	// BashRetirementDeprecatedTool is the tool the plan retires: the universal
@@ -155,6 +156,7 @@ var bashUsageCategories = []BashUsageCategory{
 			"github_pr_view", "github_pr_list", "github_pr_create", "github_pr_comment", "github_pr_review",
 			"github_pr_merge", "github_auth_status", "github_api",
 			"github_run_list", "github_run_view",
+			"github_await",
 		},
 		Policy: "read/write per tool; github_pr_merge is admin scope",
 		Notes: []string{
@@ -344,6 +346,7 @@ var bashUsageCategories = []BashUsageCategory{
 		TargetTools: []string{
 			GitHubAwaitToolName, GitHubAwaitToolPRChecks, GitHubAwaitToolRunWatch, "github_run_list",
 			"github_run_view",
+			"github_await",
 		},
 		Notes: []string{
 			"the classifier redirects --watch forms and until/while poll loops to this category, never to residual",
