@@ -56,6 +56,7 @@ var coreEnvDescriptions = map[string]string{
 	"REDIS_DB":                "Redis database index.",
 
 	"OPENROUTER_API_KEY":          "OpenRouter API key (openrouter model provider).",
+	"OPENROUTER_API_HOST":         "OpenRouter API base URL override (e.g. https://eu.openrouter.ai/api/v1 for EU in-region routing).",
 	"DEEPINFRA_API_KEY":           "DeepInfra API key (deepinfra model provider).",
 	"LITELLM_API_KEY":             "LiteLLM API key (litellm model provider).",
 	"LITELLM_API_HOST":            "LiteLLM API base URL.",
