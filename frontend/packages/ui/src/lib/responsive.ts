@@ -75,20 +75,14 @@ export function clampCssSizeVh(
 // directly under the header and the form starts at the top of the panel;
 // desktop keeps the side-by-side, vertically centered layout next to the
 // typewriter pane.
-//
-// The landing page background color is red (ci#955): the shell and the auth
-// panel paint the page red, and the typewriter pane on md+ surfaces stays solid
-// red because the shell is transparent there (md:bg-transparent) and the pane's
-// own bg-background class comes later in the cascade than the panel pseudo
-// background.
 export const AUTH_SHELL_CLASSES =
-  "relative flex h-full flex-col overflow-y-auto bg-red-600 md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent"
+  "relative flex h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent"
 
 export const AUTH_BODY_CLASSES =
   "flex md:flex-row flex-col items-center justify-start md:justify-center content-center h-auto min-h-0 md:h-full flex-1"
 
 export const AUTH_PANEL_CLASSES =
-  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-red-600 text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
+  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
 
 export const AUTH_CONTENT_CLASSES =
   "flex flex-col items-center justify-start md:justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4"
