@@ -23,6 +23,10 @@ func init() {
 	// so a lead agent can start a later turn on its own chat without a GitHub
 	// workflow or a CronJob.
 	tooldefs.CoderScheduleRunnerProvider = coderScheduleToolRunner
+	// ci#394 gap 7 (ticket ci#957): back the `coder_compact` tool with the
+	// core's per-chat compaction store, whose bounded output is the persisted
+	// context_summary the reader re-injects on later turns.
+	tooldefs.CoderCompactRunnerProvider = coderCompactToolRunner
 }
 
 func NewWeatherTool() Tool {
