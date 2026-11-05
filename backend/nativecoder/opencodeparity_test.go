@@ -72,8 +72,9 @@ func TestOpenCodeParityGapsTrackTheTicketAndPhase(t *testing.T) {
 		t.Errorf("expected todo list, session trust and shell modes in phase %q, got %v", ParityPhaseNow, now)
 	}
 	// Once a gap is closed its shipping tools become part of the surface; the
-	// now-phase gaps of ci#394 (todo list, session trust, shell modes) are closed.
-	for _, id := range []string{"todo_list", "session_trust", "shell_modes"} {
+	// now-phase gaps of ci#394 (todo list, session trust, shell modes and
+	// context compaction) are closed.
+	for _, id := range []string{"todo_list", "session_trust", "shell_modes", "context_compaction"} {
 		gap, ok := OpenCodeParityGap(id)
 		if !ok {
 			t.Fatalf("expected gap %q to exist", id)
@@ -100,7 +101,7 @@ func TestPendingParityToolsAreOutsideTheCurrentSurface(t *testing.T) {
 			t.Errorf("pending tool %q is already part of the coder surface", tool)
 		}
 	}
-	for _, want := range []string{"coder_patch", "coder_codesearch", "coder_mcp_call"} {
+	for _, want := range []string{"coder_codesearch", "coder_mcp_call"} {
 		found := false
 		for _, tool := range pending {
 			if tool == want {
@@ -116,17 +117,17 @@ func TestPendingParityToolsAreOutsideTheCurrentSurface(t *testing.T) {
 	}
 
 	// A closed gap stops contributing its tools, and an extension gap never does.
-	// The shipped todo/trust surface must be absent from the pending list even
-	// when the other gaps stay open.
+	// The shipped todo/trust/compact surface must be absent from the pending
+	// list even when the other gaps stay open.
 	closed := OpenCodeParityGaps()
 	for i := range closed {
-		if closed[i].ID == "todo_list" || closed[i].ID == "session_trust" {
+		if closed[i].ID == "todo_list" || closed[i].ID == "session_trust" || closed[i].ID == "context_compaction" {
 			closed[i].Status = ParityStatusClosed
 		}
 	}
 	remaining := PendingParityToolsFor(closed)
 	for _, tool := range remaining {
-		if tool == "coder_todo_write" || tool == "coder_todo_read" || tool == "coder_trust" {
+		if tool == "coder_todo_write" || tool == "coder_todo_read" || tool == "coder_trust" || tool == "coder_compact" {
 			t.Errorf("a closed gap still reported %q as pending", tool)
 		}
 	}
@@ -141,7 +142,7 @@ func TestRetirementParityBlockersListOpenGaps(t *testing.T) {
 		t.Fatal("expected opencode parity to block retirement while gaps are open")
 	}
 	joined := strings.Join(blockers, "\n")
-	for _, want := range []string{"multi_edit_patch", "mcp_servers", "subagents"} {
+	for _, want := range []string{"code_search_and_lsp", "mcp_servers", "subagents"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("blockers do not mention gap %q:\n%s", want, joined)
 		}
@@ -201,7 +202,7 @@ func TestParityBlockersAreTheOnlyGateOnceTheRolloutIsComplete(t *testing.T) {
 		RetainedParity:   ParityRetentionEntries(),
 	})
 	joinedReadiness := strings.Join(readiness, "\n")
-	if !strings.Contains(joinedReadiness, "multi_edit_patch") {
+	if !strings.Contains(joinedReadiness, "code_search_and_lsp") {
 		t.Fatalf("the composed retirement gate must report the open ci#394 gaps, got %v", readiness)
 	}
 	if strings.Contains(joinedReadiness, "still runs opencode") {

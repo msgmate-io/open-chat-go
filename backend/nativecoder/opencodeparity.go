@@ -79,10 +79,12 @@ func CoderSurfaceTools() []string {
 		"coder_ask",
 		"coder_write",
 		"coder_edit",
+		"coder_patch",
 		"coder_bash",
 		"coder_git",
 		"coder_todo_write",
 		"coder_todo_read",
+		"coder_compact",
 		"coder_trust",
 	}
 }
@@ -160,14 +162,14 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "multi_edit_patch",
 		Title:  "Apply a multi-hunk patch in one call",
 		Phase:  ParityPhaseNext,
-		Status: ParityStatusOpen,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_patch",
 		},
 		OpenCodeTools:    []string{"patch"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "Only single exact-string coder_edit exists; a large refactor costs one confirmation per hunk.",
+		Note:             "patchmodes.go ships the pure all-or-nothing multi-hunk engine (per-file current content, ordered hunks, per-file revisioned byte-count records, deterministic render/JSON) and the coder surface now exposes coder_patch, so a large refactor applies every hunk in one confirmation with no partial writes.",
 	},
 	{
 		ID:     "image_and_structured_reads",
@@ -186,14 +188,14 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "context_compaction",
 		Title:  "Compact a long session before the context window is exhausted",
 		Phase:  ParityPhaseNext,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
-			"coder_context",
+			"coder_compact",
 		},
 		OpenCodeTools:    []string{"summarize/compaction"},
 		BlocksRetirement: true,
-		Tracks:           []int{394, 680},
-		Note:             "coder_context reports the budget but nothing summarizes a long interaction, so the turn can still end in context_window_exceeded.",
+		Tracks:           []int{394, 680, 957},
+		Note:             "compaction.go ships the per-chat compaction state and a pure byte-capped, oldest-first planner (duplicate-drop) whose bounded output feeds the persisted context_summary, and the coder surface now exposes coder_compact, so the agent can summarize a long session before the provider context window is exhausted.",
 	},
 	{
 		ID:     "subagents",

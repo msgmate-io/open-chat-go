@@ -219,7 +219,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "The toolchain: go/npm/cargo/python builds, tests and the produced programs. Wrapped as raw shell today, so exit codes and diagnostics have to be scraped from stdout.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_2_build_test_run",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"go build ./...",
 			"go test ./backend/nativecoder/...",
@@ -286,7 +286,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "kubectl, docker, ssh, helm and friends: every one of these is a domain the platform already owns through an integration, so the typed tool must be owned by that integration and exposed through the Host boundary.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_4_integration_clis",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"kubectl get pods -n open-chat",
 			"kubectl describe deployment open-chat",
@@ -332,7 +332,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "CI waiting and polling: `gh pr checks --watch`, `gh run watch`, `gh run list --watch`, and hand-rolled until/while poll loops over `gh run view`. These are the last shell escape hatch on the GitHub workflows: the dev agent should block-and-settle through a typed, cloud-event driven tool instead of busy-waiting in a shell.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_6_github_wait",
-		Shipped:     false,
+		Shipped:     true,
 		Policy:      "read-only: block until a workflow run or PR check set settles, then return the terminal state; never busy-wait, never poll in a loop",
 		Examples: []string{
 			"gh pr checks 873 --watch",
