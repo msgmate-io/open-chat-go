@@ -170,11 +170,22 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(code, 2)
 
     def test_pending_replacement_times_out_closed(self):
-        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")], jobs={})
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 3)
-        self.assertIn("still in_progress", summary)
+        self.assertIn("still pending", summary)
         self.assertEqual(self.cancelled, [], "a progressing run must not be starved")
+
+    def test_running_replacement_is_deferred_to(self):
+        # A replacement that has STARTED (in_progress) posts its own check, which
+        # is newer than this superseded run's, so branch protection evaluates it
+        # for the commit. This run therefore accepts and releases the concurrency
+        # group immediately instead of waiting up to an hour for it to finish.
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 0)
+        self.assertIn("is running", summary)
+        self.assertEqual(self.cancelled, [], "a progressing run must not be cancelled")
 
     def test_starved_replacement_makes_this_run_yield_the_group(self):
         # 39407028825: `pending` for 12+ minutes with an empty repository queue,
@@ -282,11 +293,11 @@ class ReconcileTests(unittest.TestCase):
         genuine failure. Keep the distinct `budget-expired:` token, and make sure
         a replacement that *does* conclude non-green never uses it.
         """
-        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")], jobs={})
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 3)
         self.assertTrue(summary.startswith("budget-expired:"))
-        self.assertIn("still in_progress", summary)
+        self.assertIn("still pending", summary)
 
         code, summary = self.reconcile(
             FakeApi(runs=[run(CURRENT)], jobs={}), wait_seconds=0
@@ -305,7 +316,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_budget_expiry_warns_in_the_actions_log(self):
         """`continue-on-error: true` hides a non-zero exit, so annotate instead."""
-        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")], jobs={})
         mod._FETCH = api
         env = {
             "GITHUB_TOKEN": "token",
@@ -343,11 +354,11 @@ class ReconcileTests(unittest.TestCase):
         genuine failure. Keep the distinct `budget-expired:` token, and make sure
         a replacement that *does* conclude non-green never uses it.
         """
-        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")], jobs={})
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 3)
         self.assertTrue(summary.startswith("budget-expired:"))
-        self.assertIn("still in_progress", summary)
+        self.assertIn("still pending", summary)
 
         code, summary = self.reconcile(
             FakeApi(runs=[run(CURRENT)], jobs={}), wait_seconds=0
@@ -366,7 +377,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_budget_expiry_warns_in_the_actions_log(self):
         """`continue-on-error: true` hides a non-zero exit, so annotate instead."""
-        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")], jobs={})
         mod._FETCH = api
         env = {
             "GITHUB_TOKEN": "token",
