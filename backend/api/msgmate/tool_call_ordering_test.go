@@ -167,7 +167,7 @@ func TestAppendExecutedToolCallsOrdersAndAttributesResults(t *testing.T) {
 	}
 	processed := map[string]bool{}
 
-	appended, messages, truncated := appendExecutedToolCalls(nil, calls, processed, ResolveToolResultLimits(nil))
+	appended, messages, truncated := appendExecutedToolCalls(context.Background(), nil, calls, processed, ResolveToolResultLimits(nil))
 	if len(appended) != 2 {
 		t.Fatalf("expected both calls to be appended, got %d", len(appended))
 	}
@@ -196,7 +196,7 @@ func TestAppendExecutedToolCallsOrdersAndAttributesResults(t *testing.T) {
 	}
 
 	// A replayed round must not feed the same call back twice.
-	appendedAgain, messagesAgain, _ := appendExecutedToolCalls(messages, calls, processed, ResolveToolResultLimits(nil))
+	appendedAgain, messagesAgain, _ := appendExecutedToolCalls(context.Background(), messages, calls, processed, ResolveToolResultLimits(nil))
 	if len(appendedAgain) != 0 || len(messagesAgain) != len(messages) {
 		t.Fatalf("duplicate calls must be skipped, got appended=%d messages=%d", len(appendedAgain), len(messagesAgain))
 	}
