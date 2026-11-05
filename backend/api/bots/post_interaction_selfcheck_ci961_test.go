@@ -16,8 +16,8 @@ package bots
 // per-role routing details are pinned in the ci#927/ci#940 tests; this guard
 // anchors the two *probe* contracts end-to-end on the executor itself, so a
 // regression in the post-action registry (a renamed kind, a dropped or
-// reordered action) is caught by the package unit tests instead of only by the
-// live selfcheck relay.
+// reordered action, or a malformed target) is caught by the package unit tests
+// instead of only by the live selfcheck relay.
 //
 // Refs: msgmate-io/open-chat-go-ci#961, ci#622, ci#927, ci#940
 
@@ -26,32 +26,36 @@ import (
 	"testing"
 )
 
+func testSelfCheckSharedConfig() []byte {
+	raw, _ := json.Marshal(map[string]interface{}{
+		"post_actions": []interface{}{
+			map[string]interface{}{
+				"kind":           postActionKindPlanAutoImplement,
+				"repo":           "msgmate-io/open-chat-go-ci",
+				"issue":          961,
+				"bot":            "msgmate-coder-implement-bot",
+				"base_url":       "https://api.github.com",
+				"api_base":       "https://api.github.com",
+				"default_branch": "dev",
+			},
+			map[string]interface{}{
+				"kind":   postActionKindPullRequestReview,
+				"org":    "msgmate-io",
+				"repo":   "open-chat-go-ci",
+				"number": 622,
+			},
+		},
+	})
+	return raw
+}
+
 // TestCI961SelfCheckProbesAreRecognizedPostActions pins that the two ci#622
 // selfcheck probes, `plan_comment_posted` (plan role) and `review_submitted`
 // (review role), are both carried as recognized post actions by the executor's
 // shared-config loader. A reorder or kind rename here would silently drop one
 // role's durable output and regress the suite again.
 func TestCI961SelfCheckProbesAreRecognizedPostActions(t *testing.T) {
-	config := map[string]interface{}{
-		"post_actions": []interface{}{
-			map[string]interface{}{
-				"kind":   postActionKindPlanAutoImplement,
-				"repo":   "msgmate-io/open-chat-go-ci",
-				"number": 961,
-				"bot":    "msgmate-coder-implement-bot",
-			},
-			map[string]interface{}{
-				"kind":   postActionKindPullRequestReview,
-				"repo":   "msgmate-io/open-chat-go-ci",
-				"number": 622,
-			},
-		},
-	}
-	raw, err := json.Marshal(config)
-	if err != nil {
-		t.Fatalf("failed to marshal shared config: %v", err)
-	}
-	actions := loadChatPostActions(raw)
+	actions := loadChatPostActions(testSelfCheckSharedConfig())
 	if len(actions) != 2 {
 		t.Fatalf("expected both selfcheck probes to be recognized post actions, got %d: %v", len(actions), actions)
 	}
@@ -68,14 +72,29 @@ func TestCI961SelfCheckProbesAreRecognizedPostActions(t *testing.T) {
 	}
 }
 
-// TestCI961ReviewProbeTargetsTheFixturePullRequest pins that the review probe's
-// `review_submitted` action derives a concrete pull request review endpoint (so
-// the review bot posts a review on the fixture PR, never silently no-ops). The
-// endpoint math is pure string derivation and performs no network call.
-func TestCI961ReviewProbeTargetsTheFixturePullRequest(t *testing.T) {
+// TestCI961ReviewProbeDecodesTarget pins that the review probe's
+// `review_submitted` action decodes into a concrete pull-request review target
+// (org/repo/number), so the review bot posts on the fixture PR and never
+// silently no-ops.
+func TestCI961ReviewProbeDecodesTarget(t *testing.T) {
+	if _, ok := decodePostActionPullRequestReview(map[string]interface{}{
+		"kind":   postActionKindPullRequestReview,
+		"org":    "msgmate-io",
+		"repo":   "open-chat-go-ci",
+		"number": 622,
+	}); !ok {
+		t.Fatalf("review_submitted probe: fixture PR review action did not decode")
+	}
+}
+
+// TestCI961ReviewProbeEndpointForm derives the concrete GitHub pulls/reviews
+// endpoint for the fixture PR. The endpoint math is pure string derivation and
+// performs no network call.
+func TestCI961ReviewProbeEndpointForm(t *testing.T) {
 	action, ok := decodePostActionPullRequestReview(map[string]interface{}{
 		"kind":   postActionKindPullRequestReview,
-		"repo":   "msgmate-io/open-chat-go-ci",
+		"org":    "msgmate-io",
+		"repo":   "open-chat-go-ci",
 		"number": 622,
 	})
 	if !ok {
@@ -83,6 +102,9 @@ func TestCI961ReviewProbeTargetsTheFixturePullRequest(t *testing.T) {
 	}
 	endpoint := reviewTargetEndpoint(action, "https://api.github.com")
 	want := "https://api.github.com/repos/msgmate-io/open-chat-go-ci/pulls/622/reviews"
+	if endpoint == "" {
+		t.Fatalf("review_submitted probe: review target endpoint must not be empty")
+	}
 	if endpoint != want {
 		t.Fatalf("review_submitted probe: review target endpoint = %q, want %q", endpoint, want)
 	}
