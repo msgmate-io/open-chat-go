@@ -121,31 +121,32 @@ func RunAgentTurn(ctx context.Context, spec AgentTurnSpec) (AgentTurnResult, err
 // ---------------------------------------------------------------------------
 
 // agentNormalizeToolCall applies the integration's NormalizeToolCall hook to a
-// raw tool-call argument JSON string, or returns the original arguments when no
-// hook is installed or the hook declines the rewrite.
-func agentNormalizeToolCall(ctx context.Context, name, arguments string) string {
+// raw tool-call argument JSON string. ok reports whether a hook was installed; a
+// false return means the caller should keep its own fallback.
+func agentNormalizeToolCall(ctx context.Context, name, arguments string) (string, bool) {
 	hooks, ok := agentTurnHooksFromContext(ctx)
 	if !ok || hooks.NormalizeToolCall == nil {
-		return arguments
+		return arguments, false
 	}
-	if normalized := hooks.NormalizeToolCall(name, arguments); normalized != "" {
-		return normalized
+	normalized := hooks.NormalizeToolCall(name, arguments)
+	if normalized == "" {
+		normalized = arguments
 	}
-	return arguments
+	return normalized, true
 }
 
 // agentToolFailureGuidance applies the integration's ToolFailureGuidance hook to
-// a failed tool result, or returns the original result when no hook is installed
-// or the hook declines.
-func agentToolFailureGuidance(ctx context.Context, name, result string) string {
+// a failed tool result. ok reports whether a hook was installed.
+func agentToolFailureGuidance(ctx context.Context, name, result string) (string, bool) {
 	hooks, ok := agentTurnHooksFromContext(ctx)
 	if !ok || hooks.ToolFailureGuidance == nil {
-		return result
+		return result, false
 	}
-	if framed := hooks.ToolFailureGuidance(name, result); framed != "" {
-		return framed
+	framed := hooks.ToolFailureGuidance(name, result)
+	if framed == "" {
+		framed = result
 	}
-	return result
+	return framed, true
 }
 
 // agentToolBudgetExempt reports whether the integration exempts a tool from the
