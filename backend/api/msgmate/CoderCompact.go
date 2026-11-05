@@ -96,8 +96,13 @@ func (r *coderCompactRunner) CoderContextSummary(chatUUID string) (map[string]in
 
 // coderCompactResultState renders the runner's answer as a JSON-able map. The
 // full summary (not just the transcript render) is what the reader's persisted
-// context_summary needs.
+// context_summary needs. A chat with no persisted summary yields an empty map
+// (the tool layer turns that into its own "no summary" error), so a read of a
+// never-touched chat never invents a placeholder summary.
 func coderCompactResultState(result nativecoder.CoderCompactResult) map[string]interface{} {
+	if strings.TrimSpace(result.Summary) == "" {
+		return map[string]interface{}{}
+	}
 	state := map[string]interface{}{
 		"summary":  result.Summary,
 		"rendered": result.Rendered,
