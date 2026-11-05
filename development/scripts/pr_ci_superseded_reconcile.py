@@ -24,6 +24,16 @@ A replacement gate job that was itself `cancelled` cannot testify about the
 commit and is skipped, but every other non-`success` verdict (including
 `skipped`, `failure` and `timed_out`) is adopted and rejects the gate.
 
+A replacement that has STARTED (`in_progress`) is also authoritative on its own:
+it opens its own `PR Test Merge Requirement` check, which is newer than this
+run's, and branch protection evaluates the newest check for the commit. Waiting
+for it to *finish* therefore added nothing but held this run's concurrency group
+for up to an hour (the observed hang, ci#931), so the reconciler accepts and
+releases the group as soon as a replacement is running, deferring the verdict to
+it. Only a replacement that has NOT begun executing is waited for / yielded to:
+that is the ci#835 shape, where the cancelled run's red gate was the commit's
+newest check precisely because no replacement ever started.
+
 Waiting for a replacement is futile when the replacement cannot start. The
 workflow concurrency group (`pr-ci-<number>-<head sha>`) is held by THIS run
 until it completes, and the `always()`-gated gate job keeps a cancelled run
@@ -286,6 +296,22 @@ def reconcile(args, token):
             return 1, "rejected: replacement run %s gate job concluded %s." % (
                 run.get("id"),
                 conclusion,
+            )
+        # A replacement that has STARTED is authoritative on its own: it posts its
+        # own `PR Test Merge Requirement` check, which is newer than this run's and
+        # therefore the one branch protection evaluates for the commit. Waiting for
+        # it to *finish* only holds this run's concurrency group for up to an hour
+        # (the observed hang) while adding nothing - once it runs, its gate already
+        # supersedes ours, so we release the group now and defer to it. Runs that
+        # have not begun executing are handled below (a starved one yields; other-
+        # wise we keep waiting, because nothing is gating the commit yet).
+        running = next((r for r in candidates if r.get("status") == "in_progress"), None)
+        if running is not None:
+            return 0, (
+                "accepted: replacement run %s for %s is running; its own '%s' "
+                "check is newer and authoritative for this commit, so this "
+                "superseded run defers to it."
+                % (running.get("id"), args.head_sha[:12], GATE_JOB_NAME)
             )
         starved = starved_replacement(candidates, _NOW(), args.yield_seconds)
         if starved is not None:
