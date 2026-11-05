@@ -137,6 +137,8 @@ func TranslateGitHubShellCommand(command string) GitHubShellTranslation {
 		call, ok, reason = translateGitHubAuthShell(rest[1:])
 	case "api":
 		call, ok, reason = translateGitHubAPIShell(rest[1:])
+	case "run":
+		call, ok, reason = translateGitHubRunShell(rest[1:])
 	default:
 		reason = "`gh " + rest[0] + "` has no typed equivalent in the phase 1 surface"
 	}
@@ -484,6 +486,44 @@ func ghShellWords(command string) []string {
 		words = words[1:]
 	}
 	return words
+}
+
+// translateGitHubRunShell maps `gh run list` / `gh run view` onto the typed
+// github_run_list / github_run_view tools already shipped for the phase 1
+// github_cli surface, so the phase-1 bridge covers the CI-watching workflow
+// through the same typed surface the plan documents instead of leaving `gh
+// run` residual in the phase 1 metric.
+func translateGitHubRunShell(args []string) (GitHubToolCall, bool, string) {
+	if len(args) == 0 {
+		return GitHubToolCall{}, false, "`gh run` without a verb has no typed equivalent"
+	}
+	runCall, ok := TranslateGitHubRunCommand("gh run " + strings.Join(args, " "))
+	if !ok {
+		return GitHubToolCall{}, false, "`gh run " + args[0] + "` stays residual in the phase 1 surface"
+	}
+	call := newGitHubToolCall(runCall.Tool, "reads workflow run status with the typed github_run_* tool instead of a shell --watch loop")
+	switch runCall.Tool {
+	case GitHubToolRunList:
+		lc := runCall.ListCall
+		setShellArg(call.Arguments, "repo", lc.Repo)
+		setShellArg(call.Arguments, "workflow", lc.Workflow)
+		setShellArg(call.Arguments, "branch", lc.Branch)
+		setShellArg(call.Arguments, "status", lc.Status)
+		if lc.Limit > 0 {
+			call.Arguments["limit"] = lc.Limit
+		}
+	case GitHubToolRunView:
+		vc := runCall.ViewCall
+		call.Arguments["run_id"] = vc.RunID
+		setShellArg(call.Arguments, "repo", vc.Repo)
+		if strings.TrimSpace(vc.JSONFields) != "" {
+			call.Arguments["json_fields"] = vc.JSONFields
+		}
+		if vc.Failed {
+			call.Arguments["log_failed"] = true
+		}
+	}
+	return call, true, ""
 }
 
 // ghBooleanShellFlags lists the value-less flags the bridge understands. They
