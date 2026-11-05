@@ -85,6 +85,8 @@ func CoderSurfaceTools() []string {
 		"coder_todo_write",
 		"coder_todo_read",
 		"coder_trust",
+		"coder_context",
+		"coder_compact",
 	}
 }
 
@@ -187,14 +189,15 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "context_compaction",
 		Title:  "Compact a long session before the context window is exhausted",
 		Phase:  ParityPhaseNext,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_context",
+			"coder_compact",
 		},
 		OpenCodeTools:    []string{"summarize/compaction"},
 		BlocksRetirement: true,
 		Tracks:           []int{394, 680},
-		Note:             "coder_context reports the budget but nothing summarizes a long interaction, so the turn can still end in context_window_exceeded.",
+		Note:             "compaction.go ships the pure per-chat compression engine (windowed budget, render/summary helpers) and the coder surface now exposes coder_context (budget) and coder_compact (compaction), so a long session is compacted before the context window is exhausted.",
 	},
 	{
 		ID:     "subagents",
