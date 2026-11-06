@@ -40,3 +40,4 @@ property owner, the current licensing draft status, special-licensing
 requests, and the copyright-owner exemption covering the proprietary
 (private) components. Alternative or commercial licensing can be
 investigated on request.
+
