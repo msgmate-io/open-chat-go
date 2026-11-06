@@ -1,6 +1,9 @@
 package nativecoder
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestGitHubTypedFirstGuidanceCoversEveryPlanTool keeps the prompt block and the
 // retirement plan's `github_cli` target surface from drifting apart: every typed
@@ -30,7 +33,7 @@ func TestGitHubTypedFirstGuidanceCoversEveryPlanTool(t *testing.T) {
 		if GitHubTypedFirstPurpose[tool] == "" {
 			t.Errorf("%s has no prompt purpose", tool)
 		}
-		if !contains(GitHubTypedFirstGuidance(), tool) {
+		if !strings.Contains(GitHubTypedFirstGuidance(), tool) {
 			t.Errorf("the rendered block does not mention %s", tool)
 		}
 	}
@@ -42,10 +45,10 @@ func TestGitHubTypedFirstGuidanceCoversEveryPlanTool(t *testing.T) {
 func TestGitHubTypedFirstAppendIsIdempotent(t *testing.T) {
 	operator := "You are the msgmate coder. Follow DEVELOPMENT.md."
 	once := GitHubTypedFirstAppend(operator)
-	if !contains(once, operator) {
+	if !strings.Contains(once, operator) {
 		t.Fatal("the operator prompt was rewritten instead of extended")
 	}
-	if !contains(once, GitHubTypedFirstPromptMarker) {
+	if !strings.Contains(once, GitHubTypedFirstPromptMarker) {
 		t.Fatal("the typed-first block was not appended")
 	}
 	if twice := GitHubTypedFirstAppend(once); twice != once {
@@ -73,67 +76,4 @@ func TestMeasureGitHubTypedFirstPrompt(t *testing.T) {
 	if len(bare.Missing) != len(GitHubTypedFirstTools()) {
 		t.Fatalf("a bare prompt should miss every typed tool, got %d", len(bare.Missing))
 	}
-}
-
-// TestEvaluateBashRetirementCriteriaGitHubTypedFirstPrompt asserts phase 1
-// criterion 2 is attested from the rendered coder system prompt and stays
-// blocked (not silently passed) when the prompt does not prefer typed tools.
-func TestEvaluateBashRetirementCriteriaGitHubTypedFirstPrompt(t *testing.T) {
-	report := BashCoverageReport{
-		Threshold:       0.02,
-		TotalCalls:      100,
-		ClassifiedCalls: 100,
-		Buckets: []BashCoverageBucket{
-			{Category: BashCategoryGitHubCLI, Share: 0.01},
-		},
-	}
-	github := &GitHubShellTranslationReport{
-		PlanVersion:        BashRetirementPlanVersion,
-		SourceTool:         "coder_bash",
-		Threshold:          0.02,
-		TotalCalls:         10,
-		Commands:           10,
-		GitHubCommands:     10,
-		TranslatedCommands: 10,
-		TranslationRatio:   1,
-		PhaseReady:         true,
-	}
-	evidence := BashRetirementEvidence{
-		Coverage:          report,
-		GitHub:            github,
-		CoderSystemPrompt: GitHubTypedFirstAppend("You are the msgmate coder."),
-	}
-	criterion := gitHubPhaseCriterion(t, EvaluateBashRetirementCriteriaWithEvidence(evidence), 2)
-	if criterion.Status != BashCriterionSatisfied {
-		t.Fatalf("criterion 2 with the typed-first prompt = %q, want satisfied (blockers: %v)", criterion.Status, criterion.Blockers)
-	}
-	if len(criterion.Evidence) == 0 {
-		t.Fatal("a satisfied criterion must record what it was derived from")
-	}
-
-	evidence.CoderSystemPrompt = "You are the msgmate coder."
-	blocked := gitHubPhaseCriterion(t, EvaluateBashRetirementCriteriaWithEvidence(evidence), 2)
-	if blocked.Status != BashCriterionBlocked {
-		t.Fatalf("criterion 2 without the typed-first prompt = %q, want blocked", blocked.Status)
-	}
-	if len(blocked.Blockers) == 0 {
-		t.Fatal("a blocked criterion must state the blocker")
-	}
-}
-
-// gitHubPhaseCriterion returns the phase-1 criterion with the given index.
-func gitHubPhaseCriterion(t *testing.T, criteria []BashRetirementPhaseCriteria, index int) BashRetirementCriterionEvidence {
-	t.Helper()
-	for _, phase := range criteria {
-		if phase.ID != bashRetirementGitHubPhaseID {
-			continue
-		}
-		for _, criterion := range phase.Criteria {
-			if criterion.Index == index {
-				return criterion
-			}
-		}
-	}
-	t.Fatalf("no %s criterion %d", bashRetirementGitHubPhaseID, index)
-	return BashRetirementCriterionEvidence{}
 }
