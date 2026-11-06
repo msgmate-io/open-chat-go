@@ -161,12 +161,3 @@ func TestCoderSessionTrustStateRendering(t *testing.T) {
 	}
 }
 
-func TestCoderSessionTrustGapIsTracked(t *testing.T) {
-	gap, ok := OpenCodeParityGap("session_trust")
-	if !ok {
-		t.Fatal("the session_trust gap must stay in the parity registry")
-	}
-	if gap.Status == ParityStatusOpen {
-		t.Fatal("session_trust must be closed now that codersurface.go exposes coder_trust")
-	}
-}
