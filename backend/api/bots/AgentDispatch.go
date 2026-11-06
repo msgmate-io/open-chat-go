@@ -5,7 +5,7 @@ import (
 	"backend/apierror"
 	"backend/chatstate"
 	"backend/database"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
@@ -748,7 +748,7 @@ func agentInteractionViewWithStatus(DB *gorm.DB, actingUser *database.User, chat
 		if dispatch, ok := config["agent_dispatch"].(map[string]interface{}); ok {
 			view.AutoContinue, _ = dispatch["auto_continue"].(bool)
 		}
-		if policy := nativecoder.ResolveAutonomousPolicy(config); policy.Enabled {
+		if policy := coder.ResolveAutonomousPolicy(config); policy.Enabled {
 			view.Autonomous = true
 			view.AutonomousSource = policy.Source
 		}

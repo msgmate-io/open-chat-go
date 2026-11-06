@@ -2,7 +2,7 @@ package bots
 
 import (
 	"backend/database"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 	"encoding/json"
 	"testing"
 
@@ -107,7 +107,7 @@ func TestAgentDispatchSeedsCoderWorkspaceInit(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected coder_select_workspace init seeded, got %v", init)
 	}
-	if repo, _ := seed["git_repo"].(string); repo != nativecoder.GitRemoteForRepo("msgmate-io/open-chat-go") {
+	if repo, _ := seed["git_repo"].(string); repo != coder.GitRemoteForRepo("msgmate-io/open-chat-go") {
 		t.Fatalf("expected seeded repo from dispatch tag, got %v", seed)
 	}
 	if auto, _ := seed["auto_sandbox"].(bool); !auto {

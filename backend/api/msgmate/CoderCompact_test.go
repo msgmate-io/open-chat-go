@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 )
 
 // ci#394 gap 7 (ticket ci#957): the coder_compact runner folds a transcript
@@ -19,8 +19,8 @@ import (
 func scratchCoderCompactRunner(t *testing.T) *coderCompactRunner {
 	t.Helper()
 	original := coderCompactGlobalSurface
-	coderCompactGlobalSurface = func() *nativecoder.CoderParitySurface {
-		return nativecoder.NewCoderParitySurface("")
+	coderCompactGlobalSurface = func() *coder.CoderParitySurface {
+		return coder.NewCoderParitySurface("")
 	}
 	t.Cleanup(func() {
 		coderCompactGlobalSurface = original
