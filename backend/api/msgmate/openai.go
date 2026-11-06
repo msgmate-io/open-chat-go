@@ -2,7 +2,6 @@ package msgmate
 
 import (
 	"backend/logging"
-	"backend/nativecoder"
 	"bufio"
 	"bytes"
 	"context"
@@ -1095,10 +1094,10 @@ func appendExecutedToolCalls(
 		// budget can never cut it off, and only for failed calls so a
 		// successful run whose output happens to mention a module is untouched.
 		if call.status == ToolCallStatusFailed {
+			// The readiness guidance is owned by the integration-owned agent
+			// turn (HostVersion 5) via its ToolFailureGuidance hook.
 			if framed, ok := agentToolFailureGuidance(ctx, call.name, modelToolResult); ok {
 				modelToolResult = framed
-			} else {
-				modelToolResult = nativecoder.FrameSandboxFailureGuidance(call.name, modelToolResult)
 			}
 		}
 		if cut {
@@ -1679,13 +1678,11 @@ func processParsedToolCall(
 	// cached, so an older `cd $(git rev-parse --show-toplevel) && ...` habit costs
 	// no call and the duplicate-call signature matches the unprefixed spelling.
 	//
-	// An integration-owned agent turn (HostVersion 5) may supply its own
-	// NormalizeToolCall hook; when it does the core's built-in coder rewrite is
-	// skipped, otherwise the built-in stays in force.
+	// The rewrite is owned by the integration-owned agent turn (HostVersion 5)
+	// via its NormalizeToolCall hook; a build without the integration leaves the
+	// arguments untouched.
 	if normalized, ok := agentNormalizeToolCall(ctx, name, arguments); ok {
 		arguments = normalized
-	} else {
-		arguments = normalizeCoderBashArguments(name, arguments)
 	}
 
 	toolInput, parseErr := tool.ParseArguments(arguments)
