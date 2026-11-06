@@ -3,8 +3,6 @@ package msgmate
 import (
 	"sort"
 	"strings"
-
-	"backend/nativecoder"
 )
 
 // NativeRuntimeBots are the native msgmate-coder runtimes a runtime selector /
@@ -24,7 +22,7 @@ const (
 // and the flip order are declared, so retiring a family is a one-line change
 // there with the rollout tests behind it.
 func legacyRuntimeBotAliases() map[string]string {
-	return nativecoder.LegacyRuntimeBotAliases()
+	return LegacyRuntimeBotAliases()
 }
 
 // NativeRuntimeBotsInRotation returns the native runtime of every family that
@@ -34,8 +32,8 @@ func legacyRuntimeBotAliases() map[string]string {
 func NativeRuntimeBotsInRotation(rolledOutThrough string) []string {
 	var runtimes []string
 	seen := map[string]bool{}
-	for _, stage := range nativecoder.NativeBotStages() {
-		if runtime := nativecoder.NativeBotRotation(stage, rolledOutThrough); runtime != "native" {
+	for _, stage := range NativeBotStages() {
+		if runtime := NativeBotRotation(stage, rolledOutThrough); runtime != "native" {
 			continue
 		}
 		if seen[stage.NativeRuntime] {

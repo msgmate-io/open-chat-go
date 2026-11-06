@@ -29,7 +29,7 @@ import (
 	"os"
 	"strings"
 
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 )
 
 func main() {
@@ -44,12 +44,12 @@ func main() {
 	}
 	flag.Parse()
 
-	plans := nativecoder.DevSetupFleetPlans(nativecoder.CoderDevSetupFleet)
-	gaps := nativecoder.DevSetupFleetGaps(plans)
+	plans := coder.DevSetupFleetPlans(coder.CoderDevSetupFleet)
+	gaps := coder.DevSetupFleetGaps(plans)
 
 	switch {
 	case *config:
-		fmt.Print(nativecoder.RenderDevSetupConfigFragment())
+		fmt.Print(coder.RenderDevSetupConfigFragment())
 	case *matrix:
 		repos := make([]string, 0, len(plans))
 		for _, plan := range plans {
@@ -57,13 +57,13 @@ func main() {
 				repos = append(repos, repo.Repo)
 			}
 		}
-		plans := nativecoder.DevSetupMatrixPlan(repos)
+		plans := coder.DevSetupMatrixPlan(repos)
 		if *format == "json" {
 			printJSON(plans)
 		} else {
-			fmt.Print(nativecoder.RenderDevSetupMatrixMarkdown(plans))
+			fmt.Print(coder.RenderDevSetupMatrixMarkdown(plans))
 		}
-		if problems := nativecoder.ValidateDevSetupMatrix(plans); len(problems) > 0 {
+		if problems := coder.ValidateDevSetupMatrix(plans); len(problems) > 0 {
 			fmt.Printf("\nmatrix defects: %d\n", len(problems))
 			for _, problem := range problems {
 				fmt.Printf("- %s\n", problem)
@@ -74,7 +74,7 @@ func main() {
 		if *format == "json" {
 			printJSON(plans)
 		} else {
-			fmt.Print(nativecoder.RenderDevSetupFleetMarkdown(plans))
+			fmt.Print(coder.RenderDevSetupFleetMarkdown(plans))
 		}
 	}
 

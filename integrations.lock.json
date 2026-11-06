@@ -4,7 +4,7 @@
     "community_coder": {
       "repo": "https://github.com/msgmate-io/open-chat-go-community-coder-integration",
       "ref": "main",
-      "commit": "b9125964e244d9d4936e122ef1512ba158719ff4",
+      "commit": "df4f250c104ce10c5580c7498d7a3a1bb2e17ccc",
       "source": "git"
     },
     "go_client": {

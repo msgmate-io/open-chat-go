@@ -1,4 +1,4 @@
-package nativecoder
+package msgmate
 
 import (
 	"os"
@@ -19,7 +19,7 @@ import (
 func TestCiDeploymentPassesCutoverEnvToBackend(t *testing.T) {
 	const cutoverEnvKey = "NATIVE_CODER_CUTOVER"
 
-	raw, err := os.ReadFile("../../docker-compose.ci.yaml")
+	raw, err := os.ReadFile("../../../docker-compose.ci.yaml")
 	if err != nil {
 		t.Fatalf("read ci deployment profile: %v", err)
 	}

@@ -9,7 +9,7 @@ import (
 
 	"backend/api/chats"
 	"backend/database"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 
 	"gorm.io/gorm"
 
@@ -20,7 +20,7 @@ import (
 // the shared interaction-completion choke point.
 //
 // A native `msgmate_coder` agent is defaulted to `auto_consolidation` ON (see
-// nativecoder.ApplyAutoConsolidationDefault and the integration's
+// coder.ApplyAutoConsolidationDefault and the integration's
 // SharedConfigDefaults contribution). At the completion choke point used by the
 // auto-continuation loop (ci#537) and the post-interaction hook (ci#649) the
 // core therefore runs one consolidation pass for such an agent: it detects the
@@ -59,10 +59,10 @@ func runAutoConsolidation(db *gorm.DB, chat database.Chat) {
 		return
 	}
 	config := autoConsolidationChatConfig(db, chat)
-	if !nativecoder.IsCoderAgentConfig(config) {
+	if !coder.IsCoderAgentConfig(config) {
 		return
 	}
-	policy := nativecoder.ResolvePolicyFromConfig(config)
+	policy := coder.ResolvePolicyFromConfig(config)
 	if !policy.Enabled {
 		return
 	}
@@ -78,7 +78,7 @@ func runAutoConsolidation(db *gorm.DB, chat database.Chat) {
 	// (or re-hit GitHub for a client that is not configured) on every one.
 	autoConsolidationMarkRun(chat.ID)
 
-	client, err := nativecoder.ConsolidationClientFactory(repo)
+	client, err := coder.ConsolidationClientFactory(repo)
 	if err != nil {
 		logging.Errorf("auto consolidation: client for %s failed: %v", repo, err)
 		return
@@ -88,7 +88,7 @@ func runAutoConsolidation(db *gorm.DB, chat database.Chat) {
 		return
 	}
 
-	runner := nativecoder.ConsolidationRunner{Client: client}
+	runner := coder.ConsolidationRunner{Client: client}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	result, runErr := runner.Run(ctx, policy, repo)
@@ -118,7 +118,7 @@ func autoConsolidationRepo(config map[string]interface{}) string {
 	if value, ok := config[autoConsolidationRepoConfigKey].(string); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
-	return strings.TrimSpace(nativecoder.GitHubRepoFromEnv())
+	return strings.TrimSpace(coder.GitHubRepoFromEnv())
 }
 
 // autoConsolidationChatConfig decodes a chat's effective shared config.
