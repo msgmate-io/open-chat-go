@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"backend/database"
-	"backend/nativecoder"
+	"backend/toolbudget"
 )
 
 // Terminal reasons a native coder turn can end with. They are recorded on the
@@ -44,7 +44,7 @@ type TurnOutcome struct {
 	// the total tool-call budget.
 	BudgetExemptCalls int
 	// Budget is the resolved per-chat tool-call budget of the turn.
-	Budget nativecoder.ToolCallBudget
+	Budget toolbudget.ToolCallBudget
 	// Context is the context/token usage report of the last request the turn
 	// sent (ci#680), so the reader can surface it as `context_budget` metadata
 	// and the `coder_context` tool can answer with the turn's real numbers.
@@ -61,9 +61,9 @@ func (o *TurnOutcome) reason() string {
 
 // usage renders the consumed/remaining counters of the turn as structured
 // state, so the caps no longer live only inside an error string.
-func (o *TurnOutcome) usage() nativecoder.ToolCallBudgetUsage {
+func (o *TurnOutcome) usage() toolbudget.ToolCallBudgetUsage {
 	if o == nil {
-		return nativecoder.ToolCallBudget{}.Usage(0, 0, 0, 0, 0)
+		return toolbudget.ToolCallBudget{}.Usage(0, 0, 0, 0, 0)
 	}
 	return o.Budget.Usage(o.ToolCalls, o.FailedToolCalls, o.TransientFailures, o.SandboxCapacityFailures, o.BudgetExemptCalls)
 }
@@ -71,14 +71,14 @@ func (o *TurnOutcome) usage() nativecoder.ToolCallBudgetUsage {
 // turnBudgetFromMeta returns the budget the tool loop enforces: the one the
 // caller resolved for the chat, or the explicit caps it was handed (a direct
 // caller, e.g. a unit test).
-func turnBudgetFromMeta(meta providerRequestMeta, maxTotal, maxFailed int) nativecoder.ToolCallBudget {
+func turnBudgetFromMeta(meta providerRequestMeta, maxTotal, maxFailed int) toolbudget.ToolCallBudget {
 	if meta.Budget != nil {
 		return *meta.Budget
 	}
-	return nativecoder.ToolCallBudget{
+	return toolbudget.ToolCallBudget{
 		MaxTotal:  maxTotal,
 		MaxFailed: maxFailed,
-		Source:    nativecoder.ToolCallBudgetSourceDefault,
+		Source:    toolbudget.ToolCallBudgetSourceDefault,
 	}
 }
 
@@ -86,8 +86,8 @@ func turnBudgetFromMeta(meta providerRequestMeta, maxTotal, maxFailed int) nativ
 // turn: the chat's own config and snapshot, raised by the bot runtime's
 // *current* default shared config, so a cap raise on the bot reaches chats that
 // already exist (ci#709).
-func ResolveTurnToolCallBudget(botUserID uint, chatConfig map[string]interface{}) nativecoder.ToolCallBudget {
-	return nativecoder.ResolveToolCallBudget(chatConfig, botRuntimeSharedConfig(botUserID))
+func ResolveTurnToolCallBudget(botUserID uint, chatConfig map[string]interface{}) toolbudget.ToolCallBudget {
+	return toolbudget.ResolveToolCallBudget(chatConfig, botRuntimeSharedConfig(botUserID))
 }
 
 // botRuntimeSharedConfig loads the active bot runtime's default shared config

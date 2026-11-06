@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/toolbudget"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
@@ -1573,7 +1574,7 @@ func createBotInteraction(
 	// the budget survives a re-attach / re-provision and is reported as
 	// structured state. The bot's default shared config stays the live source,
 	// so a later cap raise still reaches this interaction.
-	effectiveConfig = nativecoder.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
+	effectiveConfig = toolbudget.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
 	// ci#413: a native coder interaction provisions its disposable per-chat
 	// sandbox from tool_init.coder_select_workspace.git_repo, so the sandbox must
 	// clone the repository this interaction was dispatched for instead of the

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"backend/nativecoder"
+	"backend/toolbudget"
 )
 
 // ProviderRequestContext carries the state of one provider completion request
@@ -99,7 +99,7 @@ type providerRequestMeta struct {
 	// Budget is the per-chat tool-call budget the caller already resolved for
 	// this turn (ci#709). When nil the tool loop falls back to the caps it was
 	// passed, so a direct caller (a unit test) keeps its explicit values.
-	Budget *nativecoder.ToolCallBudget
+	Budget *toolbudget.ToolCallBudget
 	// Outcome receives how the turn ended and its consumed counters, so the
 	// reader can report them as structured state instead of only an error
 	// string (ci#709). Optional.
