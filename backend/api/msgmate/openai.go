@@ -2,7 +2,6 @@ package msgmate
 
 import (
 	"backend/logging"
-	"backend/nativecoder"
 	"bufio"
 	"bytes"
 	"context"
@@ -877,7 +876,7 @@ func streamChatCompletion(
 			// matches the calls it made — instead of only the last call of a
 			// batch, which left the model guessing which results existed and in
 			// what order (ci#655).
-			appended, updatedMessages, roundTruncatedResults := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds, contextBudget.Limits)
+			appended, updatedMessages, roundTruncatedResults := appendExecutedToolCalls(ctx, currentMessages, toolCallResult.calls, processedToolIds, contextBudget.Limits)
 			currentMessages = updatedMessages
 			truncatedToolResults += roundTruncatedResults
 			for _, call := range appended {
@@ -1053,6 +1052,7 @@ type toolCallResult struct {
 // kill the turn with "exceeded maximum context". The returned count reports how
 // many results were cut, so the turn's usage report can say so.
 func appendExecutedToolCalls(
+	ctx context.Context,
 	currentMessages []map[string]interface{},
 	calls []executedToolCall,
 	processed map[string]bool,
@@ -1094,7 +1094,11 @@ func appendExecutedToolCalls(
 		// budget can never cut it off, and only for failed calls so a
 		// successful run whose output happens to mention a module is untouched.
 		if call.status == ToolCallStatusFailed {
-			modelToolResult = nativecoder.FrameSandboxFailureGuidance(call.name, modelToolResult)
+			// The readiness guidance is owned by the integration-owned agent
+			// turn (HostVersion 5) via its ToolFailureGuidance hook.
+			if framed, ok := agentToolFailureGuidance(ctx, call.name, modelToolResult); ok {
+				modelToolResult = framed
+			}
 		}
 		if cut {
 			truncatedResults++
@@ -1673,7 +1677,13 @@ func processParsedToolCall(
 	// root>` from a `coder_bash` command before it is parsed, dispatched and
 	// cached, so an older `cd $(git rev-parse --show-toplevel) && ...` habit costs
 	// no call and the duplicate-call signature matches the unprefixed spelling.
-	arguments = normalizeCoderBashArguments(name, arguments)
+	//
+	// The rewrite is owned by the integration-owned agent turn (HostVersion 5)
+	// via its NormalizeToolCall hook; a build without the integration leaves the
+	// arguments untouched.
+	if normalized, ok := agentNormalizeToolCall(ctx, name, arguments); ok {
+		arguments = normalized
+	}
 
 	toolInput, parseErr := tool.ParseArguments(arguments)
 	if parseErr != nil {
@@ -1727,7 +1737,7 @@ func processParsedToolCall(
 			// (`coder_schedule`) stays budget-exempt, otherwise the
 			// duplicate-call cache would silently reintroduce the charge
 			// the exemption exists to avoid.
-			turnBudgetExempt: toolCallBudgetExempt(name),
+			turnBudgetExempt: agentToolBudgetExempt(ctx, name),
 		})
 
 		toolChan <- ToolCall{
@@ -1879,7 +1889,7 @@ func processParsedToolCall(
 		status:           status,
 		error:            toolErr,
 		budgetExempt:     toolBudgetExempt,
-		turnBudgetExempt: toolCallBudgetExempt(name),
+		turnBudgetExempt: agentToolBudgetExempt(ctx, name),
 		retries:          toolRetries,
 		sandboxCapacity:  toolSandboxCapacity,
 		reason:           callReason,

@@ -26,6 +26,9 @@ func installChatBackends() {
 		if spec.Backend != nil {
 			backend := spec.Backend
 			msgmate.RegisterChatBackend(spec.Name, func(ctx context.Context, req msgmate.ChatBackendRequest) error {
+				// Carry the bot-reply turn so an integration-owned backend can
+				// run the generic loop through Host.Agent() (HostVersion 5).
+				ctx = msgmate.WithAgentTurnContext(ctx, req.BotContext, req.Message)
 				return backend(ctx, adaptChatBackendRequest(req))
 			})
 		}
