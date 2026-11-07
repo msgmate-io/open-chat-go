@@ -6,7 +6,7 @@ import (
 
 	"backend/api/chats"
 	"backend/database"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 )
 
 // TestAutoConsolidationDefaultAppliedToCoderBotConfig guards the default-ON
@@ -14,20 +14,20 @@ import (
 // standard `auto_consolidation` block merged in through the shared
 // bot-config defaults path, and a non-coder config does not.
 func TestAutoConsolidationDefaultAppliedToCoderBotConfig(t *testing.T) {
-	t.Setenv(nativecoder.AutoConsolidationEnvKey, "")
+	t.Setenv(coder.AutoConsolidationEnvKey, "")
 
-	coder := map[string]interface{}{
+	cfg := map[string]interface{}{
 		"model":             "some-model",
 		"backend":           "litellm",
 		"coder_interaction": "autonomous",
 	}
-	applied, err := applyIntegrationDefaultsForUser(nil, nil, coder)
+	applied, err := applyIntegrationDefaultsForUser(nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("defaults failed: %v", err)
 	}
-	raw, ok := applied[nativecoder.AutoConsolidationConfigKey].(map[string]interface{})
+	raw, ok := applied[coder.AutoConsolidationConfigKey].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected auto_consolidation on a coder bot config, got %#v", applied[nativecoder.AutoConsolidationConfigKey])
+		t.Fatalf("expected auto_consolidation on a coder bot config, got %#v", applied[coder.AutoConsolidationConfigKey])
 	}
 	if raw["enabled"] != true {
 		t.Fatalf("expected enabled=true, got %#v", raw["enabled"])
@@ -42,7 +42,7 @@ func TestAutoConsolidationDefaultAppliedToCoderBotConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaults failed: %v", err)
 	}
-	if _, present := appliedPlain[nativecoder.AutoConsolidationConfigKey]; present {
+	if _, present := appliedPlain[coder.AutoConsolidationConfigKey]; present {
 		t.Fatalf("a non-coder bot config must not get auto_consolidation: %#v", appliedPlain)
 	}
 }
@@ -50,21 +50,21 @@ func TestAutoConsolidationDefaultAppliedToCoderBotConfig(t *testing.T) {
 // TestAutoConsolidationDefaultRespectsPerAgentToggle guards that an explicit
 // per-agent block wins over the wiring default.
 func TestAutoConsolidationDefaultRespectsPerAgentToggle(t *testing.T) {
-	t.Setenv(nativecoder.AutoConsolidationEnvKey, "")
+	t.Setenv(coder.AutoConsolidationEnvKey, "")
 
-	coder := map[string]interface{}{
+	cfg := map[string]interface{}{
 		"coder_interaction": "autonomous",
-		nativecoder.AutoConsolidationConfigKey: map[string]interface{}{
+		coder.AutoConsolidationConfigKey: map[string]interface{}{
 			"enabled": false,
 		},
 	}
-	applied, err := applyIntegrationDefaultsForUser(nil, nil, coder)
+	applied, err := applyIntegrationDefaultsForUser(nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("defaults failed: %v", err)
 	}
-	raw, ok := applied[nativecoder.AutoConsolidationConfigKey].(map[string]interface{})
+	raw, ok := applied[coder.AutoConsolidationConfigKey].(map[string]interface{})
 	if !ok || raw["enabled"] != false {
-		t.Fatalf("explicit enabled=false must be preserved, got %#v", applied[nativecoder.AutoConsolidationConfigKey])
+		t.Fatalf("explicit enabled=false must be preserved, got %#v", applied[coder.AutoConsolidationConfigKey])
 	}
 }
 
@@ -73,12 +73,12 @@ func TestAutoConsolidationDefaultRespectsPerAgentToggle(t *testing.T) {
 func TestRunAutoConsolidationSkipsNonCoderChats(t *testing.T) {
 	ResetAutoConsolidationCooldownForTest()
 	calls := 0
-	previous := nativecoder.ConsolidationClientFactory
-	nativecoder.ConsolidationClientFactory = func(repo string) (nativecoder.ConsolidationClient, error) {
+	previous := coder.ConsolidationClientFactory
+	coder.ConsolidationClientFactory = func(repo string) (coder.ConsolidationClient, error) {
 		calls++
 		return nil, nil
 	}
-	t.Cleanup(func() { nativecoder.ConsolidationClientFactory = previous })
+	t.Cleanup(func() { coder.ConsolidationClientFactory = previous })
 
 	chat := database.Chat{Model: database.Model{ID: 1}, ChatType: "interaction", SharedConfig: sharedConfigForTest(t, map[string]interface{}{
 		"model":   "some-model",
@@ -97,21 +97,21 @@ func TestRunAutoConsolidationSkipsNonCoderChats(t *testing.T) {
 // not run again.
 func TestRunAutoConsolidationRunsOnceForAReadyCoderChat(t *testing.T) {
 	ResetAutoConsolidationCooldownForTest()
-	t.Setenv(nativecoder.AutoConsolidationEnvKey, "")
+	t.Setenv(coder.AutoConsolidationEnvKey, "")
 
 	var repos []string
-	previous := nativecoder.ConsolidationClientFactory
-	nativecoder.ConsolidationClientFactory = func(repo string) (nativecoder.ConsolidationClient, error) {
+	previous := coder.ConsolidationClientFactory
+	coder.ConsolidationClientFactory = func(repo string) (coder.ConsolidationClient, error) {
 		repos = append(repos, repo)
 		return nil, nil // no-op client: the run is skipped, not acted on
 	}
-	t.Cleanup(func() { nativecoder.ConsolidationClientFactory = previous })
+	t.Cleanup(func() { coder.ConsolidationClientFactory = previous })
 
 	chat := database.Chat{Model: database.Model{ID: 1}, ChatType: "interaction", SharedConfig: sharedConfigForTest(t, map[string]interface{}{
 		"model":             "some-model",
 		"backend":           "litellm",
 		"coder_interaction": "autonomous",
-		nativecoder.AutoConsolidationConfigKey: map[string]interface{}{
+		coder.AutoConsolidationConfigKey: map[string]interface{}{
 			"enabled": true,
 		},
 		autoConsolidationRepoConfigKey: "msgmate-io/open-chat-go",
@@ -130,14 +130,14 @@ func TestRunAutoConsolidationRunsOnceForAReadyCoderChat(t *testing.T) {
 
 // TestAutoConsolidationRepoPrefersConfigThenEnv guards the repository resolution.
 func TestAutoConsolidationRepoPrefersConfigThenEnv(t *testing.T) {
-	t.Setenv(nativecoder.GitHubRepoEnv, "msgmate-io/from-env")
+	t.Setenv(coder.GitHubRepoEnv, "msgmate-io/from-env")
 	if got := autoConsolidationRepo(map[string]interface{}{}); got != "msgmate-io/from-env" {
 		t.Fatalf("repo = %q, want the deployment env value", got)
 	}
 	if got := autoConsolidationRepo(map[string]interface{}{autoConsolidationRepoConfigKey: "msgmate-io/from-config"}); got != "msgmate-io/from-config" {
 		t.Fatalf("repo = %q, want the per-agent value", got)
 	}
-	t.Setenv(nativecoder.GitHubRepoEnv, "")
+	t.Setenv(coder.GitHubRepoEnv, "")
 	if got := autoConsolidationRepo(map[string]interface{}{}); got != "" {
 		t.Fatalf("repo = %q, want empty when nothing is configured", got)
 	}
@@ -165,15 +165,15 @@ func sharedConfigForTest(t *testing.T, config map[string]interface{}) *database.
 // own block is absent.
 func TestAutoConsolidationRunnerRespectsDeploymentKillSwitch(t *testing.T) {
 	ResetAutoConsolidationCooldownForTest()
-	t.Setenv(nativecoder.AutoConsolidationEnvKey, "off")
+	t.Setenv(coder.AutoConsolidationEnvKey, "off")
 
 	calls := 0
-	previous := nativecoder.ConsolidationClientFactory
-	nativecoder.ConsolidationClientFactory = func(repo string) (nativecoder.ConsolidationClient, error) {
+	previous := coder.ConsolidationClientFactory
+	coder.ConsolidationClientFactory = func(repo string) (coder.ConsolidationClient, error) {
 		calls++
 		return nil, nil
 	}
-	t.Cleanup(func() { nativecoder.ConsolidationClientFactory = previous })
+	t.Cleanup(func() { coder.ConsolidationClientFactory = previous })
 
 	chat := database.Chat{Model: database.Model{ID: 1}, ChatType: "interaction", SharedConfig: sharedConfigForTest(t, map[string]interface{}{
 		"coder_interaction":            "autonomous",
@@ -185,7 +185,7 @@ func TestAutoConsolidationRunnerRespectsDeploymentKillSwitch(t *testing.T) {
 	}
 
 	// Sanity: the same chat does run once the switch is unset.
-	t.Setenv(nativecoder.AutoConsolidationEnvKey, "")
+	t.Setenv(coder.AutoConsolidationEnvKey, "")
 	runAutoConsolidation(nil, chat)
 	if calls != 1 {
 		t.Fatalf("expected the pass to run once the switch is unset, got %d client(s)", calls)

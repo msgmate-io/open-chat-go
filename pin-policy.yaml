@@ -34,9 +34,7 @@ version: 1
 
 # Component ids are printed by the gate and by:
 #   python3 development/scripts/check_pin_freshness.py --root .
-allow:
-  - id: "private-integration:product_landing_pages"
-    reason: "ci#936 security fix: pinned ahead of the product-landing-pages upstream bump so the CLI browser-auth fix ships on dev before the private integration absorbs unrelated upstream changes; update the pin (openchat-integrations sync) and remove this entry on the next consolidation."
+allow: []
 # Examples:
 #   - id: "submodule:clients/oc_python_client"
 #     reason: "pinned to the released client version; bumped by the release job"
