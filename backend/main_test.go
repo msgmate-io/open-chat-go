@@ -86,3 +86,12 @@ func TestToOpenChatBootstrapRuntimeIncludesGitSpecs(t *testing.T) {
 		t.Fatalf("unexpected GitWorkspaceGrantSpecs: %+v", out.GitWorkspaceGrantSpecs)
 	}
 }
+
+func TestIntegrationCommandPrecedence(t *testing.T) {
+	if !integrationCommandWins("msgmate_coder") {
+		t.Fatal("msgmate_coder must win a duplicated integration command")
+	}
+	if integrationCommandWins("community_coder") {
+		t.Fatal("community_coder must not replace an existing command")
+	}
+}

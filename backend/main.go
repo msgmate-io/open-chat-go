@@ -1096,16 +1096,50 @@ func main() {
 // core only wires whichever ones the build profile includes.
 func integrationCLICommands(builtin ...*ufcli.Command) []*ufcli.Command {
 	commands := append([]*ufcli.Command(nil), builtin...)
+	// Built-in commands always win over an integration command with the same
+	// name, so an integration can never shadow `run`, `server`, etc.
+	index := make(map[string]int, len(commands))
+	for i, command := range commands {
+		if command != nil {
+			index[strings.TrimSpace(command.Name)] = i
+		}
+	}
+	// Integrations contribute in name order. When two integrations claim the
+	// same command (e.g. community_coder and msgmate_coder both expose `code`),
+	// msgmate_coder deliberately takes precedence: it is the full coder
+	// integration and its `code` command sets up the local-folder sandbox.
+	integrationIndex := map[string]int{}
 	for _, ref := range extiface.CLICommands() {
 		scoped := ref.Command
 		command := scoped.Command()
 		if command == nil {
 			continue
 		}
-		if strings.TrimSpace(command.Name) == "" {
+		name := strings.TrimSpace(command.Name)
+		if name == "" {
 			command.Name = scoped.Name
+			name = strings.TrimSpace(scoped.Name)
 		}
+		if _, isBuiltin := index[name]; isBuiltin {
+			continue
+		}
+		if existing, exists := integrationIndex[name]; exists {
+			if !integrationCommandWins(ref.IntegrationName) {
+				continue
+			}
+			commands[existing] = command
+			continue
+		}
+		integrationIndex[name] = len(commands)
 		commands = append(commands, command)
 	}
 	return commands
+}
+
+// integrationCommandWins reports whether a duplicated integration CLI command
+// should be replaced by the given integration's implementation. msgmate_coder
+// is the full coding integration, so it outranks the public community coder
+// whenever both are compiled in.
+func integrationCommandWins(integrationName string) bool {
+	return strings.EqualFold(strings.TrimSpace(integrationName), "msgmate_coder")
 }
