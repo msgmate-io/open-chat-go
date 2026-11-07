@@ -20,6 +20,7 @@ open-chat worker   [flags]   # background worker only
 open-chat run      [flags]   # one-shot interaction, prints the bot reply
 open-chat client   <cmd>     # authenticated API calls for scripts
 open-chat tui      [flags]   # launch the in-process terminal UI (tui integration)
+open-chat code     [flags]   # open a coding chat bound to the current folder (coder integrations)
 ```
 
 Run `open-chat <command> --help` to print the authoritative flag list for the
@@ -220,12 +221,23 @@ Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
 `--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
 their own `open-chat client ...` subcommands.
 
+## `open-chat code`
+
+Opens a coding chat for the current folder when a coder integration is part of
+the build. With `msgmate_coder` it registers a temporary reverse SSH endpoint
+through the SSH integration, binds a coding workspace to the folder, creates a
+chat with `msgmate-coder-bot` (override with `--bot`) and launches the TUI
+attached to that chat. With the public `community_coder` integration the alias
+launches the TUI directly (optionally with `--bot`). When both are compiled in,
+`msgmate_coder` takes precedence. See the coder integration readmes for the
+full flag list.
+
 ## `open-chat tui`
 
 Launches the terminal UI when the `tui` integration is part of the build. All
 arguments after the command name are forwarded to the TUI, so its own flags
-(for example `--where` and `--version`) work through `open-chat tui`. See
-[Terminal UI](/docs#tui) for usage and configuration.
+(for example `--bot`, `--where` and `--version`) work through `open-chat tui`.
+See [Terminal UI](/docs#tui) for usage and configuration.
 
 ## Linking text files into the config
 
