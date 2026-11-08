@@ -353,6 +353,22 @@ export function LoginSection({
 }) {
     const googleButtonRef = useRef<HTMLDivElement | null>(null)
     const [googleOpen, setGoogleOpen] = useState(false)
+    const [ssoConfig, setSsoConfig] = useState<{ enabled?: boolean; login_start_url?: string; provider?: string; preset?: string } | null>(null)
+
+    useEffect(() => {
+        let cancelled = false
+        fetch("/api/v1/integrations/intentity_provider/config", { headers: { Accept: "application/json" } })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((cfg) => {
+                if (!cancelled && cfg?.enabled && cfg?.login_start_url) {
+                    setSsoConfig(cfg)
+                }
+            })
+            .catch(() => undefined)
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     useEffect(() => {
         if (!googleLoginEnabled || !googleClientID || !googleLoginRedirectURL || !googleOpen) {
@@ -412,6 +428,18 @@ export function LoginSection({
                 To Open-Chat! Login:
             </Text>
         </div>
+        {ssoConfig?.enabled && ssoConfig.login_start_url && (
+            <Button
+                type="button"
+                variant="outline"
+                className="mb-2 rounded-full"
+                onClick={() => {
+                    window.location.href = ssoConfig.login_start_url as string
+                }}
+            >
+                Login with {ssoConfig.preset ? ssoConfig.preset.replace(/^./, (c) => c.toUpperCase()) : "SSO"}
+            </Button>
+        )}
         {googleLoginEnabled && googleClientID && googleLoginRedirectURL && (
             <Collapsible open={googleOpen} onOpenChange={setGoogleOpen} className="mb-2 [@media(max-height:560px)]:mb-0 flex flex-col items-center">
                 <CollapsibleTrigger asChild>
