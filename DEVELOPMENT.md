@@ -25,8 +25,8 @@ right place to pin the behaviour.
 Open feature, bugfix, docs and chore pull requests against `main`. Release hops
 from `main` to `production` and the private full-build/deployment automation are
 maintainer-controlled; the public workflow files and the application code live
-here. See [`docs/coordination.md`](docs/coordination.md) for the public
-coordination summary.
+here. Agent coordination and operational runbooks are maintained outside this
+repository.
 
 Do not add agent runbooks, private integration documentation or deployment
 secrets to this repository.
