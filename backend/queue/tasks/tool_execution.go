@@ -43,6 +43,10 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
+	// ci#1049: server-owned pins win over stored/user supplied tool init values.
+	if pins := database.ToolInitPinsForChat(&chat); len(pins) > 0 {
+		toolInitData = database.ApplyToolInitPins(toolInitData, pins)
+	}
 	toolInitData = database.WithTrustedBotRuntime(toolInitData, &user)
 	dynamicTools := map[string]interface{}{}
 	mcpTools := map[string]interface{}{}

@@ -419,6 +419,16 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// ci#1049: server-owned tool init pins cannot be overridden by a bot
+	// supplied update.
+	if pins := database.ToolInitPinsForChat(&chat); len(pins) > 0 {
+		if err := database.ValidatePinnedToolInitUpdate(pins, request.ToolName, request.InitData); err != nil {
+			logging.Warnf("[ToolInitData] Rejected pinned tool init update for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+	}
+
 	// Store tool initialization data
 	toolInitManager := database.NewToolInitDataManager(DB)
 	err = toolInitManager.StoreToolInitDataForChat(&chat, request.ToolName, request.InitData)

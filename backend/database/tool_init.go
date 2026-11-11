@@ -36,6 +36,115 @@ func WithTrustedBotRuntime(initData map[string]interface{}, botUser *User) map[s
 	return base
 }
 
+// ToolInitPinsKey is the reserved shared-config key under which the server
+// persists server-owned tool init pins (ci#1049). It is written only by the
+// server, never merged from client/model supplied tool init updates, and it
+// overrides stored tool init values at execution time.
+const ToolInitPinsKey = "tool_init_pins"
+
+// pinnedToolInitParamKeys are the tool init params a pin locks down.
+var pinnedToolInitParamKeys = []string{"repo", "issue_number"}
+
+// BuildGithubIssueToolInitPin builds a pin entry locking a tool to a single
+// GitHub issue.
+func BuildGithubIssueToolInitPin(repo string, issueNumber int) map[string]interface{} {
+	return map[string]interface{}{
+		"repo":         strings.TrimSpace(repo),
+		"issue_number": issueNumber,
+		"locked":       true,
+	}
+}
+
+// ToolInitPinsForChat returns the server-owned tool init pins persisted in the
+// chat shared config, or nil when the chat carries no pins.
+func ToolInitPinsForChat(chat *Chat) map[string]interface{} {
+	if chat == nil || chat.SharedConfig == nil || len(chat.SharedConfig.ConfigData) == 0 {
+		return nil
+	}
+	configData := map[string]interface{}{}
+	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err != nil {
+		return nil
+	}
+	pins, _ := configData[ToolInitPinsKey].(map[string]interface{})
+	if len(pins) == 0 {
+		return nil
+	}
+	return pins
+}
+
+// ApplyToolInitPins overlays server-owned pins onto tool init data. Pinned
+// values always win over caller/model supplied values; the input map is not
+// mutated.
+func ApplyToolInitPins(initData map[string]interface{}, pins map[string]interface{}) map[string]interface{} {
+	base := map[string]interface{}{}
+	for k, v := range initData {
+		base[k] = v
+	}
+	for toolName, rawPin := range pins {
+		pin, ok := rawPin.(map[string]interface{})
+		if !ok || len(pin) == 0 {
+			continue
+		}
+		toolInit := map[string]interface{}{}
+		if existing, ok := base[toolName].(map[string]interface{}); ok {
+			for k, v := range existing {
+				toolInit[k] = v
+			}
+		}
+		for k, v := range pin {
+			toolInit[k] = v
+		}
+		base[toolName] = toolInit
+	}
+	return base
+}
+
+// ValidatePinnedToolInitUpdate rejects a tool init update for a pinned tool
+// whose repo/issue_number differs from the server-owned pin.
+func ValidatePinnedToolInitUpdate(pins map[string]interface{}, toolName string, update map[string]interface{}) error {
+	rawPin, ok := pins[toolName]
+	if !ok {
+		return nil
+	}
+	pin, ok := rawPin.(map[string]interface{})
+	if !ok || len(pin) == 0 {
+		return nil
+	}
+	for _, key := range pinnedToolInitParamKeys {
+		pinValue, ok := pin[key]
+		if !ok {
+			continue
+		}
+		updateValue, present := update[key]
+		if !present || updateValue == nil {
+			continue
+		}
+		if !toolInitParamEqual(pinValue, updateValue) {
+			return fmt.Errorf("tool %s is pinned to the triggering issue and %s cannot be changed", toolName, key)
+		}
+	}
+	return nil
+}
+
+func toolInitParamEqual(a interface{}, b interface{}) bool {
+	return fmt.Sprintf("%v", normalizeToolInitParam(a)) == fmt.Sprintf("%v", normalizeToolInitParam(b))
+}
+
+func normalizeToolInitParam(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return typed
+	}
+}
+
 // ToolInitData represents tool initialization data for a specific chat interaction
 type ToolInitData struct {
 	Model

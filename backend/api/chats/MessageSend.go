@@ -523,6 +523,19 @@ func extractToolsFromChatConfig(chat *database.Chat) interface{} {
 }
 
 func validateToolInitUpdateAgainstConfiguredTools(chat *database.Chat, update map[string]interface{}) error {
+	// ci#1049: server-owned pins always win; a model/client supplied update may
+	// not repoint a pinned tool at another repo/issue.
+	pins := database.ToolInitPinsForChat(chat)
+	for key, rawValue := range update {
+		payload, ok := rawValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if err := database.ValidatePinnedToolInitUpdate(pins, key, payload); err != nil {
+			return err
+		}
+	}
+
 	toolsRaw := extractToolsFromChatConfig(chat)
 	if toolsRaw == nil {
 		if len(update) > 0 {

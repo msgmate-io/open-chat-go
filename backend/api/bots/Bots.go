@@ -213,7 +213,9 @@ func applyInteractionConfigOverrides(
 	for key, value := range configOverrides {
 		// tool_init has a dedicated request field. Ignoring it here avoids an
 		// override bypass and lets an omitted field preserve the bot default.
-		if key == "tool_init" {
+		// ci#1049: `tool_init_pins` is server-owned and reserved likewise, so a
+		// client can never install its own pin.
+		if key == "tool_init" || key == database.ToolInitPinsKey {
 			continue
 		}
 		effectiveConfig[key] = value
@@ -1551,6 +1553,14 @@ func createBotInteraction(
 	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(integrationsStagePrefix, err)}
 	}
+	// ci#1049: bind the server-owned tool init pin for the issue that triggered
+	// this interaction (dispatch `repo:`/`issue:` tags, else the post-action
+	// repo/number) and grant github_issue_comment only when such a binding
+	// exists. With no binding nothing is pinned and nothing is granted, so the
+	// bot keeps failing closed onto the server-side poster (ci#940). It runs
+	// after the tools/tool_init validation because the granted tool comes from
+	// a runtime-registered integration.
+	effectiveConfig = applyTriggerIssuePinGrant(effectiveConfig, req.Tags)
 	// ci#709: the *chat* records the tool-call budget it was created with, so
 	// the budget survives a re-attach / re-provision and is reported as
 	// structured state. The bot's default shared config stays the live source,
