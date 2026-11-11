@@ -36,10 +36,12 @@ with io.open(RECONCILER, encoding="utf-8") as _handle:
     SOURCE = _handle.read()
 
 
-def run(run_id, status="completed", attempt=1, created_at=None):
+def run(run_id, status="completed", attempt=1, created_at=None, conclusion=None):
     payload = {"id": run_id, "status": status, "run_attempt": attempt}
     if created_at is not None:
         payload["created_at"] = created_at
+    if conclusion is not None:
+        payload["conclusion"] = conclusion
     return payload
 
 
@@ -184,8 +186,87 @@ class ReconcileTests(unittest.TestCase):
         api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 0)
-        self.assertIn("is running", summary)
+        self.assertIn("in_progress", summary)
+        self.assertIn(str(NEWER), summary)
         self.assertEqual(self.cancelled, [], "a progressing run must not be cancelled")
+
+    # ci#1033: a superseded attempt is not a verdict. The head e846fb8d of a
+    # consolidation PR had five runs (four `cancelled`, one live) and the
+    # required check stayed `COMPLETED/FAILURE` from attempt 1 while attempt 2
+    # ran, so a green tree read red. The verdict must come from the newest
+    # completed, non-cancelled attempt, and a still-running newer attempt must
+    # read as pending rather than inherit the older red.
+    def test_cancelled_attempt_is_skipped_for_the_newer_green_attempt(self):
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled"),
+                run(NEWER + 1, conclusion="success"),
+            ],
+            jobs={NEWER: [gate(conclusion="cancelled")], NEWER + 1: [gate()]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        # The winning run id is logged so the adopted attempt is identifiable.
+        self.assertIn("replacement run %s gate job concluded success" % (NEWER + 1), summary)
+
+    def test_cancelled_run_is_never_a_verdict_even_with_a_red_gate_job(self):
+        # A cancelled attempt whose gate job concluded before the cancellation
+        # must not be read as red; the older completed green attempt testifies.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1), run(NEWER, conclusion="cancelled")],
+            jobs={
+                NEWER + 1: [gate()],
+                NEWER: [gate(conclusion="failure")],
+            },
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        self.assertIn("replacement run %s" % (NEWER + 1), summary)
+
+    def test_older_red_attempt_does_not_shadow_a_newer_green_one(self):
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1), run(NEWER)],
+            jobs={NEWER + 1: [gate()], NEWER: [gate(conclusion="failure")]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        self.assertIn("replacement run %s" % (NEWER + 1), summary)
+
+    def test_red_gate_job_of_the_newest_completed_attempt_still_rejects(self):
+        # The fix must not weaken the gate: a real (non-cancelled) red verdict
+        # on the newest completed attempt is still adopted as a rejection.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1)],
+            jobs={NEWER + 1: [gate(conclusion="failure")]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 1)
+        self.assertIn("concluded failure", summary)
+
+    def test_newer_in_progress_attempt_reads_as_pending_not_red(self):
+        # ci#1033: while a newer attempt for the same SHA is in_progress the
+        # commit has no verdict - it must not inherit the older red.
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 0)
+        self.assertIn(str(NEWER), summary)
+        self.assertIn("pending verdict", summary)
+        # A queued attempt that starves behind this run's concurrency group hands
+        # the group over instead of stamping a red verdict on the tree.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="queued", created_at=CREATED_STARVED)],
+        )
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 5)
+        self.assertIn("yielded:", summary)
+
+    def test_is_superseded_helper(self):
+        self.assertTrue(mod.is_superseded("cancelled"))
+        self.assertTrue(mod.is_superseded("stale"))
+        self.assertFalse(mod.is_superseded("failure"))
+        self.assertFalse(mod.is_superseded("success"))
+        self.assertFalse(mod.is_superseded(None))
 
     def test_starved_replacement_makes_this_run_yield_the_group(self):
         # 39407028825: `pending` for 12+ minutes with an empty repository queue,

@@ -196,8 +196,27 @@ def replacement_runs(repo, head_sha, current_run_id, token):
     return runs
 
 
+# ci#1033: attempt outcomes that are *not* a verdict about the tree. A run that
+# was cancelled (by the `pr-ci-<pr>-<sha>` concurrency group, by the
+# cancel-superseded-runs job, or by its own yield) tested nothing, so its gate
+# job must never be read as red or green: it was superseded.
+SUPERSEDED_CONCLUSIONS = ("cancelled", "stale")
+
+
+def is_superseded(conclusion):
+    return isinstance(conclusion, str) and conclusion in SUPERSEDED_CONCLUSIONS
+
+
 def gate_verdict(runs, repo, token):
-    """Newest completed candidate run with a real gate verdict, else (None, None).
+    """Newest completed, non-cancelled attempt with a real gate verdict.
+
+    ci#1033: the verdict for a commit is the gate conclusion of the *newest
+    completed attempt that was not cancelled*. Measured on head e846fb8d, five
+    `Run PR CI Tests and Deployments` runs existed (four cancelled, one live)
+    and the required check stayed red from attempt 1 while attempt 2 ran, so a
+    green tree read red. Cancelled runs/attempts are therefore never a verdict
+    (neither red nor green) and are walked past; the winning run id is part of
+    the returned summary so the adopted attempt is identifiable in the logs.
 
     Runs that never contained the gate job (the `closed`-event deployment runs)
     and runs whose gate job was itself cancelled cannot testify about the
@@ -211,8 +230,12 @@ def gate_verdict(runs, repo, token):
     for run in runs:
         if run.get("status") != "completed":
             continue
+        # A cancelled *run* was superseded as a whole: its gate job cannot
+        # testify even if it happened to finish first (ci#1033).
+        if is_superseded(run.get("conclusion")):
+            continue
         conclusion = gate_conclusion(repo, run.get("id"), token)
-        if conclusion in (None, "cancelled"):
+        if conclusion is None or is_superseded(conclusion):
             continue
         return run, conclusion
     return None, None
@@ -305,13 +328,20 @@ def reconcile(args, token):
         # supersedes ours, so we release the group now and defer to it. Runs that
         # have not begun executing are handled below (a starved one yields; other-
         # wise we keep waiting, because nothing is gating the commit yet).
+        #
+        # ci#1033: this is also why an in_progress attempt must never inherit the
+        # older attempt's verdict. The commit has no verdict yet - it is *pending*,
+        # not red - and head e846fb8d read red for exactly this reason. A queued
+        # attempt is waited for below and, if it starves behind this run's
+        # concurrency group, the group is handed over instead of stamping a red
+        # verdict on a tree nobody is gating.
         running = next((r for r in candidates if r.get("status") == "in_progress"), None)
         if running is not None:
             return 0, (
-                "accepted: replacement run %s for %s is running; its own '%s' "
-                "check is newer and authoritative for this commit, so this "
-                "superseded run defers to it."
-                % (running.get("id"), args.head_sha[:12], GATE_JOB_NAME)
+                "accepted: newer attempt run %s for %s is in_progress (pending "
+                "verdict, not a failure); its own '%s' check is newer and "
+                "authoritative for this commit, so superseded run %s defers to it."
+                % (running.get("id"), args.head_sha[:12], GATE_JOB_NAME, args.run_id)
             )
         starved = starved_replacement(candidates, _NOW(), args.yield_seconds)
         if starved is not None:
