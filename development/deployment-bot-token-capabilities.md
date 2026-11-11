@@ -69,3 +69,39 @@ i.e. ticket acceptance criterion 3, not this check.
   exercised without a credential, a cluster or a deployment run.
 * Nothing here replaces the CI-secret fallback: re-issuing the vault item is a
   maintainer action on the vault, and the fallback stays as insurance.
+
+## Reading a finished deployment run (rotation verdict)
+
+The capability check above gates a candidate credential *before* it is stored.
+The other half of ci#1044 is the after-the-fact question: did the deploy hop
+actually run on the profile's vault token, or on the ci#1042 CI-secret fallback
+that keeps it green?
+
+`development/scripts/verify_deployment_bot_token_rotation.py` answers that from
+the run's own evidence (log + step conclusions), read-only and network-free:
+
+```bash
+gh run view <run-id> --repo msgmate-io/open-chat-go --log > /tmp/run.log
+gh run view <run-id> --repo msgmate-io/open-chat-go --json jobs > /tmp/run-jobs.json
+python3 development/scripts/verify_deployment_bot_token_rotation.py \
+    --log-file /tmp/run.log --jobs-json /tmp/run-jobs.json
+```
+
+It reports the three acceptance criteria of ci#1044:
+
+| criterion | source | fails when |
+| --- | --- | --- |
+| 1 token source is the vault `BOT_TOKEN` | `Using the bot token from …` summary line | the summary names `CI repository secret BOT_TOKEN`, or a `::warning::` names the vault item as rejected |
+| 2 precondition assertion passed | `Resolve and verify GitHub bot token` step | the step is not green, or the log carries `bot token cannot read <owner/repo>@<ref>` |
+| 3 deploy + `VERSION` assertions green | `Deploy Helm chart`, `Assert deployed VERSION matches the merged VERSION` | either step is not green |
+
+Exit code is `0` only when all three are `OK`. A run with no summary line or no
+such steps is reported `INCONCLUSIVE` (exit `1`), never as rotated — a fallback
+deploy is deliberately *not* treated as a completed rotation. The report carries
+verdicts, step names and the token-source label only; a unit test asserts a
+credential present in the log never reaches it.
+
+Verification of the running deployment itself still goes through `Live Runtime
+Canary` (`repository_dispatch: live-canary`) and the log-monitoring workflow —
+this script reads run metadata, and neither mutates the cluster nor touches the
+vault.
