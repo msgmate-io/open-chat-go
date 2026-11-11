@@ -96,7 +96,7 @@ const (
 	defaultAutoContinueMax = 30
 	// defaultAutoContinueMaxIncompleteRetries bounds the retry budget of an
 	// incomplete turn (ci#724) when none is configured.
-	defaultAutoContinueMaxIncompleteRetries = 3
+	defaultAutoContinueMaxIncompleteRetries = 5
 	// defaultAutoContinueDelaySeconds is the default quiet period between turns.
 	defaultAutoContinueDelaySeconds = 10
 	// maxAutoContinueDelaySeconds caps a configured delay so a misconfigured
