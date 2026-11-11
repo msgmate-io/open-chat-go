@@ -125,13 +125,39 @@ func TestCI1028ResolvePlanImplementationConfirmationUsesTheActionTitle(t *testin
 	t.Setenv(planImplementationGitHubAPIBaseEnv, "")
 
 	plain := postActionPlanAutoImplement{Repo: "msgmate-io/open-chat-go-ci", Number: 1028, Title: "Allow autonomous continuation"}
-	if got := resolvePlanImplementationConfirmation(plain); got {
+	if got, _ := planImplementationGate(plain, true); got {
 		t.Fatalf("a plain issue title must auto-continue, got require_confirmation=%v", got)
 	}
 
 	wip := postActionPlanAutoImplement{Repo: "msgmate-io/open-chat-go-ci", Number: 1028, Title: "[WIP] Allow autonomous continuation"}
-	if got := resolvePlanImplementationConfirmation(wip); !got {
+	if got, _ := planImplementationGate(wip, true); !got {
 		t.Fatalf("a [WIP] issue title must stay gated, got require_confirmation=%v", got)
+	}
+}
+
+// TestCI1028UnpostedPlanStaysGated pins the precondition: a plan comment that
+// never reached the issue must not grant autonomous implementation, even when an
+// explicit `require_confirmation: false` was requested.
+func TestCI1028UnpostedPlanStaysGated(t *testing.T) {
+	t.Setenv(postGithubTokenEnv, "")
+	t.Setenv(planImplementationGitHubAPIBaseEnv, "")
+
+	autoApprove := false
+	action := postActionPlanAutoImplement{
+		Repo:                "msgmate-io/open-chat-go-ci",
+		Number:              1028,
+		Title:               "Allow autonomous continuation",
+		RequireConfirmation: &autoApprove,
+	}
+	got, reason := planImplementationGate(action, false)
+	if !got {
+		t.Fatalf("an unposted plan must stay gated, got require_confirmation=%v", got)
+	}
+	if !strings.Contains(reason, "could not be posted") {
+		t.Fatalf("reason must explain the unposted plan, got %q", reason)
+	}
+	if got, _ := planImplementationGate(action, true); got {
+		t.Fatalf("the same action must auto-continue once the plan is posted, got require_confirmation=%v", got)
 	}
 }
 
@@ -159,13 +185,13 @@ func TestCI1028ResolvePlanImplementationConfirmationFetchesTheTitle(t *testing.T
 	t.Setenv(planImplementationGitHubAPIBaseEnv, server.URL)
 
 	action := postActionPlanAutoImplement{Repo: "msgmate-io/ci-1028-fixture", Number: 1028}
-	if got := resolvePlanImplementationConfirmation(action); !got {
+	if got, _ := planImplementationGate(action, true); !got {
 		t.Fatalf("a fetched [WIP] title must stay gated, got require_confirmation=%v", got)
 	}
 
 	// A failed lookup keeps the safe behaviour: approval stays required.
 	t.Setenv(planImplementationGitHubAPIBaseEnv, "http://127.0.0.1:1")
-	if got := resolvePlanImplementationConfirmation(action); !got {
+	if got, _ := planImplementationGate(action, true); !got {
 		t.Fatalf("an unresolved title must require confirmation, got require_confirmation=%v", got)
 	}
 }

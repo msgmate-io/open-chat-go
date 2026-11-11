@@ -410,7 +410,7 @@ func runPlanAutoImplement(db *gorm.DB, queueClient *asynq.Client, queueInspector
 	} else {
 		commentErr = postPlanAutoImplementCommentTo("", token, action, replyText)
 	}
-	dispatchErr := dispatchPlanImplementation(db, queueClient, queueInspector, chat, action, replyText)
+	dispatchErr := dispatchPlanImplementation(db, queueClient, queueInspector, chat, action, replyText, commentErr == nil)
 	if dispatchErr != nil {
 		if commentErr != nil {
 			return fmt.Errorf("plan comment failed: %v; implementation dispatch failed: %w", commentErr, dispatchErr)
@@ -435,7 +435,7 @@ func decodePostActionPlanAutoImplement(raw map[string]interface{}) (postActionPl
 
 // dispatchPlanImplementation starts the implementation agent in a new
 // interaction owned by the planning chat's human user.
-func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueInspector *asynq.Inspector, chat database.Chat, action postActionPlanAutoImplement, replyText string) error {
+func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueInspector *asynq.Inspector, chat database.Chat, action postActionPlanAutoImplement, replyText string, planPosted bool) error {
 	if queueClient == nil || queueInspector == nil {
 		return fmt.Errorf("async queue unavailable for implementation dispatch")
 	}
@@ -451,7 +451,8 @@ func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueIns
 	if overrides == nil {
 		overrides = map[string]interface{}{}
 	}
-	requireConfirmation := resolvePlanImplementationConfirmation(action)
+	requireConfirmation, reason := planImplementationGate(action, planPosted)
+	logging.Infof("plan_auto_implement: dispatching the implementation for %s#%d with require_confirmation=%v (%s)", action.Repo, action.Number, requireConfirmation, reason)
 	req := CreateBotInteractionRequest{
 		Message:             buildPlanImplementationPrompt(action, replyText, requireConfirmation),
 		ConfigOverrides:     overrides,
@@ -465,11 +466,13 @@ func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueIns
 	return nil
 }
 
-// resolvePlanImplementationConfirmation derives the approval gate of an
-// implementation dispatch (ci#1028) and logs why it was chosen. It resolves the
-// issue title only when the decision actually needs it, so an explicit
-// `require_confirmation` costs no extra API call.
-func resolvePlanImplementationConfirmation(action postActionPlanAutoImplement) bool {
+// planImplementationGate decides the approval gate of an implementation dispatch
+// (ci#1028): a plan that never reached the issue cannot be reviewed, so the
+// dispatch stays gated; once the plan is posted the regular gate applies.
+func planImplementationGate(action postActionPlanAutoImplement, planPosted bool) (bool, string) {
+	if !planPosted {
+		return true, "the plan comment could not be posted, so there is nothing to approve"
+	}
 	title := strings.TrimSpace(action.Title)
 	if action.RequireConfirmation == nil && title == "" {
 		fetched, err := fetchPlanImplementationIssueTitle(action)
@@ -481,9 +484,7 @@ func resolvePlanImplementationConfirmation(action postActionPlanAutoImplement) b
 			title = fetched
 		}
 	}
-	requireConfirmation, reason := planImplementationRequiresConfirmation(action, title)
-	logging.Infof("plan_auto_implement: dispatching the implementation for %s#%d with require_confirmation=%v (%s)", action.Repo, action.Number, requireConfirmation, reason)
-	return requireConfirmation
+	return planImplementationRequiresConfirmation(action, title)
 }
 
 // planImplementationRequiresConfirmation decides whether a posted plan's
