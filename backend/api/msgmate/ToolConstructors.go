@@ -97,6 +97,13 @@ func NewCoderCompactTool() Tool {
 	return NewToolFromDefinition(tooldefs.CoderCompactToolDef)
 }
 
+// NewGitHubPREditTool is the ci#1035 typed pull-request edit tool: it PATCHes an
+// existing PR (title/body/state/base), applies label additions/removals, and
+// re-reads the PR so the write is verified instead of claimed.
+func NewGitHubPREditTool() Tool {
+	return NewToolFromDefinition(tooldefs.GitHubPREditToolDef)
+}
+
 func NewToolInitTestToolPassThrough() Tool {
 	return NewToolFromDefinition(tooldefs.ToolInitTestToolPassThroughDef)
 }
