@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -419,9 +420,29 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// ci#1049: a server-owned pin always wins. A pinned tool's update may
+	// restate the pinned target but never redirect it; the conflict is explicit
+	// so the agent learns the target is fixed instead of silently writing
+	// somewhere else.
+	pins := database.ToolInitPinsForChat(&chat)
+	if err := database.ValidatePinnedToolInitUpdate(pins, map[string]interface{}{request.ToolName: request.InitData}); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error":   "pinned_tool_init",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	initDataToStore := request.InitData
+	if pin, pinned := pins[strings.TrimSpace(request.ToolName)]; pinned {
+		initDataToStore = database.MergeToolInitPin(request.InitData, pin)
+	}
+
 	// Store tool initialization data
 	toolInitManager := database.NewToolInitDataManager(DB)
-	err = toolInitManager.StoreToolInitDataForChat(&chat, request.ToolName, request.InitData)
+	err = toolInitManager.StoreToolInitDataForChat(&chat, request.ToolName, initDataToStore)
 	if err != nil {
 		logging.Errorf("[ToolInitData] Failed to store init data for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
 		http.Error(w, "Failed to store tool init data", http.StatusInternalServerError)
