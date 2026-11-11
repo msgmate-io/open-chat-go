@@ -14,7 +14,7 @@ func TestBuildPlanImplementationPromptUsesHumanIssueURL(t *testing.T) {
 		Repo:   "a-little-world/little-world-backend",
 		Number: 920,
 		Issue:  &issue,
-	}, "the plan")
+	}, "the plan", false)
 
 	want := "- Issue/PR URL: https://github.com/a-little-world/little-world-backend/issues/920"
 	if !strings.Contains(prompt, want) {
@@ -33,7 +33,7 @@ func TestBuildPlanImplementationPromptKeepsHumanIssueURL(t *testing.T) {
 		Repo:   "a-little-world/little-world-backend",
 		Number: 920,
 		Issue:  &issue,
-	}, "the plan")
+	}, "the plan", false)
 
 	want := "- Issue/PR URL: https://github.com/a-little-world/little-world-backend/issues/920"
 	if !strings.Contains(prompt, want) {
@@ -49,7 +49,7 @@ func TestBuildPlanImplementationPromptOmitsEmptyIssueURL(t *testing.T) {
 		Repo:   "acme/widgets",
 		Number: 7,
 		Issue:  &empty,
-	}, "the plan")
+	}, "the plan", false)
 
 	if strings.Contains(prompt, "Issue/PR URL") {
 		t.Fatalf("prompt should not render an issue URL line:\n%s", prompt)
