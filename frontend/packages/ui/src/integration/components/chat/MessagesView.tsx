@@ -290,8 +290,8 @@ export function MessagesScroll({
     }
     
     const hasPartialMessage = chatUUID ? (
-        partialMessage?.text?.length > 0 ||
-        partialMessage?.thoughts?.length > 0 ||
+        (partialMessage?.text?.length ?? 0) > 0 ||
+        (partialMessage?.thoughts?.length ?? 0) > 0 ||
         (partialMessage?.tool_calls?.length ?? 0) > 0
     ) : false;
 

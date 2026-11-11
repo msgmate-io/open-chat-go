@@ -581,6 +581,7 @@ function TurnSequence({
   showNarration = true,
   defaultOpen = false,
   terminal = false,
+  isSuperseded = false,
 }: {
   messageUUID: string;
   thoughtBlocks: TurnThoughtBlock[];
@@ -597,6 +598,11 @@ function TurnSequence({
    */
   showNarration?: boolean;
   defaultOpen?: boolean;
+  /**
+   * A newer message/step exists, so a *finished* tool card here may render
+   * collapsed (ci#1031, item 6). Failures and running calls always stay open.
+   */
+  isSuperseded?: boolean;
 }) {
   const blocks = useMemo<TurnBlock[]>(
     () => buildTurnBlocks({ timeline: thoughtBlocks, toolCalls }),
