@@ -604,8 +604,9 @@ func interactionHumanOwner(db *gorm.DB, chatUUID string) (*database.User, error)
 
 // buildPlanImplementationPrompt renders the coding-agent prompt for the plan.
 // The `requireConfirmation` flag reflects the ci#1028 gate: a plan posted for a
-// non-`[WIP]` issue is approved for autonomous continuation, a `[WIP]` issue
-// still waits for an explicit human approval.
+// non-`[WIP]` issue is approved for autonomous continuation, while an explicit
+// `require_confirmation`, a `[WIP]` issue title or an unposted plan still waits
+// for an explicit human approval.
 func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText string, requireConfirmation bool) string {
 	var b strings.Builder
 	b.WriteString("You are a coding agent implementing a GitHub issue plan produced by a planning agent.\n")

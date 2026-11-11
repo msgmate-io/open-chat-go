@@ -117,10 +117,10 @@ func TestCI1028TitleCarriesWipMarker(t *testing.T) {
 	}
 }
 
-// TestCI1028ResolvePlanImplementationConfirmationUsesTheActionTitle pins that a
+// TestCI1028GateUsesTheActionTitle pins that a
 // title supplied by the dispatching integration decides the gate without any
 // GitHub API call (no token is configured in this test).
-func TestCI1028ResolvePlanImplementationConfirmationUsesTheActionTitle(t *testing.T) {
+func TestCI1028GateUsesTheActionTitle(t *testing.T) {
 	t.Setenv(postGithubTokenEnv, "")
 	t.Setenv(planImplementationGitHubAPIBaseEnv, "")
 
@@ -161,10 +161,10 @@ func TestCI1028UnpostedPlanStaysGated(t *testing.T) {
 	}
 }
 
-// TestCI1028ResolvePlanImplementationConfirmationFetchesTheTitle pins the title
+// TestCI1028GateFetchesTheTitle pins the title
 // resolution path: with no title on the action the dispatch fetches it from the
 // GitHub API with the existing post token.
-func TestCI1028ResolvePlanImplementationConfirmationFetchesTheTitle(t *testing.T) {
+func TestCI1028GateFetchesTheTitle(t *testing.T) {
 	title := "[WIP] gated fixture"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -223,7 +223,8 @@ func TestCI1028FetchIssueTitleToRejectsErrors(t *testing.T) {
 
 // TestCI1028PromptStatesTheApprovalState pins the prompt delta: the dispatch
 // prompt tells the implementation agent whether the plan is already approved
-// (autonomous continuation) or still needs an explicit human approval ([WIP]).
+// (autonomous continuation) or still needs an explicit human approval (a gated
+// dispatch, e.g. a `[WIP]` issue title).
 func TestCI1028PromptStatesTheApprovalState(t *testing.T) {
 	action := postActionPlanAutoImplement{Repo: "msgmate-io/open-chat-go-ci", Number: 1028, Bot: "msgmate-coder-repl-bot"}
 
