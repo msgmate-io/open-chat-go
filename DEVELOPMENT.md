@@ -22,14 +22,34 @@ right place to pin the behaviour.
 
 ## Contributing, CI and deployment
 
-Open feature, bugfix, docs and chore pull requests against `main`. Release hops
-from `main` to `production` and the private full-build/deployment automation are
-maintainer-controlled; the public workflow files and the application code live
-here. Agent coordination and operational runbooks are maintained outside this
-repository.
+Open feature, bugfix, docs and chore pull requests against **`dev`**, the
+integration trunk - never against `main`, and never push to `dev` or `main`
+directly:
 
-Do not add agent runbooks, private integration documentation or deployment
-secrets to this repository.
+```bash
+git fetch origin dev
+git checkout -B <branch> origin/dev
+```
+
+`main` is only advanced by the automatic `[Dev promotion]` pull request
+(`dev` -> `main`); the heavy CI suites (`deploy`, `sandbox-test`, `build`,
+`e2e`, `test-core-only`, `ai-test-mock`, `ai-test-real`) run on that promotion
+PR only. An ordinary PR against `dev` carries the `test` label and runs the
+lightweight PR CI. Release hops from `main` to `production` and the private
+full-build/deployment automation are maintainer-controlled; the public workflow
+files and the application code live here.
+
+Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
+its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
+section for it); `PR Test Merge Requirement` reads that and nothing else.
+GitHub cannot auto-close a cross-repository issue, so the line is both the gate
+input and the closure instruction. Agent-facing working notes - including the
+full set of PR conventions (base, draft state, labels, tracker line, truthful
+test reporting) - live in [`AGENTS.md`](AGENTS.md).
+
+Agent coordination and operational runbooks are maintained outside this
+repository. Do not add agent runbooks, private integration documentation or
+deployment secrets to this repository.
 
 ## Clone the repository
 
