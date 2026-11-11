@@ -2746,6 +2746,17 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_coder_sandbox_readiness.sh
 
+      # ci#1038: the coding sandbox must actually ship a Go toolchain, and the
+      # provisioning half has to be verifiable instead of narrative: the pinned
+      # version comes from backend/go.mod's `go` directive, GOTOOLCHAIN=local and
+      # a warmed module cache keep `go build ./...` offline-capable, an off-PATH
+      # toolchain is repaired rather than reinstalled, and `--check` reports
+      # `missing_cli: go` + `go: MISSING` when the sandbox cannot run local checks.
+      - name: Coder sandbox Go toolchain provisioning unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_toolchain.sh
+
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
       # networking design). Pin the in-pod probe script contract (single-line
