@@ -30,10 +30,16 @@ for tool in go gofmt; do
   if command -v "$tool" >/dev/null 2>&1; then
     note "ok   $tool on PATH ($(command -v "$tool"))"
   elif [ -x "/usr/local/go/bin/$tool" ]; then
+    # ci#1038: `missing_cli: <tool>` is the machine-readable form of a missing
+    # binary (the same token coder_bash reports for an absent CLI). It is emitted
+    # whenever the shell this probe runs in cannot see the tool, so a reader can
+    # recognise "no toolchain here" instead of trusting an agent's narrative.
+    note "missing_cli: $tool"
     note "MISS $tool is installed at /usr/local/go/bin/$tool but not on PATH;"
     note "     export PATH=/usr/local/go/bin:/dev_bin:$PATH"
     status=1
   else
+    note "missing_cli: $tool"
     note "MISS $tool is not installed in this image at all;"
     note "     the coder sandbox image must ship the Go toolchain before local checks are attempted."
     status=1
