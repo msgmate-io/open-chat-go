@@ -503,12 +503,13 @@ func applyMessageToolInitUpdate(DB *gorm.DB, chat *database.Chat, update map[str
 	// ci#1049: a server-owned pin (bound at interaction creation from the
 	// dispatch trigger) wins over this update; a redirect is rejected while an
 	// equivalent restatement is merged back to the pinned value.
-	if err := database.ValidatePinnedToolInitUpdate(database.ToolInitPinsForChat(chat), update); err != nil {
+	pins := database.ToolInitPinsForChat(chat)
+	if err := database.ValidatePinnedToolInitUpdate(pins, update); err != nil {
 		return nil, err
 	}
 	for key, rawValue := range update {
 		payload, _ := rawValue.(map[string]interface{})
-		if pin, pinned := database.ToolInitPinsForChat(chat)[strings.TrimSpace(key)]; pinned {
+		if pin, pinned := pins[strings.TrimSpace(key)]; pinned {
 			payload = database.MergeToolInitPin(payload, pin)
 		}
 		if err := toolInitManager.StoreToolInitDataForChat(chat, key, payload); err != nil {
