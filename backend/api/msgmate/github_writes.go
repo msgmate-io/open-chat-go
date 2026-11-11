@@ -52,6 +52,7 @@ var GitHubTypedWriteTools = []GitHubTypedWriteTool{
 	{Tool: "github_issue_comment", ReadTool: "github_issue_view", Role: "Write", WriteHint: "done"},
 	{Tool: "github_issue_edit", ReadTool: "github_issue_view", Role: "Write", WriteHint: "updated"},
 	{Tool: "github_pr_create", ReadTool: "github_pr_view", Role: "Write", WriteHint: "merged"},
+	{Tool: "github_pr_edit", ReadTool: "github_pr_view", Role: "Write", WriteHint: "updated"},
 	{Tool: "github_pr_review", ReadTool: "github_pr_view", Role: "Write", WriteHint: "reviewed"},
 	{Tool: "github_pr_merge", ReadTool: "github_pr_view", Role: "Write", WriteHint: "merged"},
 	{Tool: "github_pr_comment", ReadTool: "github_pr_view", Role: "Write", WriteHint: "commented"},
