@@ -131,24 +131,6 @@
     }
   },
   {
-    "title": "deepseek/deepseek-v4-flash-0731",
-    "description": "DeepSeek V4 Flash 0731 is a sparse mixture-of-experts model from DeepSeek, with 13B active parameters out of 284B total. This re-post-trained revision is suited for coding, reasoning, and agent workflows....",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "openrouter",
-      "context": 10,
-      "endpoint": "https://openrouter.ai/api/v1",
-      "max_tokens": 4096,
-      "model": "deepseek/deepseek-v4-flash-0731",
-      "reasoning": true,
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7
-    }
-  },
-  {
     "title": "deepseek/deepseek-v4.1-flash",
     "description": "DeepSeek V4.1 Flash from DeepSeek via OpenRouter is a fast mixture-of-experts model with a 1M-token context window, suited for coding, reasoning, and agentic workflows.",
     "bot_usernames": [
@@ -160,7 +142,7 @@
       "context": 10,
       "endpoint": "https://openrouter.ai/api/v1",
       "max_tokens": 262144,
-      "model": "deepseek/deepseek-v4.1-flash",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
       "reasoning": true,
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7
