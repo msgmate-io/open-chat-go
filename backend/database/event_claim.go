@@ -123,6 +123,10 @@ func MarkEventClaimFired(DB *gorm.DB, scope, triggerID, eventKey, chatUUID strin
 // ReleaseEventClaim drops a claim whose dispatch failed, so the event can be
 // retried instead of being lost or deduplicated against a chat that never
 // existed. It is a no-op for an already fired claim.
+//
+// The delete is hard (Unscoped): the ledger's soft-delete column would keep the
+// (scope, trigger_id, event_key) tuple occupied and the very next retry would
+// still lose the race against a row nobody can see.
 func ReleaseEventClaim(DB *gorm.DB, scope, triggerID, eventKey string) error {
 	if DB == nil {
 		return nil
@@ -130,7 +134,7 @@ func ReleaseEventClaim(DB *gorm.DB, scope, triggerID, eventKey string) error {
 	if scope == "" {
 		scope = EventClaimScopeAgentDispatch
 	}
-	return DB.Where("scope = ? AND trigger_id = ? AND event_key = ? AND state = ?",
+	return DB.Unscoped().Where("scope = ? AND trigger_id = ? AND event_key = ? AND state = ?",
 		scope, triggerID, eventKey, EventClaimStateClaimed).
 		Delete(&EventClaim{}).Error
 }
@@ -143,7 +147,7 @@ func PruneEventClaims(DB *gorm.DB) (int64, error) {
 		return 0, nil
 	}
 	cutoff := time.Now().Add(-EventClaimRetention)
-	result := DB.Where("state = ? AND created_at < ?", EventClaimStateFired, cutoff).
+	result := DB.Unscoped().Where("state = ? AND created_at < ?", EventClaimStateFired, cutoff).
 		Delete(&EventClaim{})
 	return result.RowsAffected, result.Error
 }
