@@ -43,6 +43,10 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
+	// ci#1049: a server-owned pin for this tool (bound at interaction creation
+	// from the dispatch trigger) always wins over the stored/forged value, so a
+	// granted write tool can never be redirected to a different target.
+	toolInitData = database.MergeToolInitPin(toolInitData, database.ToolInitPinsForChat(&chat)[payload.ToolName])
 	toolInitData = database.WithTrustedBotRuntime(toolInitData, &user)
 	dynamicTools := map[string]interface{}{}
 	mcpTools := map[string]interface{}{}
