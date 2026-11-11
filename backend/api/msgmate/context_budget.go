@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"backend/gittooling"
 	"backend/logging"
 )
 
@@ -251,6 +252,16 @@ func truncateToolResultForTool(result, toolName string, limits ToolResultLimits)
 	limit := limits.ForTool(toolName)
 	if limit <= 0 || len(result) <= limit {
 		return result, false
+	}
+	// ci#1030 Phase 1: a git result is a JSON envelope, so it can be re-bounded
+	// structurally - whole hunks only, newest commits, first blamed lines - and
+	// flagged with an explicit `truncated` plus an actionable `hint`, instead of
+	// being cut mid-JSON by the marker below. A model that receives half a hunk
+	// or a torn envelope has to spend another call to find out what it lost.
+	if gittooling.IsGitTool(toolName) {
+		if bounded, ok := gittooling.BoundGitJSON(result, limit); ok {
+			return bounded, true
+		}
 	}
 	name := strings.TrimSpace(toolName)
 	if name == "" {

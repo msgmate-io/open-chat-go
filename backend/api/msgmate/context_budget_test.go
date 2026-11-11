@@ -816,3 +816,115 @@ func TestContextUsageLookupFallsBackToBudgets(t *testing.T) {
 		t.Fatal("an empty chat id must not report a measurement")
 	}
 }
+
+// buildGitDiff(outputLines int) string builds a coder_git-shaped diff envelope
+// whose hunks are individually small but whose total far exceeds the budget.
+func buildGitDiff(outputLines int) string {
+	var b strings.Builder
+	b.WriteString("diff --git a/backend/main.go b/backend/main.go\n--- a/backend/main.go\n+++ b/backend/main.go\n")
+	b.WriteString("@@ -1,3 +1,3 @@ func main()\n context\n-old\n+new\n")
+	written := 0
+	for written < outputLines {
+		fmt.Fprintf(&b, "diff --git a/pkg/file%d.go b/pkg/file%d.go\n--- a/pkg/file%d.go\n+++ b/pkg/file%d.go\n", written, written, written, written)
+		fmt.Fprintf(&b, "@@ -10,3 +10,3 @@ func f%d()\n context\n-removed %d\n+added %d\n", written, written, written)
+		written += 7
+	}
+	return b.String()
+}
+
+func gitEnvelopeWithDiff(t *testing.T, diff string) string {
+	t.Helper()
+	result := map[string]interface{}{
+		"action":    "diff",
+		"path":      "",
+		"stat":      " 40 files changed, 40 insertions(+), 40 deletions(-)",
+		"hunks":     41,
+		"diff":      diff,
+		"truncated": false,
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal git envelope: %v", err)
+	}
+	return string(raw)
+}
+
+// TestTruncateToolResultForToolReboundsGitEnvelope is the ci#1030 Phase 1
+// regression in the real truncation path: a coder_git result over budget is
+// re-bounded at hunk boundaries and stays valid JSON with an explicit
+// `truncated` flag and an actionable hint, instead of being cut mid-JSON.
+func TestTruncateToolResultForToolReboundsGitEnvelope(t *testing.T) {
+	envelope := gitEnvelopeWithDiff(t, buildGitDiff(6000))
+	limit := 4000
+	if len(envelope) <= limit {
+		t.Fatalf("test envelope (%d bytes) must exceed the limit %d", len(envelope), limit)
+	}
+
+	bounded, cut := TruncateToolResultForTool(envelope, "coder_git", ToolResultLimits{Default: limit})
+	if !cut {
+		t.Fatal("expected the oversized git envelope to be reported as truncated")
+	}
+	if len(bounded) > limit {
+		t.Fatalf("bounded envelope is %d bytes, limit is %d", len(bounded), limit)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(bounded), &decoded); err != nil {
+		t.Fatalf("bounded git envelope is not valid JSON (a mid-JSON cut breaks the model): %v\n%s", err, bounded)
+	}
+	if decoded["truncated"] != true {
+		t.Fatalf("bounded envelope must carry an explicit truncated=true, got %#v", decoded["truncated"])
+	}
+	hint, _ := decoded["hint"].(string)
+	if !strings.Contains(hint, "path=<file>") {
+		t.Fatalf("bounded envelope must carry an actionable hint, got %q", hint)
+	}
+	if decoded["action"] != "diff" {
+		t.Fatalf("the envelope must keep its action, got %#v", decoded["action"])
+	}
+	if stat, _ := decoded["stat"].(string); stat == "" {
+		t.Fatal("the complete diffstat must survive truncation")
+	}
+
+	// Every hunk that survived is complete: the tail marker is the only thing
+	// allowed to break off a section, never a torn hunk body.
+	boundedDiff, _ := decoded["diff"].(string)
+	for _, line := range strings.Split(boundedDiff, "\n") {
+		if strings.HasPrefix(line, "@@ -1,3 +1,3 @@") {
+			continue
+		}
+		if strings.Count(line, "added") > 0 && strings.Count(line, "removed") > 0 {
+			t.Fatalf("a hunk header and its body were merged: %q", line)
+		}
+	}
+	if !strings.Contains(boundedDiff, " added 0") {
+		t.Fatalf("expected at least the first complete hunk to survive:\n%s", boundedDiff)
+	}
+}
+
+// TestTruncateToolResultForToolLeavesSmallGitEnvelopeAlone pins the other side:
+// a git envelope inside the budget is passed through untouched (never silently
+// flagged as truncated).
+func TestTruncateToolResultForToolLeavesSmallGitEnvelopeAlone(t *testing.T) {
+	envelope := gitEnvelopeWithDiff(t, "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n")
+	bounded, cut := TruncateToolResultForTool(envelope, "coder_git", ToolResultLimits{Default: 4000})
+	if cut {
+		t.Fatalf("a small git envelope must not be reported as truncated: %s", bounded)
+	}
+	if bounded != envelope {
+		t.Fatalf("a small git envelope must pass through unchanged")
+	}
+}
+
+// TestTruncateToolResultForToolStillCutsPlainTools guards the fallback: a
+// non-git result keeps the plain head-only cut.
+func TestTruncateToolResultForToolStillCutsPlainTools(t *testing.T) {
+	big := strings.Repeat("plain output line\n", 2000)
+	bounded, cut := TruncateToolResultForTool(big, "coder_bash", ToolResultLimits{Default: 1000})
+	if !cut {
+		t.Fatal("expected a plain oversized result to be cut")
+	}
+	if len(bounded) > 1000 {
+		t.Fatalf("plain cut exceeded its budget: %d bytes", len(bounded))
+	}
+}
