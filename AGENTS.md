@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Working notes for coding agents on this repo. Setup, build and publishing
-details live in `DEVELOPMENT.md`; this file only records routes an agent must
-not hand-roll.
+details live in `DEVELOPMENT.md`; this file records the routes an agent must not
+hand-roll and the pull request conventions a change has to satisfy to be
+mergeable.
 
 ## GitHub writes: prefer typed tools
 
@@ -36,6 +37,100 @@ rather than closing and re-opening a pull request.
 The trunk for this repo family is `dev`: open pull requests against `dev`, and
 `github_pr_edit` refuses a base retarget away from `dev` unless
 `allow_base_retarget` is set.
+
+`main` is only ever advanced by the automatic `[Dev promotion]` pull request
+(`dev` -> `main`), which the CI automation creates, refreshes in place and
+merges. A feature branch based on `main`, or a pull request whose base is
+`main`, is a defect: it skips the integration trunk and would deploy directly.
+Never push to `dev` or `main`, and never create, retarget, relabel, close or
+merge the promotion pull request (ci#833, ci#931).
+
+- Branch off the *fetched* trunk, not a stale local copy:
+  `git fetch origin dev` then `git checkout -B <branch> origin/dev`.
+- Retargeting a mis-based pull request is an emergency repair, not the plan.
+  Get `base=dev` right at creation time - `github_pr_create` takes the base and
+  a later retarget costs a full CI cycle.
+
+## Pull request conventions (ci#1032)
+
+Every agent-authored pull request must satisfy all five checks below *before*
+the run is reported as done. Each of them has already cost a manual repair and
+a wasted CI cycle, so treat a miss as a failed run, not a nit.
+
+| Check | Required value |
+| --- | --- |
+| Base branch | `dev` |
+| State | **not a draft** |
+| Labels | `test` for a feature/bugfix/docs/chore PR; `test`,`e2e` for `chore/consolidate-*` |
+| Tracker line | a line of its own: `Closes msgmate-io/open-chat-go-ci#<n>` |
+| Verification | truthful: say what actually ran, locally or not at all |
+
+### Never open a feature PR as a draft
+
+A draft pull request reports the run as successful and then blocks the merge
+with *"Pull Request is still a draft"*. Open feature, docs and chore pull
+requests as ready-for-review - or, if you opened a draft to get the number
+early, mark it ready (`github_pr_edit`) before you report it. A draft number in
+the final summary is a failed run, not a partial success.
+
+### Labels: one class label, no heavy suite
+
+- A feature/bugfix/docs/chore PR against `dev` carries the ordinary
+  code-change label **`test`** and nothing else. Do not add `deploy`,
+  `sandbox-test`, `build`, `e2e`, `test-core-only`, `ai-test-mock` or
+  `ai-test-real`: those belong exclusively to the automatic `[Dev promotion]`
+  pull request, and adding one here dispatches a deployment for a PR that is not
+  the promotion hop.
+- A consolidation PR (`chore/consolidate-*`) carries `test` **and** `e2e`.
+- `dependencies` and `no-issue` are exemption labels with a narrow meaning; do
+  not use them to route around the tracker line.
+
+### The tracker line is a line, not a sentence
+
+`PR Test Merge Requirement` reads the body with `development/scripts/linked_ci_issues.sh`
+and only accepts a line whose entire content is that reference - optionally
+wrapped in markdown (a `- ` bullet, `**bold**`, a `| table cell |`) and
+optionally ending in punctuation. A prose mention such as
+`Implemented for (#1031)` does **not** satisfy it, and a feature/bugfix PR must
+close **exactly one** leaf issue.
+
+Put it under a `## Tracker` heading (the pull request template already has one).
+The body has to be right the first time: `gh pr edit` cannot be used here, so a
+fix is `github_pr_edit` (or `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -F body=@/tmp/body.md`).
+The line is free text in the body - editing it needs no new commit.
+
+Consolidation (`chore/consolidate-*`), dependency and `no-issue` pull requests
+are exempt from the tracker line; a `test`-labelled, test-only PR is exempt too.
+Do not lean on the exemptions for ordinary work - link the leaf issue.
+
+### Report tests truthfully
+
+The coding sandbox has no Go toolchain, so `go test ./...` and the E2E suites
+cannot have run there. In the pull request body (and in the final summary) state
+exactly which command ran and in which environment, or say that nothing ran and
+that PR CI is the gate. Claiming a suite that did not run is worse than
+reporting an untested change: PR CI is authoritative and nobody has to trust the
+claim. No polling, no "CI is green" unless a check-run read actually said so.
+
+### A branch without a pull request is not a deliverable
+
+A run is finished when the branch is **pushed and the pull request number
+exists** - not when the diff looks right. Ending a turn with
+"changes are ready" over an unpushed branch, or with nothing committed at all,
+wastes the whole dispatch: the work is invisible to the merge gate, to the
+promotion PR and to a reviewer.
+
+- Commit before you summarize; a clean working tree is the precondition.
+- Push, then create the pull request in the same run.
+- The summary names the pull request (`#N` and its URL). Without a number,
+  nothing in the run is durable.
+- If you genuinely cannot open it (auth failure, conflict you must not resolve),
+  say so explicitly and leave the pushed branch behind - silence is the failure
+  mode, not the blocker.
+
+Before reporting, re-read the pull request with `github_pr_view` and confirm
+`base=dev`, `draft=false`, the label set and the body. Do not rely on the
+create call having echoed what you asked for.
 
 ## A green PR that is "behind" the base branch
 
