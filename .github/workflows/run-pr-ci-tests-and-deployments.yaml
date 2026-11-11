@@ -2448,6 +2448,15 @@ jobs:
           # the group over and reports accepted=false; the replacement run's
           # gate owns the verdict from then on.
           PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
+          # ci#1033: a run cancelled by the "Cancel superseded workflow runs for
+          # this PR" entry step of a NEWER run has no sibling attempt for its own
+          # SHA (the successor carries a different SHA), so waiting for a
+          # replacement can only burn the whole budget while holding the
+          # `pr-ci-<PR>-<SHA>` group - which is what kept the successor's gate
+          # from ever concluding on PR #9 (run 42955395696 sat in_progress here
+          # until the budget). After this short grace the reconciler defers to the
+          # newer run's gate instead of waiting.
+          PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS: ${{ vars.PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS || '30' }}
         run: |
           set -uo pipefail
           set +e

@@ -49,8 +49,8 @@ def gate(name=GATE, status="completed", conclusion="success"):
     return {"name": name, "status": status, "conclusion": conclusion}
 
 
-def open_pr(head=HEAD, state="open"):
-    return {"state": state, "head": {"sha": head}, "labels": LABELS}
+def open_pr(head=HEAD, state="open", ref="fix/ci-659"):
+    return {"state": state, "head": {"sha": head, "ref": ref}, "labels": LABELS}
 
 
 class FakeApi:
@@ -73,6 +73,32 @@ class FakeApi:
         return {"workflow_runs": self.runs}
 
 
+REPO = "msgmate-io/open-chat-go"
+
+
+BRANCH = "fix/merge-gate-verdict-1033-1034"
+
+
+class BranchRunsApi(FakeApi):
+    """FakeApi that serves the same-SHA listing and the head-branch listing apart.
+
+    `newer_branch_run` queries `/actions/workflows/<file>/runs?branch=<ref>`
+    (ci#1033 self-cancellation fingerprint) while `replacement_runs` queries
+    `...?head_sha=<sha>`; the two listings must be distinguishable.
+    """
+
+    def __init__(self, same_sha=(), branch=(), jobs=None, pull=None):
+        FakeApi.__init__(self, pull=pull, runs=same_sha, jobs=jobs)
+        self.branch = list(branch)
+        self.seen = []
+
+    def __call__(self, url, token):
+        self.seen.append(url)
+        if "/runs?branch=" in url:
+            return {"workflow_runs": self.branch}
+        return FakeApi.__call__(self, url, token)
+
+
 def ns(**over):
     base = dict(
         repo="msgmate-io/open-chat-go",
@@ -81,6 +107,7 @@ def ns(**over):
         run_id=CURRENT,
         wait_seconds=0,
         yield_seconds=60,
+        empty_grace_seconds=0,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -521,6 +548,76 @@ class ReconcileTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 4)
+
+
+    def test_newer_branch_run_is_the_self_cancellation_fingerprint(self):
+        """ci#1033: a newer run of the head branch proves our own supersession."""
+        newer = 42955399999
+        api = BranchRunsApi(same_sha=[run(CURRENT)], branch=[run(newer), run(CURRENT)])
+        mod._FETCH = api
+        found = mod.newer_branch_run(REPO, BRANCH, CURRENT, "token")
+        self.assertEqual(found.get("id"), newer)
+        self.assertIn("runs?branch=", api.seen[-1])
+        # Nothing newer - or no branch to look up - is never a reason to defer.
+        mod._FETCH = BranchRunsApi(same_sha=[run(CURRENT)], branch=[run(CURRENT)])
+        self.assertIsNone(mod.newer_branch_run(REPO, BRANCH, CURRENT, "token"))
+        self.assertIsNone(mod.newer_branch_run(REPO, None, CURRENT, "token"))
+
+    def test_self_cancelled_run_defers_without_burning_the_budget(self):
+        """A run cancelled by its own successor must not hold the group for an hour.
+
+        The "Cancel superseded workflow runs for this PR" entry step of a newer
+        run cancels every in-progress/queued run of the same head branch, so a run
+        can be cancelled before any suite ran while NO other run for its SHA
+        exists (the successor has a different SHA). Waiting there held the gate job
+        - and the `pr-ci-<pr>-<sha>` concurrency group - until the budget expired,
+        which is the PR #9 hang (run 42955395696). Defer to the successor instead.
+        """
+        newer = 42955399999
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT)],
+            branch=[run(newer), run(CURRENT)],
+            pull=open_pr(ref=BRANCH),
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600)
+        self.assertEqual(code, 0)
+        self.assertIn("cancelled by the superseded-runs job of newer run %s" % newer, summary)
+        self.assertIn("instead of waiting out the 3600s budget", summary)
+        # Decided on the first iteration: the wait budget was not consumed.
+        self.assertEqual(self.now[0], 1000.0)
+
+    def test_self_cancellation_waits_out_the_empty_listing_grace_first(self):
+        """A sibling attempt still being created must not be missed (ci#1033)."""
+        newer = 42955399999
+        api = BranchRunsApi(
+            same_sha=[], branch=[run(newer), run(CURRENT)], pull=open_pr(ref=BRANCH)
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600, empty_grace_seconds=3)
+        self.assertEqual(code, 0)
+        self.assertIn("newer run %s" % newer, summary)
+        # Three one-second polls of the empty SHA listing, then the deferral.
+        self.assertEqual(self.now[0], 1003.0)
+
+    def test_self_cancellation_shortcut_needs_a_newer_branch_run(self):
+        """A hand-cancelled run has no successor, so it must keep failing closed."""
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT)], branch=[run(CURRENT)], pull=open_pr(ref=BRANCH)
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 3)
+        self.assertTrue(summary.startswith("budget-expired:"))
+
+    def test_a_same_sha_candidate_outranks_the_self_cancellation_shortcut(self):
+        """A real replacement for the SHA must still testify; never short-circuit."""
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT), run(NEWER)],
+            branch=[run(42955399999), run(CURRENT)],
+            jobs={NEWER: [gate(conclusion="failure")]},
+            pull=open_pr(ref=BRANCH),
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600)
+        self.assertEqual(code, 1)
+        self.assertIn("concluded failure", summary)
 
 
 class PaginationTests(unittest.TestCase):

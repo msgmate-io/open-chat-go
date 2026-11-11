@@ -46,6 +46,20 @@ the replacement run's gate produces the verdict - like a superseded deployment
 run - while a cancel that does not take effect keeps the gate red (a `409` just
 means the run is already cancelling; ending this last, `always()`-gated job is
 itself what lets the run complete and release the group).
+
+Self-cancellation is the shape that used to hang this reconciler (ci#1033). The
+"Cancel superseded workflow runs for this PR" entry step of a NEWER run cancels
+every in-progress/queued run of the same head branch, including runs for a
+different commit, and those runs can be cancelled before any suite executed. For
+such a run there is no replacement at all for its own SHA - the successor has a
+different SHA and its own gate is the one that will testify - so waiting could
+only run into the budget while holding the `pr-ci-<pr>-<sha>` concurrency group,
+which is what kept the successor's gate from ever concluding (PR #9, run
+42955395696 cancelled at `Profile setup`). With no sibling attempt for the SHA
+after `EMPTY_LISTING_GRACE_SECONDS` and a newer run of the same workflow on the
+head branch (the fingerprint of our own supersession logic), the reconciler now
+accepts and defers to that run's gate. A cancellation by hand, a re-run or a
+shutdown leaves no newer run behind and still fails closed.
 """
 
 from __future__ import annotations
@@ -57,6 +71,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 WORKFLOW_FILE = "run-pr-ci-tests-and-deployments.yaml"
@@ -87,6 +102,12 @@ API = "https://api.github.com"
 # code: the tests only pin that the constant is named, singular and shared with
 # the workflow fallback.
 DEFAULT_WAIT_SECONDS = 3600
+# ci#1033: how long a cancelled run with NO sibling attempt for its SHA waits
+# before concluding that nothing is ever going to testify for the commit. It
+# only exists to let a sibling run that is still being created show up in the
+# listing; it must stay far below the wait budget, because the whole point is
+# not to hold the `pr-ci-<pr>-<sha>` concurrency group for that budget.
+EMPTY_LISTING_GRACE_SECONDS = 30
 
 _SLEEP = time.sleep
 _MONOTONIC = time.monotonic
@@ -196,6 +217,37 @@ def replacement_runs(repo, head_sha, current_run_id, token):
     return runs
 
 
+def newer_branch_run(repo, head_branch, current_run_id, token):
+    """Newest run of this workflow for `head_branch` that is newer than ours.
+
+    This is the fingerprint of *self*-cancellation (ci#1033): the "Cancel
+    superseded workflow runs for this PR" entry step of a newer run cancels every
+    in-progress/queued run of the same head branch, including ones for a
+    different SHA. A newer run of this branch therefore proves the cancellation
+    came from our own supersession logic, and that run's `PR Test Merge
+    Requirement` check is the commit's verdict.
+
+    Returns None when nothing newer exists, so any other cancellation (a
+    maintainer cancelling by hand, a re-run, a shutdown) keeps the gate closed.
+    """
+    if not head_branch:
+        return None
+    runs = [
+        r
+        for r in api_pages(
+            repo,
+            "/actions/workflows/%s/runs?branch=%s"
+            % (WORKFLOW_FILE, urllib.parse.quote(head_branch, safe="")),
+            token,
+        )
+        if (r.get("id") or 0) > current_run_id
+    ]
+    if not runs:
+        return None
+    runs.sort(key=lambda r: r.get("id") or 0, reverse=True)
+    return runs[0]
+
+
 # ci#1033: attempt outcomes that are *not* a verdict about the tree. A run that
 # was cancelled (by the `pr-ci-<pr>-<sha>` concurrency group, by the
 # cancel-superseded-runs job, or by its own yield) tested nothing, so its gate
@@ -303,13 +355,15 @@ def reconcile(args, token):
             pull.get("state"),
         )
     live_head = (pull.get("head") or {}).get("sha")
+    live_branch = (pull.get("head") or {}).get("ref")
     if live_head and live_head != args.head_sha:
         return 0, (
             "accepted: commit %s is superseded by the live PR head %s; the "
             "cancelled run gated an obsolete commit." % (args.head_sha[:12], live_head[:12])
         )
 
-    deadline = _MONOTONIC() + args.wait_seconds
+    started = _MONOTONIC()
+    deadline = started + args.wait_seconds
     while True:
         candidates = replacement_runs(args.repo, args.head_sha, args.run_id, token)
         run, conclusion = gate_verdict(candidates, args.repo, token)
@@ -346,6 +400,45 @@ def reconcile(args, token):
         starved = starved_replacement(candidates, _NOW(), args.yield_seconds)
         if starved is not None:
             return yield_group(args, starved, token)
+        # ci#1033: waiting is only meaningful when something can still produce a
+        # verdict. Self-cancellation makes that impossible and is the one shape
+        # that used to hang the gate: this PR's own "Cancel superseded workflow
+        # runs for this PR" step cancels every in-progress/queued run of the same
+        # head branch, so a run can be cancelled by its own successor's entry job
+        # before it gated anything, and then no replacement for the SHA ever
+        # exists (the successor carries a different SHA; its own gate is the one
+        # that will testify). Without this guard the gate job of the cancelled run
+        # waits out the whole hour-long budget holding the
+        # `pr-ci-<pr>-<sha>` concurrency group - observed on PR #9: run
+        # 42955395696 was cancelled at `Profile setup`, and `PR Test Merge
+        # Requirement` then sat in_progress on this step, which is exactly what
+        # keeps the successor from ever concluding.
+        #
+        # Defer only when (a) nothing at all is scheduled for this SHA, after a
+        # short grace so a sibling that is still being created is not missed, and
+        # (b) a NEWER run of this same workflow exists for the PR's head branch,
+        # which is the fingerprint of our own supersession logic. A cancellation
+        # by hand, a re-run or a shutdown leaves no newer run behind, so it keeps
+        # failing closed below.
+        if not candidates:
+            grace = min(args.empty_grace_seconds, args.wait_seconds)
+            if _MONOTONIC() - started >= grace:
+                superseder = newer_branch_run(args.repo, live_branch, args.run_id, token)
+                if superseder is not None:
+                    return 0, (
+                        "accepted: this run was cancelled by the superseded-runs job of "
+                        "newer run %s for branch %s, and no other run for %s exists "
+                        "(nothing is scheduled to testify for this commit); its own "
+                        "'%s' check is the verdict, so the gate defers to it instead of "
+                        "waiting out the %ds budget."
+                        % (
+                            superseder.get("id"),
+                            live_branch,
+                            args.head_sha[:12],
+                            GATE_JOB_NAME,
+                            args.wait_seconds,
+                        )
+                    )
         if _MONOTONIC() >= deadline:
             if not candidates:
                 return 3, "budget-expired: no replacement run for %s within %ds." % (
@@ -381,6 +474,14 @@ def main(argv=None):
         "--yield-seconds",
         type=int,
         default=int(os.environ.get("PR_CI_SUPERSEDED_YIELD_SECONDS") or 60),
+    )
+    parser.add_argument(
+        "--empty-grace-seconds",
+        type=int,
+        default=int(
+            os.environ.get("PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS")
+            or EMPTY_LISTING_GRACE_SECONDS
+        ),
     )
     args = parser.parse_args(argv)
 
