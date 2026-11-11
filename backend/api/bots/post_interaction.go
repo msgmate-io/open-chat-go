@@ -49,6 +49,15 @@ const (
 	// handled by the trigger/loop for the native path).
 	postActionKindPlanAutoImplement = "plan_auto_implement"
 
+	// planImplementationWIPTitleMarker is the default marker (ci#1028): an issue
+	// whose title carries it still needs an explicit human approval before the
+	// implementation dispatch, every other issue is dispatched autonomously once
+	// the plan has been posted.
+	planImplementationWIPTitleMarker = "[WIP]"
+	// planImplementationGitHubAPIBaseEnv overrides the GitHub API host used to
+	// resolve the triggering issue's title (tests point it at a local server).
+	planImplementationGitHubAPIBaseEnv = "OPEN_CHAT_GITHUB_API_BASE"
+
 	postActionDefaultReportHeader    = "<!-- open-chat-post-interaction -->\n## Open-Chat interaction report"
 	postActionPlanImplementHeader    = "<!-- open-chat-post-interaction -->\n## Implementation plan"
 	postActionEmptyReplyPlaceholder  = "(the interaction finished without a final text message)"
@@ -69,10 +78,16 @@ type postActionGithubComment struct {
 // postActionPlanAutoImplement is the decoded plan_auto_implement post-action:
 // post the finished plan and dispatch the implementation agent.
 type postActionPlanAutoImplement struct {
-	Repo                string                 `json:"repo"`
-	Number              int                    `json:"number"`
-	Issue               *string                `json:"issue_url,omitempty"`
-	Bot                 string                 `json:"bot"`
+	Repo   string  `json:"repo"`
+	Number int     `json:"number"`
+	Issue  *string `json:"issue_url,omitempty"`
+	Bot    string  `json:"bot"`
+	// Title is the triggering issue's title, when the dispatching integration
+	// already knows it. It decides whether the implementation dispatch needs a
+	// human approval (ci#1028); when empty the title is fetched.
+	Title string `json:"title,omitempty"`
+	// WipTitleMarker overrides the default `[WIP]` title marker.
+	WipTitleMarker      string                 `json:"wip_title_marker,omitempty"`
 	RequireConfirmation *bool                  `json:"require_confirmation,omitempty"`
 	ToolInit            map[string]interface{} `json:"tool_init,omitempty"`
 	ConfigOverrides     map[string]interface{} `json:"config_overrides,omitempty"`
@@ -396,7 +411,7 @@ func runPlanAutoImplement(db *gorm.DB, queueClient *asynq.Client, queueInspector
 	} else {
 		commentErr = postPlanAutoImplementCommentTo("", token, action, replyText)
 	}
-	dispatchErr := dispatchPlanImplementation(db, queueClient, queueInspector, chat, action, replyText)
+	dispatchErr := dispatchPlanImplementation(db, queueClient, queueInspector, chat, action, replyText, commentErr == nil)
 	if dispatchErr != nil {
 		if commentErr != nil {
 			return fmt.Errorf("plan comment failed: %v; implementation dispatch failed: %w", commentErr, dispatchErr)
@@ -421,7 +436,7 @@ func decodePostActionPlanAutoImplement(raw map[string]interface{}) (postActionPl
 
 // dispatchPlanImplementation starts the implementation agent in a new
 // interaction owned by the planning chat's human user.
-func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueInspector *asynq.Inspector, chat database.Chat, action postActionPlanAutoImplement, replyText string) error {
+func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueInspector *asynq.Inspector, chat database.Chat, action postActionPlanAutoImplement, replyText string, planPosted bool) error {
 	if queueClient == nil || queueInspector == nil {
 		return fmt.Errorf("async queue unavailable for implementation dispatch")
 	}
@@ -437,22 +452,138 @@ func dispatchPlanImplementation(db *gorm.DB, queueClient *asynq.Client, queueIns
 	if overrides == nil {
 		overrides = map[string]interface{}{}
 	}
+	requireConfirmation, reason := planImplementationGate(action, planPosted)
+	logging.Infof("plan_auto_implement: dispatching the implementation for %s#%d with require_confirmation=%v (%s)", action.Repo, action.Number, requireConfirmation, reason)
 	req := CreateBotInteractionRequest{
-		Message:         buildPlanImplementationPrompt(action, replyText),
-		ConfigOverrides: overrides,
-		ToolInit:        action.ToolInit,
-		AutoShare:       true,
-		RequireConfirmation: func() bool {
-			if action.RequireConfirmation != nil {
-				return *action.RequireConfirmation
-			}
-			return true
-		}(),
+		Message:             buildPlanImplementationPrompt(action, replyText, requireConfirmation),
+		ConfigOverrides:     overrides,
+		ToolInit:            action.ToolInit,
+		AutoShare:           true,
+		RequireConfirmation: requireConfirmation,
 	}
 	if _, err := createBotInteraction(db, queueClient, queueInspector, owner, runtime, req, postInteractionBaseURL()); err != nil {
 		return err
 	}
 	return nil
+}
+
+// planImplementationGate decides the approval gate of an implementation dispatch
+// (ci#1028): a plan that never reached the issue cannot be reviewed, so the
+// dispatch stays gated; once the plan is posted the regular gate applies.
+func planImplementationGate(action postActionPlanAutoImplement, planPosted bool) (bool, string) {
+	if !planPosted {
+		return true, "the plan comment could not be posted, so there is nothing to approve"
+	}
+	title := strings.TrimSpace(action.Title)
+	if action.RequireConfirmation == nil && title == "" {
+		fetched, err := fetchPlanImplementationIssueTitle(action)
+		if err != nil {
+			// Safe fallback: without a title we cannot rule out the `[WIP]`
+			// marker, so a human has to approve.
+			logging.Errorf("plan_auto_implement: could not resolve the issue title for %s#%d: %v", action.Repo, action.Number, err)
+		} else {
+			title = fetched
+		}
+	}
+	return planImplementationRequiresConfirmation(action, title)
+}
+
+// planImplementationRequiresConfirmation decides whether a posted plan's
+// implementation dispatch waits for a human approval (ci#1028). Once the plan
+// has been posted the development lead continues straight into implementation
+// for a normal issue; an issue whose title carries the work-in-progress marker
+// (`[WIP]` by default) still needs an explicit human approval. An explicit
+// `require_confirmation` from the dispatching action always wins. An
+// unresolved (empty) title falls back to requiring confirmation.
+func planImplementationRequiresConfirmation(action postActionPlanAutoImplement, title string) (bool, string) {
+	if action.RequireConfirmation != nil {
+		if *action.RequireConfirmation {
+			return true, "the dispatch action requires confirmation"
+		}
+		return false, "the dispatch action auto-approves the plan"
+	}
+	marker := strings.TrimSpace(action.WipTitleMarker)
+	if marker == "" {
+		marker = planImplementationWIPTitleMarker
+	}
+	if titleCarriesWipMarker(title, marker) {
+		return true, fmt.Sprintf("the issue title carries the %s marker", marker)
+	}
+	if strings.TrimSpace(title) == "" {
+		return true, "the issue title could not be resolved"
+	}
+	return false, "the plan is posted and the issue title carries no work-in-progress marker"
+}
+
+// titleCarriesWipMarker reports whether an issue title carries the
+// work-in-progress marker (case-insensitive, anywhere in the title).
+func titleCarriesWipMarker(title, marker string) bool {
+	title = strings.TrimSpace(title)
+	marker = strings.TrimSpace(marker)
+	if title == "" || marker == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(title), strings.ToLower(marker))
+}
+
+// planImplementationGitHubAPIBase is the GitHub API host used to resolve an
+// issue title; OPEN_CHAT_GITHUB_API_BASE overrides it (tests point it at a local
+// server).
+func planImplementationGitHubAPIBase() string {
+	if base := strings.TrimRight(strings.TrimSpace(os.Getenv(planImplementationGitHubAPIBaseEnv)), "/"); base != "" {
+		return base
+	}
+	return "https://api.github.com"
+}
+
+// fetchPlanImplementationIssueTitle resolves the triggering issue's title with
+// the existing post token.
+func fetchPlanImplementationIssueTitle(action postActionPlanAutoImplement) (string, error) {
+	token := strings.TrimSpace(os.Getenv(postGithubTokenEnv))
+	if token == "" {
+		return "", fmt.Errorf("%s is not configured", postGithubTokenEnv)
+	}
+	repo := strings.Trim(strings.TrimSpace(action.Repo), "/")
+	return fetchIssueTitleTo(planImplementationGitHubAPIBase(), token, repo, action.Number)
+}
+
+// fetchIssueTitleTo GETs an issue's title from the GitHub API. The apiBase
+// parameter lets tests point the lookup at a local server.
+func fetchIssueTitleTo(apiBase, token, repo string, number int) (string, error) {
+	repo = strings.Trim(strings.TrimSpace(repo), "/")
+	if repo == "" || number <= 0 {
+		return "", fmt.Errorf("no repository/number to resolve an issue title from")
+	}
+	base := strings.TrimRight(strings.TrimSpace(apiBase), "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d", base, repo, number)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: postGithubCommentTimeout}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github api returned status %d fetching the issue title", resp.StatusCode)
+	}
+	payload := struct {
+		Title string `json:"title"`
+	}{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("decode the issue title: %w", err)
+	}
+	title := strings.TrimSpace(payload.Title)
+	if title == "" {
+		return "", fmt.Errorf("github returned an empty title for %s#%d", repo, number)
+	}
+	return title, nil
 }
 
 // interactionHumanOwner returns the human participant of an interaction chat.
@@ -473,12 +604,28 @@ func interactionHumanOwner(db *gorm.DB, chatUUID string) (*database.User, error)
 }
 
 // buildPlanImplementationPrompt renders the coding-agent prompt for the plan.
-func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText string) string {
+// The `requireConfirmation` flag reflects the ci#1028 gate: a plan posted for a
+// non-`[WIP]` issue is approved for autonomous continuation, while an explicit
+// `require_confirmation`, a `[WIP]` issue title or an unposted plan still waits
+// for an explicit human approval.
+func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText string, requireConfirmation bool) string {
 	var b strings.Builder
 	b.WriteString("You are a coding agent implementing a GitHub issue plan produced by a planning agent.\n")
 	b.WriteString("Your durable playbook is part of your agent definition (system_prompt); follow it.\n")
 	b.WriteString("Implement the plan fully on a separate PR with ALL applicable CI labels, then\n")
 	b.WriteString("post a follow-up comment in the issue thread summarizing what you did.\n\n")
+	b.WriteString("Approval state (ci#1028):\n")
+	if requireConfirmation {
+		b.WriteString("- This dispatch is gated: it needs an explicit human approval message before\n")
+		b.WriteString("  you start implementing (the action requires confirmation, or the issue title\n")
+		b.WriteString("  carries the work-in-progress marker, or the title could not be resolved).\n")
+		b.WriteString("  Post/confirm the plan and wait for that approval; do not start coding on\n")
+		b.WriteString("  your own.\n\n")
+	} else {
+		b.WriteString("- This dispatch is auto-approved: the plan has been posted and no gating\n")
+		b.WriteString("  condition applies, so continue straight into implementation without waiting\n")
+		b.WriteString("  for a separate human approval message.\n\n")
+	}
 	b.WriteString("Context:\n")
 	if repo := strings.TrimSpace(action.Repo); repo != "" {
 		fmt.Fprintf(&b, "- Repository: %s\n", repo)
