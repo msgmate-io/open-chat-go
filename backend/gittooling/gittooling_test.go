@@ -99,7 +99,7 @@ func countOrOne(raw string, t *testing.T) int {
 	return parsed
 }
 
-// TestBoundDiffKeepsWholeHunksAndFlagsTruncation is the ci#1030 Phase 1
+// TestBoundDiffKeepsWholeHunksAndFlagsTruncation is the ci#1030
 // regression: a diff too large for the budget is cut at hunk boundaries only,
 // reports how much was dropped, and is explicitly flagged as truncated.
 func TestBoundDiffKeepsWholeHunksAndFlagsTruncation(t *testing.T) {

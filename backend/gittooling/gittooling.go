@@ -5,10 +5,14 @@
 // (msgmate_coder/community_coder); the shapes they return are described, bounded
 // and pinned here so every profile emits the same, parseable envelope (ci#1030).
 //
-// Phase 1 of ci#1030: read-only actions (diff, show, log, blame) return a
-// self-describing envelope that always carries an explicit `truncated` flag and,
-// whenever something was cut, an actionable `hint`. A diff is only ever cut at a
+// ci#1030: read-only actions (diff, show, log, blame) return a self-describing
+// envelope that always carries an explicit `truncated` flag and, whenever
+// something was cut, an actionable `hint`. A diff is only ever cut at a
 // `diff --git` / `@@` boundary, so a model never receives half a hunk.
+//
+// The shaping is the handlers' job. The chat context budget deliberately does
+// not re-bound these envelopes: it keeps the plain, pre-existing cut for every
+// tool so a single promise covers the whole results path.
 package gittooling
 
 import (
@@ -465,144 +469,12 @@ func GitActionDoc(action string) string {
 	return ""
 }
 
-// IsGitTool reports whether the tool name carries a GitResult envelope, i.e.
-// whether the payload can be re-bounded instead of hard-cut.
+// IsGitTool reports whether the tool name is one of the native git tools whose
+// result is a GitResult envelope (and therefore shaped by this package).
 func IsGitTool(toolName string) bool {
 	switch strings.TrimSpace(toolName) {
 	case "coder_git", "coder_git_read":
 		return true
 	}
 	return false
-}
-
-// BoundGitJSON re-bounds a serialized git envelope so it fits maxChars without
-// ever cutting the diff mid-hunk (ci#1030 Phase 1). It keeps the payload valid
-// JSON, sets the explicit `truncated` flag and attaches an actionable `hint`
-// telling the model which parameter yields an untruncated answer.
-//
-// ok is false when the payload is not a git envelope, already fits, or cannot be
-// shrunk this way - the caller then falls back to its plain truncation.
-func BoundGitJSON(raw string, maxChars int) (string, bool) {
-	if maxChars <= 0 || len(raw) <= maxChars {
-		return raw, false
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return raw, false
-	}
-	if _, ok := fields["action"]; !ok {
-		return raw, false
-	}
-
-	var hints []string
-	truncated := false
-
-	// Keep the hint of the handler when it already bounded itself.
-	var existingHint string
-	if hintRaw, ok := fields["hint"]; ok {
-		_ = json.Unmarshal(hintRaw, &existingHint)
-	}
-
-	// 1. Bound the diff at `diff --git`/`@@` boundaries: a model must never see
-	// half a hunk. The byte budget is what is left after the rest of the
-	// envelope, with room reserved for the flag and the hint.
-	if diffRaw, ok := fields["diff"]; ok {
-		var diff string
-		if err := json.Unmarshal(diffRaw, &diff); err == nil && diff != "" {
-			budget := maxChars - (len(raw) - len(diff)) - 400
-			if budget < 200 {
-				budget = 200
-			}
-			if bounded, _, omittedHunks, cut := BoundDiff(diff, 0, budget); cut {
-				encoded, err := json.Marshal(bounded)
-				if err != nil {
-					return raw, false
-				}
-				fields["diff"] = encoded
-				truncated = true
-				hints = append(hints, fmt.Sprintf(
-					"diff truncated at a hunk boundary (%d hunks omitted): re-run with path=<file> for one file in full, or show a single commit; `stat` and `files` stay complete.",
-					omittedHunks))
-			}
-		}
-	}
-
-	// 2. Still too large: drop the tail of the largest list field, which is
-	// always the least valuable part (oldest commits, last blamed lines).
-	for _, key := range []string{"blame", "entries", "files"} {
-		current, err := json.Marshal(fields)
-		if err == nil && len(current) <= maxChars {
-			break
-		}
-		dropped, kept, ok := trimJSONArray(fields, key, maxChars)
-		if !ok || dropped == 0 {
-			continue
-		}
-		truncated = true
-		switch key {
-		case "blame":
-			hints = append(hints, fmt.Sprintf(
-				"blame limited to the first %d lines (%d omitted): narrow it with `line_start`/`line_end` or `path`.",
-				kept, dropped))
-		case "entries":
-			hints = append(hints, fmt.Sprintf(
-				"log limited to the newest %d commits (%d omitted): raise `max_commits` or pass a ref/path to narrow the history.",
-				kept, dropped))
-		default:
-			hints = append(hints, fmt.Sprintf(
-				"file list limited to the first %d entries (%d omitted): re-run with `path` to look at one file.",
-				kept, dropped))
-		}
-	}
-
-	if !truncated {
-		return raw, false
-	}
-
-	flag, err := json.Marshal(true)
-	if err != nil {
-		return raw, false
-	}
-	fields["truncated"] = flag
-	if existingHint != "" {
-		hints = append([]string{existingHint}, hints...)
-	}
-	hint, err := json.Marshal(strings.Join(hints, " "))
-	if err != nil {
-		return raw, false
-	}
-	fields["hint"] = hint
-
-	out, err := json.Marshal(fields)
-	if err != nil || len(out) > maxChars {
-		return raw, false
-	}
-	return string(out), true
-}
-
-// trimJSONArray drops the tail of one array field until the whole envelope fits
-// maxChars. It returns how many entries were dropped and how many were kept.
-func trimJSONArray(fields map[string]json.RawMessage, key string, maxChars int) (int, int, bool) {
-	rawField, ok := fields[key]
-	if !ok {
-		return 0, 0, false
-	}
-	var entries []json.RawMessage
-	if err := json.Unmarshal(rawField, &entries); err != nil || len(entries) == 0 {
-		return 0, 0, false
-	}
-	total := len(entries)
-	for len(entries) > 0 {
-		encoded, err := json.Marshal(entries)
-		if err != nil {
-			return 0, 0, false
-		}
-		fields[key] = encoded
-		whole, err := json.Marshal(fields)
-		if err == nil && len(whole) <= maxChars {
-			return total - len(entries), len(entries), true
-		}
-		entries = entries[:len(entries)-1]
-	}
-	return total, 0, true
 }
