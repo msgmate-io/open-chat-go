@@ -151,21 +151,21 @@ func ResolveTerminalAssistantText(text string, toolCalls int, cancelled bool, st
 		return trimmed
 	}
 	guidance := terminalTextGuidance(streamErr, outcome)
-	// A reached tool-call cap is a capacity stop, not a model failure: it must
-	// be explained as such even when the turn itself recorded no tool calls
-	// (the budget is per chat, so an earlier turn may already have spent it).
-	// Leading with "0 tool call(s)" or "could not produce a reply" would hide
-	// the actual reason and the way forward.
-	var capErr *toolCallCapError
-	if errors.As(streamErr, &capErr) {
-		return guidance
-	}
 	if toolCalls > 0 {
 		// The turn demonstrably did work: say so, and how to keep going.
 		return fmt.Sprintf(
 			"This turn ran %d tool call(s) but ended without a final summary. %s",
 			toolCalls, guidance,
 		)
+	}
+	// A reached tool-call cap is a capacity stop, not a model failure: it must
+	// be explained as such even when the turn itself recorded no tool calls
+	// (the budget is per chat, so an earlier turn may already have spent it).
+	// Falling through would produce "could not produce a reply" and hide the
+	// actual reason and the way forward.
+	var capErr *toolCallCapError
+	if errors.As(streamErr, &capErr) {
+		return guidance
 	}
 	return "I could not produce a reply for this message. " + guidance
 }
