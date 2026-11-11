@@ -613,9 +613,11 @@ func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText
 	b.WriteString("post a follow-up comment in the issue thread summarizing what you did.\n\n")
 	b.WriteString("Approval state (ci#1028):\n")
 	if requireConfirmation {
-		b.WriteString("- This issue's title carries the work-in-progress marker, so the plan needs an\n")
-		b.WriteString("  explicit human approval message before you start implementing. Post/confirm\n")
-		b.WriteString("  the plan and wait for that approval; do not start coding on your own.\n\n")
+		b.WriteString("- This dispatch is gated: it needs an explicit human approval message before\n")
+		b.WriteString("  you start implementing (the action requires confirmation, or the issue title\n")
+		b.WriteString("  carries the work-in-progress marker, or the title could not be resolved).\n")
+		b.WriteString("  Post/confirm the plan and wait for that approval; do not start coding on\n")
+		b.WriteString("  your own.\n\n")
 	} else {
 		b.WriteString("- The plan has been posted for a normal (non-work-in-progress) issue, so it is\n")
 		b.WriteString("  already approved: continue straight into implementation without waiting for a\n")
