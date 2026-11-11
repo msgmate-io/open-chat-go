@@ -363,7 +363,13 @@ export function MessagesScroll({
             groupConsecutive: Boolean(uiExtension?.groupConsecutiveMessages),
             suppressConfirmableEvents: Boolean(uiExtension?.inlineConfirmableActions),
         });
-        return nodes.map((node) => {
+        return nodes.map((node, nodeIndex) => {
+            // Everything above the last node is superseded: the transcript is
+            // rendered oldest first, so only the final turn can still be
+            // growing. Its completed tool cards stay open, while the finished
+            // cards of every earlier turn collapse so the newest output is not
+            // pushed off screen during a long tool-calling turn (ci#1031).
+            const isSuperseded = nodeIndex < nodes.length - 1;
             if (node.kind === "group") {
                 return (
                     <BotMessageGroup
@@ -373,6 +379,7 @@ export function MessagesScroll({
                         chatUUID={chatUUID || undefined}
                         rerunSourceMessageUUID={node.rerunSourceMessageUUID}
                         interactionState={(chat as any)?.status?.state}
+                        isSuperseded={isSuperseded}
                     />
                 );
             }
@@ -388,6 +395,7 @@ export function MessagesScroll({
                     selfIsSender={user?.uuid === message.sender_uuid}
                     isBotChat={true}
                     interactionState={(chat as any)?.status?.state}
+                    isSuperseded={isSuperseded}
                 />
             );
         });

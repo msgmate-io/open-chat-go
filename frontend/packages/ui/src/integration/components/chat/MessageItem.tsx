@@ -38,7 +38,6 @@ import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
 import { ToolValueText } from "./ToolCallDetail";
 import {
   formatToolDuration,
-  isCompletedToolStatus,
   plural,
   resolveToolCallStatus,
   toolCallDurationMs,
@@ -238,6 +237,16 @@ function wrapInBlockquote(children: React.ReactNode) {
 // consume; keep the alias so the surrounding call sites stay unchanged.
 type MessageToolCall = ToolCallLike;
 
+/**
+ * Stable React key for one tool call. Keying by position made every card below
+ * a freshly streamed call remount and lose its expand state, and it also let a
+ * completed card inherit the DOM identity of the call before it (ci#1031). The
+ * backend assigns an id per call; only untagged calls fall back to the index.
+ */
+function toolCallKey(messageUUID: string, call: MessageToolCall, index: number): string {
+  return call?.id ? `${messageUUID}:${call.id}` : `${messageUUID}:tool-call-${index}`;
+}
+
 function safeJSONStringify(value: unknown, pretty = false): string {
   try {
     return JSON.stringify(value, null, pretty ? 2 : 0);
@@ -359,11 +368,12 @@ function ToolCallTiming({ toolCall, status }: { toolCall: ToolCallLike; status: 
 // status badge, with the detailed parameters/result/error one click away. It is
 // the single row used both by the summarised tool-call group and by the ordered
 // turn sequence (thoughts between the calls).
-function ToolCallCard({
+export const ToolCallCard = React.memo(function ToolCallCard({
   messageUUID,
   toolCall,
   index,
   terminal = false,
+  isSuperseded = false,
 }: {
   messageUUID: string;
   toolCall: MessageToolCall;
@@ -374,17 +384,43 @@ function ToolCallCard({
    * (ci#668).
    */
   terminal?: boolean;
+  /**
+   * A newer message or step already supersedes this call. A coding chat emits
+   * one tool call after another, so leaving every finished result expanded
+   * grows the transcript without bound and pushes the newest output off screen
+   * (ci#1031). Only *successful* calls collapse: a failure, an error or a still
+   * running call always stays open so it cannot be missed, and the user can
+   * expand a collapsed card again at any time.
+   */
+  isSuperseded?: boolean;
 }) {
   const status = resolveToolCallStatus(toolCall, { terminal });
-  const cardId = `${messageUUID}-tool-call-${index}`;
+  // Key the card by the backend's per-call id so it keeps its identity - and
+  // with it the user's expand/collapse state - while the turn around it grows.
+  // Calls the backend did not tag yet fall back to the position (ci#1031).
+  const cardId = toolCall?.id || `${messageUUID}-tool-call-${index}`;
   const label = toolDisplayLabel(toolCall?.name);
   const summary = toolCallSummary(toolCall);
   const preview = toolResultPreview(toolCall);
 
+  const autoCollapse = isSuperseded && status === "succeeded";
+  // null follows the collapse policy; true/false is the user's explicit choice.
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? !autoCollapse;
+
   return (
-    <Collapsible defaultOpen={!isCompletedToolStatus(status)} id={`tool-call-card-${cardId}`}>
+    <Collapsible
+      open={open}
+      onOpenChange={(next) => setUserOpen(next)}
+      id={`tool-call-card-${cardId}`}
+    >
       <div className="overflow-hidden rounded-lg border border-border/70 bg-card/60">
-        <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30">
+        <CollapsibleTrigger
+          aria-expanded={open}
+          aria-label={`${label} ${open ? "collapse" : "expand"}`}
+          data-testid="tool-call-card-trigger"
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30"
+        >
           <span
             className={cn("size-1.5 shrink-0 rounded-full", toolStatusDotClasses(status))}
             aria-hidden="true"
@@ -432,7 +468,7 @@ function ToolCallCard({
       </div>
     </Collapsible>
   );
-}
+});
 
 // TurnThoughtBlockView renders one reasoning block the agent produced, in place
 // in the ordered turn sequence (ci#569), so the user can follow what the agent
@@ -591,11 +627,12 @@ function TurnSequence({
           {orderedBlocks.map((block, blockIndex) =>
             block.kind === "tool_call" ? (
               <ToolCallCard
-                key={`${messageUUID}-tool-call-${block.index}`}
+                key={toolCallKey(messageUUID, block.call, block.index)}
                 messageUUID={messageUUID}
                 toolCall={block.call as MessageToolCall}
                 index={block.index}
                 terminal={terminal}
+                isSuperseded={blockIndex < orderedBlocks.length - 1}
               />
             ) : block.kind === "text" ? (
               showNarration ? (
@@ -617,6 +654,7 @@ function ToolCallsGroup({
   header,
   defaultOpen = false,
   terminal = false,
+  isSuperseded = false,
 }: {
   messageUUID: string;
   toolCalls: MessageToolCall[];
@@ -624,6 +662,8 @@ function ToolCallsGroup({
   defaultOpen?: boolean;
   /** The message is finished/cancelled (interrupted in-flight calls, ci#668). */
   terminal?: boolean;
+  /** A newer message exists, so finished calls here render collapsed (ci#1031). */
+  isSuperseded?: boolean;
 }) {
   if (toolCalls.length === 0) {
     return null;
@@ -636,11 +676,12 @@ function ToolCallsGroup({
         <div className="space-y-2">
           {toolCalls.map((toolCall, index) => (
             <ToolCallCard
-              key={`${messageUUID}-tool-call-${index}`}
+              key={toolCallKey(messageUUID, toolCall, index)}
               messageUUID={messageUUID}
               toolCall={toolCall}
               index={index}
               terminal={terminal}
+              isSuperseded={isSuperseded}
             />
           ))}
         </div>
@@ -954,6 +995,7 @@ export function BotMessageItem({
   interactionState,
   shellless = false,
   renderExtras = true,
+  isSuperseded = false,
 }: {
   message: {
     uuid: string;
@@ -993,6 +1035,14 @@ export function BotMessageItem({
   shellless?: boolean;
   /** Render the per-message integration extras (default true). */
   renderExtras?: boolean;
+  /**
+   * Newer messages already exist below this one in the transcript, so its
+   * finished tool results render collapsed instead of pushing the new output
+   * off screen (ci#1031). Only completed steps collapse - a running call and a
+   * failed/cancelled one always stay open - and the user can expand any card
+   * again at any time.
+   */
+  isSuperseded?: boolean;
 }) {
   // A cancelled turn is terminal too: the backend sets `finished` and
   // `cancelled` together, but treat `cancelled` as authoritative so an
@@ -1252,6 +1302,7 @@ export function BotMessageItem({
           // narration is rendered inline in the sequence (ci#569).
           showNarration={Boolean(metaFinished)}
           terminal={metaFinished}
+          isSuperseded={isSuperseded}
           defaultOpen
         />
       ) : null}
@@ -1321,6 +1372,7 @@ export function BotMessageItem({
             messageUUID={message.uuid}
             toolCalls={toolCalls}
             defaultOpen={isCancelled}
+            isSuperseded={isSuperseded}
             header={
               isCancelled
                 ? `Interrupted after ${toolCalls.length} tool ${toolCalls.length === 1 ? "call" : "calls"}`
@@ -1434,6 +1486,7 @@ export function BotMessageGroup({
   showToolbar = true,
   showBotIdentity = true,
   interactionState,
+  isSuperseded = false,
 }: {
   messages: Array<Parameters<typeof BotMessageItem>[0]["message"]>;
   chat: Parameters<typeof BotMessageItem>[0]["chat"];
@@ -1442,6 +1495,8 @@ export function BotMessageGroup({
   showToolbar?: boolean;
   showBotIdentity?: boolean;
   interactionState?: string | null;
+  /** Newer turns exist in the transcript (see `BotMessageItem`, ci#1031). */
+  isSuperseded?: boolean;
 }) {
   const first = messages[0];
   const last = messages[messages.length - 1];
@@ -1529,6 +1584,9 @@ export function BotMessageGroup({
             interactionState={interactionState}
             shellless
             renderExtras={index === messages.length - 1}
+            // Inside a grouped bubble every turn but the last is itself
+            // superseded by the turn that follows it (ci#1031).
+            isSuperseded={isSuperseded || index < messages.length - 1}
           />
         </div>
       ))}
@@ -1546,6 +1604,7 @@ export function MessageItem({
   showToolbar = true,
   showBotIdentity = true,
   interactionState,
+  isSuperseded = false,
 }: {
   message: Parameters<typeof BotMessageItem>[0]["message"];
   chat: Parameters<typeof BotMessageItem>[0]["chat"];
@@ -1556,6 +1615,8 @@ export function MessageItem({
   showToolbar?: boolean;
   showBotIdentity?: boolean;
   interactionState?: string | null;
+  /** Newer messages exist below this one (see `BotMessageItem`, ci#1031). */
+  isSuperseded?: boolean;
 }) {
   if (isBotChat) {
     return (
@@ -1568,6 +1629,7 @@ export function MessageItem({
         showToolbar={showToolbar}
         showBotIdentity={showBotIdentity}
         interactionState={interactionState}
+        isSuperseded={isSuperseded}
       />
     );
   }
