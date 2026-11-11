@@ -23,6 +23,7 @@ require (
 	github.com/hibiken/asynq v0.26.0
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/kardianos/service v1.3.0
+	github.com/msgmate-io/open-chat-go-community-coder-integration v0.0.0-20261109135626-df77ab41b926
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0

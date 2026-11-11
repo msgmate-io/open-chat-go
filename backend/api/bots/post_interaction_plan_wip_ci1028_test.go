@@ -70,7 +70,7 @@ func TestCI1028PlanImplementationRequiresConfirmation(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "custom wip marker does not match the default marker",
+			name:   "custom wip marker replaces the default marker",
 			action: postActionPlanAutoImplement{WipTitleMarker: "[BLOCKED]"},
 			title:  "[WIP] allow autonomous continuation",
 			want:   false,

@@ -619,9 +619,9 @@ func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText
 		b.WriteString("  Post/confirm the plan and wait for that approval; do not start coding on\n")
 		b.WriteString("  your own.\n\n")
 	} else {
-		b.WriteString("- The plan has been posted for a normal (non-work-in-progress) issue, so it is\n")
-		b.WriteString("  already approved: continue straight into implementation without waiting for a\n")
-		b.WriteString("  separate human approval message.\n\n")
+		b.WriteString("- This dispatch is auto-approved: the plan has been posted and no gating\n")
+		b.WriteString("  condition applies, so continue straight into implementation without waiting\n")
+		b.WriteString("  for a separate human approval message.\n\n")
 	}
 	b.WriteString("Context:\n")
 	if repo := strings.TrimSpace(action.Repo); repo != "" {
