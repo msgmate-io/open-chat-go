@@ -2,6 +2,13 @@
 
 <!-- What changes, and why. One or two sentences. -->
 
+<!--
+Open this pull request against `dev` (never `main`), as a ready-for-review pull
+request (not a draft), with the label for its class: `test` for a
+feature/bugfix/docs/chore PR, `test` and `e2e` for a `chore/consolidate-*` PR.
+See AGENTS.md ("Pull request conventions") for the full list.
+-->
+
 ## Tracker
 
 Closes msgmate-io/open-chat-go-ci#<n>
@@ -16,7 +23,9 @@ requires and what closes the tracker issue after merge.
 
 ## Verification
 
-<!-- Commands you ran, or the CI job that covers this change. -->
+<!-- Commands you ran, or the CI job that covers this change. State truthfully
+     whether anything ran locally - the coding sandbox has no Go toolchain, so
+     PR CI is usually the gate. -->
 
 ## Notes for reviewers
 
