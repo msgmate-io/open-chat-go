@@ -13,6 +13,7 @@ import (
 	"backend/api/msgmate"
 	"backend/chatstate"
 	"backend/database"
+	"backend/githublinks"
 	"backend/logging"
 
 	"github.com/hibiken/asynq"
@@ -486,7 +487,7 @@ func buildPlanImplementationPrompt(action postActionPlanAutoImplement, replyText
 		fmt.Fprintf(&b, "- Issue/PR number: %d\n", action.Number)
 	}
 	if action.Issue != nil && strings.TrimSpace(*action.Issue) != "" {
-		fmt.Fprintf(&b, "- Issue/PR URL: %s\n", strings.TrimSpace(*action.Issue))
+		fmt.Fprintf(&b, "- Issue/PR URL: %s\n", githublinks.HumanURL(*action.Issue))
 	}
 	b.WriteString("\nPlan (verbatim):\n```\n")
 	b.WriteString(strings.TrimSpace(replyText))
