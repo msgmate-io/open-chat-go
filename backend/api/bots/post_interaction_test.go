@@ -94,7 +94,7 @@ func TestDecodePostActionPlanAutoImplement(t *testing.T) {
 func TestBuildPlanImplementationPromptCarriesThePlan(t *testing.T) {
 	issue := "https://github.com/msgmate-io/open-chat-go-ci/issues/649"
 	action := postActionPlanAutoImplement{Repo: "msgmate-io/open-chat-go-ci", Number: 649, Issue: &issue, Bot: "b"}
-	prompt := buildPlanImplementationPrompt(action, "step 1: do the thing")
+	prompt := buildPlanImplementationPrompt(action, "step 1: do the thing", false)
 	if !strings.Contains(prompt, "msgmate-io/open-chat-go-ci") || !strings.Contains(prompt, "649") {
 		t.Fatalf("prompt must carry the repo and issue: %q", prompt)
 	}
