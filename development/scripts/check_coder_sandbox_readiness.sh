@@ -40,6 +40,47 @@ for tool in go gofmt; do
   fi
 done
 
+# ci#1038: the sandbox image now ships a Go toolchain that must satisfy the
+# `go` directive in backend/go.mod and a warmed module cache so `go build ./...`
+# works offline right after checkout. Without this, implementers could only
+# learn about a red build from CI.
+gomod_directive=""
+if [ -f "$root/backend/go.mod" ]; then
+  gomod_directive=$(awk '$1=="go"{print $2; exit}' "$root/backend/go.mod")
+fi
+if command -v go >/dev/null 2>&1; then
+  go_reported=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+  if [ "$(go env GOTOOLCHAIN 2>/dev/null)" = "local" ]; then
+    note "ok   GOTOOLCHAIN=local (no implicit toolchain download)"
+  else
+    note "MISS GOTOOLCHAIN=$(go env GOTOOLCHAIN 2>/dev/null); an offline build will try to download a toolchain."
+    note "     the sandbox image must export GOTOOLCHAIN=local (ci#1038)."
+    status=1
+  fi
+  if [ -n "$gomod_directive" ] && [ -n "$go_reported" ]; then
+    if [ "$(printf '%s\n%s\n' "$gomod_directive" "$go_reported" | sort -V | tail -n1)" = "$go_reported" ]; then
+      note "ok   go $go_reported satisfies backend/go.mod (go $gomod_directive)"
+    else
+      note "MISS go $go_reported is older than the backend/go.mod directive (go $gomod_directive);"
+      note "     bump GO_VERSION in the coder sandbox image (ci#1038)."
+      status=1
+    fi
+  fi
+  if [ -d "$(go env GOMODCACHE)/cache/download" ]; then
+    note "ok   warmed module cache present ($(go env GOMODCACHE)/cache/download)"
+  else
+    note "MISS no warmed module cache at $(go env GOMODCACHE)/cache/download;"
+    note "     an offline build will fail. The coder sandbox image must warm GOMODCACHE (ci#1038)."
+    status=1
+  fi
+else
+  note "go: MISSING"
+  note "     this sandbox has no usable Go toolchain, so NO local build or test run is"
+  note "     possible. Do not substitute narrative for a test run: say 'go: MISSING'"
+  note "     in your report and rely on CI as the only gate (ci#1038)."
+  status=1
+fi
+
 if [ -n "${GOPRIVATE:-}" ]; then
   note "ok   GOPRIVATE=$GOPRIVATE"
 else
