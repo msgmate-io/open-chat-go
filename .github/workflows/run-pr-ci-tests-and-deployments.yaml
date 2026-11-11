@@ -2688,6 +2688,16 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_ci_failure_relay.py -v
 
+      # ci#1044: the deployment-profile BOT_TOKEN capability matrix decides
+      # whether a candidate token may be written to the vault (contents:read,
+      # pull_requests:*, packages:* on the deploy repo/package, fine-grained
+      # shape). Pin it so a rotation cannot regress to the rejected token of run
+      # 42959618854, and so the credential can never leak into the report.
+      - name: BOT_TOKEN capability check unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_check_bot_token_capabilities.py -v
+
       # ci#659: the superseded-run reconciliation decides whether a cancelled
       # `PR Test Merge Requirement` gate may pass, so pin its acceptance criteria
       # (accept only for a closed PR / moved head / a replacement run with a real
