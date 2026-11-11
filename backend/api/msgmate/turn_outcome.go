@@ -158,6 +158,15 @@ func ResolveTerminalAssistantText(text string, toolCalls int, cancelled bool, st
 			toolCalls, guidance,
 		)
 	}
+	// A reached tool-call cap is a capacity stop, not a model failure: it must
+	// be explained as such even when the turn itself recorded no tool calls
+	// (the budget is per chat, so an earlier turn may already have spent it).
+	// Falling through would produce "could not produce a reply" and hide the
+	// actual reason and the way forward.
+	var capErr *toolCallCapError
+	if errors.As(streamErr, &capErr) {
+		return guidance
+	}
 	return "I could not produce a reply for this message. " + guidance
 }
 
@@ -249,9 +258,19 @@ func (e *toolCallCapError) guidance() string {
 		return "It stopped because this chat's tool-call budget was exhausted. The work already done is kept - send another message to continue from here."
 	}
 	if e.kind == toolCallCapErrorKindFailed {
+		// A failed-tool cap can be reached with successful calls in between;
+		// say what already worked so the guidance stays actionable instead of
+		// reading like a total failure.
+		progress := ""
+		if e.consumedTotal > e.consumedFailed {
+			progress = fmt.Sprintf(
+				" %d of the %d tool call(s) in this chat succeeded before that.",
+				e.consumedTotal-e.consumedFailed, e.consumedTotal,
+			)
+		}
 		return fmt.Sprintf(
-			"It stopped after %d failed tool call(s), which is this chat's failed-tool budget (%d). Retry the failed step with different arguments, or send another message to continue from here - the work already done is kept.",
-			e.consumedFailed, e.max,
+			"It stopped after %d failed tool call(s), which is this chat's failed-tool budget (%d).%s Retry the failing step with different arguments (or a smaller scope), or send another message to continue from here - the work already done is kept.",
+			e.consumedFailed, e.max, progress,
 		)
 	}
 	return fmt.Sprintf(
