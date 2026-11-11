@@ -69,7 +69,24 @@ func ToolInitPinsForChat(chat *Chat) map[string]interface{} {
 	if len(pins) == 0 {
 		return nil
 	}
-	return pins
+	// JSON round-trips decode every number as float64; normalize the pinned
+	// params so callers compare against the same shape the server wrote.
+	normalized := make(map[string]interface{}, len(pins))
+	for toolName, rawPin := range pins {
+		pin, ok := rawPin.(map[string]interface{})
+		if !ok || len(pin) == 0 {
+			continue
+		}
+		entry := make(map[string]interface{}, len(pin))
+		for key, value := range pin {
+			entry[key] = normalizeToolInitParam(value)
+		}
+		normalized[toolName] = entry
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 // ApplyToolInitPins overlays server-owned pins onto tool init data. Pinned
