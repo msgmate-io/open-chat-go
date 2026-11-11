@@ -363,13 +363,19 @@ export function MessagesScroll({
             groupConsecutive: Boolean(uiExtension?.groupConsecutiveMessages),
             suppressConfirmableEvents: Boolean(uiExtension?.inlineConfirmableActions),
         });
+        // Collapse finished tool results only for automated (coding) partners:
+        // their turns chain dozens of calls and the newest output gets pushed
+        // off screen. Human conversations keep the previous always-expanded
+        // behaviour (ci#1031).
+        const collapseToolResults = Boolean(chat?.partner?.is_automated);
+
         return nodes.map((node, nodeIndex) => {
             // Everything above the last node is superseded: the transcript is
             // rendered oldest first, so only the final turn can still be
             // growing. Its completed tool cards stay open, while the finished
             // cards of every earlier turn collapse so the newest output is not
             // pushed off screen during a long tool-calling turn (ci#1031).
-            const isSuperseded = nodeIndex < nodes.length - 1;
+            const isSuperseded = collapseToolResults && nodeIndex < nodes.length - 1;
             if (node.kind === "group") {
                 return (
                     <BotMessageGroup

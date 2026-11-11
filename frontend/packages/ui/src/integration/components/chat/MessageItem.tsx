@@ -1478,7 +1478,7 @@ export function BotMessageItem({
  * original time order, separated by a hairline, and only the last one renders
  * the per-message integration extras so repeated cards are not stacked.
  */
-export function BotMessageGroup({
+function BotMessageGroupImpl({
   messages,
   chat,
   chatUUID,
@@ -1594,7 +1594,7 @@ export function BotMessageGroup({
   );
 }
 
-export function MessageItem({
+function MessageItemImpl({
   message,
   chat,
   chatUUID,
@@ -1636,3 +1636,14 @@ export function MessageItem({
 
   return <UserMessageItem message={message} chat={chat} selfIsSender={selfIsSender} />;
 }
+
+/**
+ * The transcript leaves are memoised so a streamed delta re-renders only the
+ * bubble that actually changed instead of the whole tree: the transcript is
+ * rendered oldest first and, without memo, every parent render walked all of
+ * it. `Props` stays identical to the implementation's so existing call sites are
+ * unchanged (ci#1031).
+ */
+export const BotMessageGroup = React.memo(BotMessageGroupImpl);
+
+export const MessageItem = React.memo(MessageItemImpl);
