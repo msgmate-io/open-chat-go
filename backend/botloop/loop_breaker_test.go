@@ -175,3 +175,112 @@ func TestDetectForChatLoadsAndDetects(t *testing.T) {
 		t.Fatalf("empty calm chat must not be flagged: %+v", decision)
 	}
 }
+
+// ci#1026 (Phase 1): the known coder harness bots are exempt from the
+// consecutive-automated rule. 15 consecutive turns from
+// msgmate-coder-implement-bot must never be refused, even though 15 is past
+// MaxConsecutiveAutomated (12).
+func TestLoopBreaker_ExemptsCoderHarness(t *testing.T) {
+	now := time.Now()
+	cfg := DefaultConfig()
+	harness := uint(7)
+	automated := map[uint]bool{human: false, harness: true}
+	names := map[uint]string{harness: "msgmate-coder-implement-bot"}
+
+	messages := make([]database.Message, 0, 15)
+	for i := 0; i < 15; i++ {
+		// Non-empty, distinct text, well outside the rapid window so only the
+		// consecutive rule could fire.
+		messages = append(messages, msg(harness, fmt.Sprintf("phase 1 step %d", i), now.Add(-time.Duration(10+i)*time.Minute)))
+	}
+	if decision := DetectWithNames(messages, automated, names, cfg, now); decision.Loop {
+		t.Fatalf("a coder harness run must never be refused: %+v", decision)
+	}
+}
+
+// The exemption is name-based, not automation-based: the very same shape of run
+// from an arbitrary automated peer is still a no-progress loop. In-round
+// harness turns are not always text-bearing, so this is the case the plain
+// progress heuristic alone used to miss.
+func TestLoopBreaker_HarnessExemptionIsNameBased(t *testing.T) {
+	now := time.Now()
+	cfg := DefaultConfig()
+	peer := uint(8)
+	automated := map[uint]bool{human: false, peer: true}
+
+	messages := make([]database.Message, 0, cfg.MaxConsecutiveAutomated+3)
+	for i := 0; i < cfg.MaxConsecutiveAutomated+3; i++ {
+		messages = append(messages, msg(peer, "", now.Add(-time.Duration(10+i)*time.Minute)))
+	}
+
+	// Not a harness bot: the long empty automated dump is a loop, as before.
+	if decision := Detect(messages, automated, cfg, now); !decision.Loop || decision.Reason != "consecutive_automated" {
+		t.Fatalf("an anonymous single-sender empty dump is still a loop, got %+v", decision)
+	}
+
+	// The same dump from a harness bot is exempt.
+	names := map[uint]string{peer: "msgmate-coder-implement-bot"}
+	if decision := DetectWithNames(messages, automated, names, cfg, now); decision.Loop {
+		t.Fatalf("the same run from a coder harness must be exempt: %+v", decision)
+	}
+
+	// Detect must keep behaving exactly like an unnamed DetectWithNames.
+	if got, want := Detect(messages, automated, cfg, now), DetectWithNames(messages, automated, nil, cfg, now); got != want {
+		t.Fatalf("Detect and DetectWithNames(nil names) diverged: %+v vs %+v", got, want)
+	}
+}
+
+// A real harness spin (two automated senders alternating) still trips: the
+// exemption widens tolerance for a single working sender, it does not disable
+// the breaker.
+func TestLoopBreaker_HarnessAlternationStillTrips(t *testing.T) {
+	now := time.Now()
+	messages := make([]database.Message, 0, 14)
+	for i := 0; i < 14; i++ {
+		sender := botA
+		if i%2 == 1 {
+			sender = botB
+		}
+		messages = append(messages, msg(sender, fmt.Sprintf("ping %d", i), now.Add(-time.Duration(10+i)*time.Minute)))
+	}
+	names := map[uint]string{botA: "msgmate-coder-implement-bot", botB: "msgmate-coder-repl-bot"}
+	decision := DetectWithNames(messages, automation(), names, DefaultConfig(), now)
+	if !decision.Loop || decision.Reason != "consecutive_automated" {
+		t.Fatalf("harness bots alternating is still a loop, got %+v", decision)
+	}
+}
+
+// DetectForChat resolves the sender's bot-runtime name from the user record, so
+// the exemption works on the production path (the bot-reply task).
+func TestDetectForChatExemptsCoderHarnessSender(t *testing.T) {
+	DB := database.SetupTestDatabase(t, database.DBConfig{
+		Backend:  "sqlite",
+		FilePath: t.TempDir() + "/botloop_harness_test.db",
+		Debug:    false,
+		ResetDB:  true,
+	})
+	humanUser := database.User{Name: "h", Username: "h", Email: "h@example.com", IsAutomated: false}
+	harnessUser := database.User{Name: "msgmate-coder-implement-bot", Username: "msgmate-coder-implement-bot", Email: "c@example.com", IsAutomated: true}
+	if err := DB.Create(&humanUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.Create(&harnessUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	chat := database.Chat{User1Id: humanUser.ID, User2Id: harnessUser.ID, ChatType: "interaction"}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < 15; i++ {
+		// Spaced out and textless, so neither the rapid nor the identical rule
+		// can hide a consecutive-rule regression.
+		at := now.Add(-time.Duration(10+i) * time.Minute)
+		if err := DB.Create(&database.Message{Model: database.Model{CreatedAt: at}, ChatId: chat.ID, SenderId: harnessUser.ID}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if decision := DetectForChat(DB, chat.ID, DefaultConfig(), now); decision.Loop {
+		t.Fatalf("DetectForChat must exempt the coder harness sender: %+v", decision)
+	}
+}
