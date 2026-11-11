@@ -82,6 +82,14 @@ Notes on the collection:
 - Repo context is indexed separately: an agent can read a bounded markdown
   summary of the repository (`git_repo_index_read`, `git_repo_index_status`)
   before scanning the code itself.
+- Plan → implementation handoff: when a planning dispatch carries a
+  `plan_auto_implement` post-action, the core posts the finished plan to the
+  issue and then dispatches the implementation agent into its own interaction.
+  Once the plan is posted the implementation proceeds without a separate human
+  approval message, unless the issue title carries the `[WIP]` marker (the
+  dispatch waits for an explicit human approval then) or the action sets
+  `require_confirmation`. Agents should finish their work instead of leaving
+  `[WIP]` in a title to park an issue.
 
 Related tools and routes:
 
