@@ -195,7 +195,7 @@ func TestDestroySandboxCallsProvider(t *testing.T) {
 	}
 }
 
-func TestUnspportedLifecycleCapabilities(t *testing.T) {
+func TestUnsupportedLifecycleCapabilities(t *testing.T) {
 	p := &plainProvider{fakeProvider: fakeProvider{name: "plain"}}
 	reg := NewRegistry()
 	if err := reg.Register(p); err != nil {
