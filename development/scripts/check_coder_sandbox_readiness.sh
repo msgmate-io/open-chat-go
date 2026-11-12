@@ -36,7 +36,8 @@ for tool in go gofmt; do
     # recognise "no toolchain here" instead of trusting an agent's narrative.
     note "missing_cli: $tool"
     note "MISS $tool is installed at /usr/local/go/bin/$tool but not on PATH;"
-    note "     export PATH=/usr/local/go/bin:/dev_bin:$PATH"
+    note "     run development/scripts/install_sandbox_go_toolchain.sh to wire it up"
+    note "     (one repair path: it exports PATH and persists it for later shells)."
     status=1
   else
     note "missing_cli: $tool"

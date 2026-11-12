@@ -117,7 +117,11 @@ development/scripts/check_coder_sandbox_readiness.sh
 ```
 
 When it reports `missing_cli: go` / `go: MISSING`, state `go: MISSING` in the
-pull request body and push only behind the CI gate. In the pull request body (and
+pull request body and push only behind the CI gate.
+`development/scripts/install_sandbox_go_toolchain.sh --check` is the self-check and
+`go: MISSING` is the only acceptable report when it fails; repair with the same
+script (never a manual `export PATH`) and re-run it before claiming anything.
+In the pull request body (and
 in the final summary) state exactly which command ran and in which environment,
 or say that nothing ran and that PR CI is the gate. Claiming a suite that did not
 run is worse than reporting an untested change: PR CI is authoritative and nobody
