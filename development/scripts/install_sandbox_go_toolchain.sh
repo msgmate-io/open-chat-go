@@ -21,8 +21,10 @@
 #     toolchain and the "works offline" promise is a lie;
 #   * the module cache is warmed once (`go mod download`), so later `go build
 #     ./...` runs do not need the network;
-#   * the environment is persisted to ~/.bashrc, because the shell that
-#     provisions and the shell the agent later drives are separate processes;
+#   * the environment is persisted to ~/.bashrc (created when absent, as it is in
+#     the image) *and* to /etc/profile.d/openchat-sandbox-go.sh, because the shell
+#     that provisions and the shell the agent later drives are separate processes
+#     and a `bash -lc` login shell must find the toolchain regardless of HOME;
 #   * a sandbox that still has no usable `go` says so machine-readably
 #     (`missing_cli: go` + `go: MISSING`, the same token family coder_bash uses
 #     for an absent CLI) instead of leaving an agent free to claim a test run
@@ -199,32 +201,80 @@ fi
 # Persist the environment: the provisioning shell and the agent's later shells are
 # different processes, so an `export` alone is lost and the next coder_bash call
 # starts with "go: command not found" again (ci#739).
-bashrc="${HOME:-/root}/.bashrc"
+#
+# Two sinks, one block (ci#1038):
+#   * ~/.bashrc      - non-login interactive shells (`bash -c`, coder_bash).
+#   * /etc/profile.d - login shells (`bash -lc`). The image used to carry no
+#                      .bashrc at all, so appending to $HOME/.bashrc silently did
+#                      nothing and no shell ever picked the toolchain up.
+# The block is written idempotently (the previous copy is stripped first), so
+# re-running the installer never stacks duplicate exports.
 block_begin='# openchat sandbox environment'
 block_end='# end openchat sandbox environment'
-tmp_bashrc="$(mktemp)"
-if [ -f "$bashrc" ]; then
-  awk -v b="$block_begin" -v e="$block_end" '
-    $0==b {skip=1; next}
-    $0==e {skip=0; next}
-    skip!=1 {print}
-  ' "$bashrc" > "$tmp_bashrc"
-fi
-{
+render_block() {
   printf '%s\n' "$block_begin"
-  printf '%s\n' 'export PATH="/usr/local/go/bin:/dev_bin:$PATH"'
+  printf '%s\n' 'export PATH="/usr/local/go/bin:/dev_bin:${PATH:-/usr/bin:/bin}"'
   printf '%s\n' 'export GOTOOLCHAIN=local'
   printf '%s\n' 'export GOPRIVATE="${GOPRIVATE:-github.com/msgmate-io/*}"'
   printf '%s\n' 'export GONOSUMDB="${GONOSUMDB:-github.com/msgmate-io/*}"'
+  printf '%s\n' 'export GOPATH="${GOPATH:-$HOME/go}"'
+  printf '%s\n' 'export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"'
   printf '%s\n' "$block_end"
-} >> "$tmp_bashrc"
-if cat "$tmp_bashrc" > "$bashrc" 2>/dev/null; then
+}
+# write_block <target> - strip any previous block from <target>, then append the
+# current one. Creates the file when missing and never fails on a missing parent.
+write_block() {
+  local target="$1" filtered
+  mkdir -p "$(dirname "$target")" 2>/dev/null || true
+  filtered="$(mktemp)"
+  if [ -f "$target" ]; then
+    awk -v b="$block_begin" -v e="$block_end" '
+      $0==b {skip=1; next}
+      $0==e {skip=0; next}
+      skip!=1 {print}
+    ' "$target" > "$filtered"
+  fi
+  render_block >> "$filtered"
+  [ -f "$target" ] || : > "$target" 2>/dev/null || true
+  if cat "$filtered" > "$target" 2>/dev/null; then
+    rm -f "$filtered"
+    return 0
+  fi
+  rm -f "$filtered"
+  return 1
+}
+
+bashrc="${HOME:-/root}/.bashrc"
+# `touch` first: an image without a ~/.bashrc (the ci#1038 sandbox) made the
+# append below the first thing that tried to create the file, and the failed
+# write left the environment persisted nowhere.
+if [ ! -f "$bashrc" ]; then
+  if touch "$bashrc" 2>/dev/null; then
+    note "note created $bashrc (the image shipped none)"
+  fi
+fi
+if write_block "$bashrc"; then
   note "ok   sandbox environment persisted to $bashrc"
 else
   note "WARN could not write $bashrc; later shells will not see the Go toolchain."
   status=1
 fi
-rm -f "$tmp_bashrc"
+
+# A login shell (`bash -lc`) reads /etc/profile.d/*.sh instead of ~/.bashrc, and
+# its HOME may differ from the provisioning HOME. Write the same block there when
+# the directory is writable; not being root is not an error (the ~/.bashrc copy
+# still exists), it is reported and skipped. The directory is overridable so the
+# hermetic test suite (ci#1044) can exercise this leg without touching /etc.
+profile_d="${OPENCHAT_SANDBOX_GO_PROFILE_DIR:-/etc/profile.d}"
+if [ -d "$profile_d" ] && [ -w "$profile_d" ]; then
+  if write_block "$profile_d/openchat-sandbox-go.sh"; then
+    note "ok   login shells reach the toolchain via $profile_d/openchat-sandbox-go.sh"
+  else
+    note "WARN could not write $profile_d/openchat-sandbox-go.sh; a login shell may not see go."
+  fi
+else
+  note "note $profile_d is not writable here; relying on ~/.bashrc for later shells."
+fi
 
 # Final self-check: provision, then prove it. The probe is the single source of
 # truth for "can this sandbox run local Go checks", so the installer delegates

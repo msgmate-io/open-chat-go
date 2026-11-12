@@ -16,7 +16,10 @@
 #   4. `--check` is read-only and says `missing_cli: go` + `go: MISSING` when no
 #      toolchain is visible, so an agent can never honestly claim a test run;
 #   5. a bare sandbox that has Go off-PATH is repaired via PATH, not installed
-#      twice (the ci#739 failure mode).
+#      twice (the ci#739 failure mode);
+#   6. provisioning persists the environment to a ~/.bashrc it creates when the
+#      image ships none, plus a /etc/profile.d shim for `bash -lc` login shells,
+#      so a later shell finds `go` without a manual export (ci#1038 defect 1).
 #
 # Hermetic by construction (ci#1044). The contract is about what the installer
 # does with one *particular* toolchain state, so every invocation runs with
@@ -70,7 +73,7 @@ trap 'rm -rf "$tmp"' EXIT
 hermetic_bin="$tmp/path"
 mkdir -p "$hermetic_bin"
 for tool in bash sh awk sed sort uname mktemp rm cat mkdir dirname basename \
-            grep tr head tail cut date curl tar env ln chmod; do
+            grep tr head tail cut date curl tar env ln chmod touch; do
   resolved="$(command -v "$tool" 2>/dev/null || true)"
   if [ -n "$resolved" ]; then
     ln -sf "$resolved" "$hermetic_bin/$tool"
@@ -265,6 +268,157 @@ if ! grep -q 'missing_cli' "$PROBE"; then
 fi
 if ! grep -q 'go: MISSING' "$PROBE"; then
   fail "the readiness probe must also emit 'go: MISSING' (ci#1038)"
+fi
+# ---------------- ci#1038: one repair path, and it is the installer ------------
+# The probe used to answer a missing toolchain with a copy-pasteable
+# `export PATH=/usr/local/go/bin:...` hint. That exported into one shell only (the
+# next coder_bash call started bare again) and gave an agent a second, silently
+# different repair path. The only hint may be the installer.
+if grep -q 'export PATH=/usr/local/go/bin' "$PROBE"; then
+  fail "the readiness probe must not hand out a manual 'export PATH' repair (ci#1038)"
+fi
+if ! grep -q 'development/scripts/install_sandbox_go_toolchain.sh' "$PROBE"; then
+  fail "the readiness probe must point at install_sandbox_go_toolchain.sh as the repair path (ci#1038)"
+fi
+
+# 9. The toolchain-present legs, exercised through the stub so the verdict is the
+#    same with and without a Go toolchain on the host.
+#    (ii) a toolchain older than the module directive is not good enough.
+echo "== ci#1038 ii: stale toolchain -> MISS + exit 1 =="
+out="$(run_check repair \
+        OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+        STUB_GO_VERSION=1.20.0)"
+rc=$?
+[ "$rc" -eq 1 ] || fail "a toolchain older than backend/go.mod must exit 1 (got $rc); got: $out"
+case "$out" in
+  *"MISS go 1.20.0 is older than the backend/go.mod directive"*) : ;;
+  *) fail "--check must report a stale toolchain as MISS; got: $out" ;;
+esac
+
+#    (iii) GOTOOLCHAIN must be local: an implicit download is not offline-capable.
+echo "== ci#1038 iii: GOTOOLCHAIN != local -> MISS + exit 1 =="
+out="$(run_check repair \
+        OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+        STUB_GO_VERSION=1.24.13 \
+        STUB_GO_GOTOOLCHAIN=auto)"
+rc=$?
+[ "$rc" -eq 1 ] || fail "a non-local GOTOOLCHAIN must exit 1 (got $rc); got: $out"
+case "$out" in
+  *"MISS GOTOOLCHAIN=auto"*) : ;;
+  *) fail "--check must report a non-local GOTOOLCHAIN as MISS; got: $out" ;;
+esac
+
+#    (iv) an unwarmed module cache breaks the offline promise.
+echo "== ci#1038 iv: no \$GOMODCACHE/cache/download -> MISS + exit 1 =="
+out="$(run_check repair \
+        OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+        STUB_GO_VERSION=1.24.13 \
+        STUB_GO_GOMODCACHE="$tmp/cold-cache")"
+rc=$?
+[ "$rc" -eq 1 ] || fail "an unwarmed module cache must exit 1 (got $rc); got: $out"
+case "$out" in
+  *"MISS no warmed module cache"*) : ;;
+  *) fail "--check must report the unwarmed module cache as MISS; got: $out" ;;
+esac
+
+# 10. ci#1038 defect 1: provisioning must actually persist the environment. The
+#     image shipped no ~/.bashrc at all, so the old append wrote nowhere and every
+#     later shell started without `go` again.
+echo "== ci#1038: provisioning creates ~/.bashrc and a profile.d shim =="
+install_home="$tmp/install-home"
+profile_dir="$tmp/profile.d"
+rm -rf "$install_home" "$profile_dir"
+mkdir -p "$install_home" "$profile_dir"
+if [ -e "$install_home/.bashrc" ]; then
+  fail "the fixture HOME must start without a ~/.bashrc (that is the ci#1038 case)"
+fi
+run_install() {
+  env -i \
+    PATH="$hermetic_bin" \
+    HOME="$install_home" \
+    GOPATH="$sandbox_gopath" \
+    GOMODCACHE="$sandbox_modcache" \
+    TMPDIR="$tmp" \
+    OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+    OPENCHAT_SANDBOX_GO_PROFILE_DIR="$profile_dir" \
+    STUB_GO_VERSION=1.26.0 \
+    bash "$fixture_root/repair/development/scripts/install_sandbox_go_toolchain.sh" \
+      "$fixture_root/repair" 2>&1
+}
+out="$(run_install)"
+if [ ! -f "$install_home/.bashrc" ]; then
+  fail "provisioning must create ~/.bashrc when the image ships none; got: $out"
+else
+  if ! grep -q 'openchat sandbox environment' "$install_home/.bashrc"; then
+    fail "the created ~/.bashrc must carry the sandbox environment block"
+  fi
+  for line in 'export PATH="/usr/local/go/bin' 'export GOPATH=' 'export GOMODCACHE='; do
+    if ! grep -qF "$line" "$install_home/.bashrc"; then
+      fail "~/.bashrc must export '$line' (GOPATH/GOMODCACHE belong to the same block)"
+    fi
+  done
+fi
+shim="$profile_dir/openchat-sandbox-go.sh"
+if [ ! -f "$shim" ]; then
+  fail "provisioning must write a login-shell shim into the profile.d directory (ci#1038)"
+else
+  # The shim has to be sourceable, not just present: a login shell executes it.
+  sourced="$(env -i PATH="$hermetic_bin" HOME="$install_home" bash -c \
+    "set -eu; . \"$shim\" >/dev/null 2>&1; printf '%s|%s' \"\$GOPATH\" \"\$GOMODCACHE\"" 2>&1)"
+  case "$sourced" in
+    *'|'*) : ;;
+    *) fail "the profile.d shim must export GOPATH and GOMODCACHE; got: $sourced" ;;
+  esac
+fi
+# Idempotent: a second provisioning run must not stack a second block.
+out="$(run_install)"
+for target in "$install_home/.bashrc" "$shim"; do
+  [ -f "$target" ] || continue
+  count="$(grep -c 'openchat sandbox environment' "$target" 2>/dev/null || true)"
+  begin="$(grep -c '^# openchat sandbox environment$' "$target" 2>/dev/null || true)"
+  end="$(grep -c '^# end openchat sandbox environment$' "$target" 2>/dev/null || true)"
+  [ "${begin:-0}" = "1" ] || fail "$target must carry exactly one environment block (found ${begin:-0} openings, ${count:-0} mentions)"
+  [ "${end:-0}" = "1" ] || fail "$target must close the environment block exactly once (found ${end:-0})"
+done
+
+# 11. ci#1038 (v): with no toolchain at all the probe must say so in exactly the
+#     tokens an agent is told to report - `missing_cli: go` and `go: MISSING` -
+#     and must exit 1 instead of looking provisioned.
+echo "== ci#1038 v: no toolchain at all -> probe says missing_cli: go + go: MISSING =="
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$install_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  bash "$PROBE" "$ROOT" 2>&1)"
+rc=$?
+[ "$rc" -eq 1 ] || fail "the probe must exit 1 when no Go toolchain is present (got $rc); got: $out"
+case "$out" in
+  *"missing_cli: go"*) : ;;
+  *) fail "the probe must emit 'missing_cli: go' with no toolchain; got: $out" ;;
+esac
+case "$out" in
+  *"go: MISSING"*) : ;;
+  *) fail "the probe must emit 'go: MISSING' with no toolchain; got: $out" ;;
+esac
+
+# 12. --check stays non-mutating after the persistence change (no shim, no file).
+rm -f "$profile_dir/openchat-sandbox-go.sh"
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$install_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_PROFILE_DIR="$profile_dir" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$tmp/no-such-toolchain" \
+  bash "$fixture_root/repair/development/scripts/install_sandbox_go_toolchain.sh" \
+    --check "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -eq 1 ] || fail "--check without a toolchain must exit 1 (got $rc); got: $out"
+if [ -e "$profile_dir/openchat-sandbox-go.sh" ]; then
+  fail "--check must not write the profile.d shim (non-mutating contract)"
 fi
 
 if [ "$failures" -ne 0 ]; then
