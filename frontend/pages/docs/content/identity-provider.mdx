@@ -1,0 +1,146 @@
+---
+title: Identity Provider (OIDC SSO)
+path: identity-provider
+description: Private documentation for the generic OIDC / Keycloak identity-provider integration.
+order: 34
+section: Platform
+visibility: integration
+integration: identity_provider
+---
+
+Private documentation for the `identity_provider` integration
+(`github.com/msgmate-io/open-chat-go-identity-provider-integration`). It adds a
+generic OpenID Connect authorization-code login flow (PKCE, S256) to Open Chat,
+with optional identity-to-user bootstrap mapping. It never exposes the client
+secret.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/integrations/identity_provider/config` | Public provider configuration (`enabled`, `preset`, `issuer`, `scopes`, `login_start_url`). No secret. |
+| `GET` | `/api/v1/integrations/identity_provider/login/start` | Creates `state`, `nonce` and the PKCE verifier, stores them in an HttpOnly `SameSite=Lax` cookie and redirects to the authorization endpoint. |
+| `GET` | `/api/v1/integrations/identity_provider/login/callback` | Validates `state`/`nonce`, exchanges the code, verifies the ID token via OIDC discovery + JWKS, resolves the local user and starts the normal browser session. |
+
+When `OCI_IDENTITY_PROVIDER_ENABLED` is false or unset every route answers
+`404`. When it is enabled but the configuration is incomplete, `/config` reports
+`enabled: false` and the login routes answer `503`.
+
+## Configuration
+
+All values are runtime environment variables and can therefore be set as `OCI_*`
+environment variables or through the integration settings layer.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `OCI_IDENTITY_PROVIDER_ENABLED` | no | `false` | Enables the routes. |
+| `OCI_IDENTITY_PROVIDER_PRESET` | no | `keycloak` | `keycloak`, `authentik` or `generic`. Selects default scopes and claim names; all use standard OIDC discovery. |
+| `OCI_IDENTITY_PROVIDER_ISSUER` | yes | | Issuer URL. Discovery is read from `<issuer>/.well-known/openid-configuration`. |
+| `OCI_IDENTITY_PROVIDER_CLIENT_ID` | yes | | OIDC client ID, also the ID token audience. |
+| `OCI_IDENTITY_PROVIDER_CLIENT_SECRET` | yes | | OIDC client secret. Never returned by the public config route. |
+| `OCI_IDENTITY_PROVIDER_REDIRECT_URL` | no | request base URL + callback path | Exact callback URL registered at the identity provider. |
+| `OCI_IDENTITY_PROVIDER_SCOPES` | no | `openid profile email` | Space/comma separated scopes. `openid` is always included. |
+| `OCI_IDENTITY_PROVIDER_BOOTSTRAP_JSON` | no | `{}` | Identity-to-user bootstrap map (see below). |
+| `OCI_IDENTITY_PROVIDER_DEFAULT_ROLE` | no | | Role for newly created mapped users when the mapping has none. |
+| `OCI_IDENTITY_PROVIDER_ALLOW_UNMAPPED` | no | `false` | Allow first login for identities without a mapping and without a local account. |
+
+## Standard integration set-up
+
+The integration is set up through the standard integration abstraction
+(`integrationinterface.Definition` with `ConfigFields` and `RouteRegistrar`), so
+the steps are the usual ones: declare the integration in the profile manifest,
+let `openchat-integrations sync` fetch it, and configure it either through the
+settings layer or through environment variables.
+
+```yaml
+# openchat/integrations.private.yaml
+identity_provider:
+  module: github.com/msgmate-io/open-chat-go-identity-provider-integration
+  import: github.com/msgmate-io/open-chat-go-identity-provider-integration
+  repo: https://github.com/msgmate-io/open-chat-go-identity-provider-integration
+  path: clients/integrations/identity_provider_integration
+  frontend:
+    name: identity_provider
+```
+
+```bash
+openchat-integrations sync --profile <profile>   # checkout + go.work wiring
+./server serve                                   # routes appear once enabled
+```
+
+The integration repository moved from the historical (misspelled) name to
+`open-chat-go-identity-provider-integration`. `development/scripts/migrate-identity-provider-integration.sh`
+performs that move including history and rewrites the module path, the
+registered integration name (`identity_provider`) and the `OCI_IDENTITY_PROVIDER_*`
+prefix; run it with `--dry-run` first and `--push` to import into the new
+repository.
+
+## Example: Keycloak
+
+1. Create a realm (for a local trial the sandbox stack in
+   `development/sandbox/identity_provider/` does this for you).
+2. Create a **confidential** OIDC client, for example `open-chat`.
+3. Register the callback URL
+   `https://chat.example.com/api/v1/integrations/identity_provider/login/callback`.
+4. Configure Open Chat:
+
+```bash
+export OCI_IDENTITY_PROVIDER_ENABLED=true
+export OCI_IDENTITY_PROVIDER_PRESET=keycloak
+export OCI_IDENTITY_PROVIDER_ISSUER='https://keycloak.example.com/realms/main'
+export OCI_IDENTITY_PROVIDER_CLIENT_ID='open-chat'
+export OCI_IDENTITY_PROVIDER_CLIENT_SECRET='replace-with-the-client-secret'
+export OCI_IDENTITY_PROVIDER_REDIRECT_URL='https://chat.example.com/api/v1/integrations/identity_provider/login/callback'
+export OCI_IDENTITY_PROVIDER_SCOPES='openid profile email'
+```
+
+`preferred_username`, `email` and `name` are used by the Keycloak preset.
+
+## Example: Authentik
+
+Create an OAuth2/OpenID provider plus application, register the same callback
+URL, and point the integration at the application slug:
+
+```bash
+export OCI_IDENTITY_PROVIDER_ENABLED=true
+export OCI_IDENTITY_PROVIDER_PRESET=authentik
+export OCI_IDENTITY_PROVIDER_ISSUER='https://authentik.example.com/application/o/open-chat/'
+export OCI_IDENTITY_PROVIDER_CLIENT_ID='open-chat-client-id'
+export OCI_IDENTITY_PROVIDER_CLIENT_SECRET='replace-with-the-client-secret'
+```
+
+## Bootstrap mapping
+
+`OCI_IDENTITY_PROVIDER_BOOTSTRAP_JSON` maps an identity key (full
+`issuer|sub`, bare `sub`, or `email`) to the local user to create on first
+login:
+
+```json
+{
+  "sub:9f2c-4a11-8f1d": {
+    "username": "ada",
+    "email": "ada@example.com",
+    "name": "Ada Lovelace",
+    "role": "user"
+  }
+}
+```
+
+Unmapped identities are rejected unless `OCI_IDENTITY_PROVIDER_ALLOW_UNMAPPED`
+is true. Map keys and the client secret are secrets: keep them in the settings
+layer or environment, never in the repository.
+
+## Local sandbox / e2e check
+
+`development/sandbox/identity_provider/` contains a Keycloak compose stack, a
+realm import and a scripted login check that exercises discovery, the
+authorization redirect, the code exchange and the ID-token validation without
+any LLM call:
+
+```bash
+python3 development/sandbox/identity_provider/verify_login.py
+```
+
+The check runs the OIDC flow against a real Keycloak and asserts that the
+callback resolves a session. It is a no-LLM e2e check, so it is safe to run in a
+sandbox and does not require model credentials.
