@@ -24,8 +24,11 @@ requires and what closes the tracker issue after merge.
 ## Verification
 
 <!-- Commands you ran, or the CI job that covers this change. State truthfully
-     whether anything ran locally - the coding sandbox has no Go toolchain, so
-     PR CI is usually the gate. -->
+     whether anything ran locally - the coder sandbox has a Go toolchain with a
+     warmed module cache, so targeted `go test ./<pkg>/...` normally can run, and
+     the full suite/E2E remain PR CI's job. If the toolchain is missing, run
+     development/scripts/check_coder_sandbox_readiness.sh and write `go: MISSING`
+     instead of claiming a suite ran. -->
 
 ## Notes for reviewers
 
