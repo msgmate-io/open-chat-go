@@ -250,16 +250,63 @@ jobs:
           # The fallback path (`github.token`) is allowed to stay unknown: some
           # installation tokens cannot resolve `/user`, and the review call
           # itself is the authoritative check for them.
+          #
+          # ci#1066: the two credential outcomes are now *distinguished* and
+          # named, because they need different human follow-up:
+          #   token_missing  - no CONSOLIDATE_APPROVER_TOKEN secret and the
+          #                    fallback identity resolves to nothing, so the review
+          #                    call can only succeed if Actions may approve here.
+          #   token_rejected - a CONSOLIDATE_APPROVER_TOKEN *is* configured but the
+          #                    API answers 401/no `/user`: the token must be
+          #                    re-issued. GH_TOKEN is unusable for the whole step,
+          #                    so the run reports it and stops instead of turning
+          #                    every read below into a bogus error.
+          APPROVAL_BLOCK=""
           if ! reviewer="$(gh api user --jq '.login' 2>/dev/null)"; then
             reviewer=""
           fi
-          if [ -z "$reviewer" ] && [ "$HAS_APPROVER_TOKEN" = "true" ]; then
-            echo "::error::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401). Re-issue the reviewer identity token: no approval can be posted until then."
-            exit 1
+          if [ "$HAS_APPROVER_TOKEN" = "true" ] && [ -z "$reviewer" ]; then
+            APPROVAL_BLOCK="token_rejected"
+            echo "::warning::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401 / no resolvable /user). No approval can be posted until a maintainer re-issues that reviewer identity token."
+          elif [ "$HAS_APPROVER_TOKEN" != "true" ] && [ -z "$reviewer" ]; then
+            APPROVAL_BLOCK="token_missing"
           fi
           echo "Acting as '${reviewer:-unknown}'."
 
+          # ci#1066: with a rejected approver token the whole step has no usable
+          # credentials, so there is nothing to merge with. Say so precisely and
+          # finish green: this is a human re-issue task, not a workflow
+          # regression (and without the token, every `gh pr view` below would
+          # fail and be misreported as an unreadable PR).
+          if [ "$APPROVAL_BLOCK" = "token_rejected" ]; then
+            rejected_prs=""
+            IFS=',' read -ra rejected_numbers <<< "$PRS"
+            for rejected_number in "${rejected_numbers[@]}"; do
+              [ -n "$rejected_number" ] || continue
+              rejected_prs+="- #${rejected_number} - merge blocked only by the missing approving review"$'\n'
+            done
+            {
+              echo "### Auto-approve: approver token rejected - PR(s) awaiting a maintainer merge"
+              echo
+              echo "\`CONSOLIDATE_APPROVER_TOKEN\` is configured but the API rejected it (HTTP 401 / no resolvable \`/user\`), so no approving review can be posted. These green PR(s) await a maintainer merge:"
+              echo
+              printf '%s' "${rejected_prs}"
+              echo
+              echo "Maintainer action: re-issue that reviewer identity token (it must belong to a user with write access), or grant the automation a ruleset bypass (see ci#1066). No workflow change is pending here."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "::notice::Approver token rejected: PR(s) ${PRS} await a maintainer merge; re-issue CONSOLIDATE_APPROVER_TOKEN (ci#1066)."
+            exit 0
+          fi
+
           failures=0
+          # ci#1066: a fully green PR whose only remaining obstacle is the
+          # base-branch ruleset rule "at least 1 approving review by a writer" is
+          # *work for a human*, not a workflow regression. Those PRs are collected
+          # here and reported through the job summary with a green run, so a red
+          # `auto-approve` run keeps meaning "something is actually broken".
+          awaiting_human=()
+          # Diagnostics of the most recent merge rejection (classification input).
+          MERGE_LAST_OUTPUT=""
 
           # ci#538: merge only what is provably green. The checks are read from
           # the API (not from the triggering run) so a re-run of this workflow
@@ -308,15 +355,56 @@ jobs:
                 | select((.conclusion // .state // "") == "SUCCESS") ] | length'
           }
 
+          # ci#1066: capture the merge rejection. The caller has to distinguish
+          # "the ruleset demands an approving review" (never fixed by retrying, and
+          # often only satisfiable by a human) from a transient GraphQL/API error
+          # (retryable). Before this, a review-rule rejection was retried three
+          # times per attempt flag - 40s of sleeps and six identical
+          # `GraphQL: Repository rule violations found` blobs - and then reported
+          # as an opaque automation failure.
+          approval_rule_violation() {
+            grep -qiE 'approving review|review is required by reviewers with write access' \
+              <<< "$MERGE_LAST_OUTPUT"
+          }
+
+          # ci#1066: classify *why* no usable approval exists, in maintainer
+          # language, for the run summary.
+          approval_block_text() {
+            case "${1:-}" in
+              token_missing)
+                echo "no \`CONSOLIDATE_APPROVER_TOKEN\` secret configured and the fallback \`github.token\` identity is unresolvable, so only a ruleset bypass could merge this";;
+              token_rejected)
+                echo "\`CONSOLIDATE_APPROVER_TOKEN\` is configured but rejected by the API (HTTP 401 / no resolvable \`/user\`)";;
+              self_authored)
+                echo "the automation identity is the PR author and cannot self-approve";;
+              review_post_failed)
+                echo "the approving review could not be posted (identity lacks permission on this repository)";;
+              review_not_accepted)
+                echo "an approving review was posted but the ruleset still reports it as missing (the reviewer has no write access, or the approval was dismissed by a newer push)";;
+              *)
+                echo "no usable approving review for the automation identity";;
+            esac
+          }
+
           attempt_merge() {
             local admin_flag="$1"
-            local try
+            local try out
+            MERGE_LAST_OUTPUT=""
             for try in 1 2 3; do
               # shellcheck disable=SC2086
-              if gh pr merge "$number" --repo "$REPO" --merge $admin_flag; then
+              if out="$(gh pr merge "$number" --repo "$REPO" --merge $admin_flag 2>&1)"; then
                 return 0
               fi
+              MERGE_LAST_OUTPUT="$out"
+              printf '%s\n' "$out"
               echo "Merge attempt ${try} failed; re-checking state."
+              if approval_rule_violation; then
+                # Not retryable: the branch ruleset will reject every retry the
+                # same way. Stop here so the classification (human-required vs
+                # real regression) is what the run reports.
+                echo "Merge attempt ${try} was rejected by the base-branch review rule; not retrying."
+                return 1
+              fi
               sleep 10
               state="$(gh pr view "$number" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo '')"
               [ "$state" = "MERGED" ] && return 0
@@ -430,8 +518,10 @@ jobs:
             # approved by its author, and a missing/duplicate review is not an
             # error as long as the merge succeeded afterwards.
             approved="false"
+            block_reason=""
             if [ -n "$reviewer" ] && [ "$reviewer" = "$author" ]; then
               echo "PR #${number} is authored by '${reviewer}'; cannot self-approve, relying on the ruleset bypass for the merge."
+              block_reason="self_authored"
             else
               existing_approvers="$(jq -r '.reviews[]? | select(.state == "APPROVED") | .author.login' <<< "$pr_json" 2>/dev/null || true)"
               if [ -n "$reviewer" ] && grep -qxF "$reviewer" <<< "$existing_approvers"; then
@@ -442,6 +532,7 @@ jobs:
                 echo "Approved PR #${number} as '${reviewer:-unknown}'."
                 approved="true"
               else
+                block_reason="review_post_failed"
                 echo "::warning::Could not post an approving review on PR #${number} (missing reviewer identity or permission); trying the ruleset bypass for the merge."
               fi
             fi
@@ -450,6 +541,17 @@ jobs:
               echo "Merged PR #${number}."
             elif attempt_merge "--admin"; then
               echo "Merged PR #${number} with --admin (ruleset bypass); green checks were verified above."
+            elif approval_rule_violation; then
+              # ci#1066: the PR is green and the *only* thing the ruleset still
+              # wants is an approving review with write access that this
+              # workflow could not supply. That is a maintainer action, not a
+              # workflow regression, so it is reported (job summary + notice)
+              # and the run stays green.
+              [ -n "$block_reason" ] || block_reason="review_not_accepted"
+              awaiting_human+=("#${number} - $(approval_block_text "$block_reason")")
+              echo "::notice::PR #${number} is green and awaits a maintainer merge: $(approval_block_text "$block_reason") (ci#1066)."
+              echo "::endgroup::"
+              continue
             else
               echo "::error::Could not merge PR #${number} (no usable approval and no ruleset bypass for the acting identity)."
               failures=$((failures + 1))
@@ -462,6 +564,23 @@ jobs:
               >/dev/null 2>&1 || echo "::warning::Merged PR #${number} but could not post the audit comment."
             echo "::endgroup::"
           done
+          # ci#1066: report the human-required PRs and gate the exit code.
+          if [ "${#awaiting_human[@]}" -ne 0 ]; then
+            {
+              echo "### Auto-approve: ${#awaiting_human[@]} green PR(s) awaiting a maintainer merge"
+              echo
+              echo "These PR(s) passed the merge gate (green checks verified via the API) but the base-branch ruleset still requires an approving review with write access that this workflow cannot supply:"
+              echo
+              for entry in "${awaiting_human[@]}"; do
+                echo "- ${entry}"
+              done
+              echo
+              echo "This run is green on purpose: a human approving these is not a workflow regression. If the automation is *meant* to merge them, fix the approval identity by either re-issuing \`CONSOLIDATE_APPROVER_TOKEN\` for a user with write access or adding it to the ruleset bypass list (maintainer decision, see ci#1066)."
+              echo
+              echo "CI run: ${RUN_URL}"
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "::notice::${#awaiting_human[@]} green PR(s) await a maintainer merge (ruleset needs an approving review with write access; ci#1066)."
+          fi
           if [ "$failures" -ne 0 ]; then
             echo "::error::${failures} PR(s) could not be auto-approved/merged."
             exit 1
