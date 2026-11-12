@@ -50,6 +50,22 @@ VAULT_SELECTED = "using the bot token from deployment vault"
 CI_SELECTED = "using the bot token from ci repository secret"
 VAULT_REJECTED = "the deployment vault bot_token"
 CACHE_MISS = "bot token cannot read"
+ANNOTATION = ("::error::", "::warning::", "##[error]", "##[warning]")
+
+# `msgmate-io/open-chat-go` is the deploy target the vault item must be able to
+# read (see development/deployment-bot-token-capabilities.md).
+DEPLOY_TARGET = "msgmate-io/open-chat-go"
+
+# What a named rejection of the vault item actually costs, keyed by the HTTP
+# status the resolver reports. 401 means the credential is dead (re-issue);
+# 404/403 mean it is alive but not scoped for this repository (a different fix,
+# and the one that reproduced the git exit 128 of run 42959618854).
+REJECTION_GUIDANCE = (
+    ("401", "the credential is invalid, expired or revoked - re-issue the vault item"),
+    ("403", "the credential lacks contents:read, or the API rate limit is exhausted"),
+    ("404", "the credential cannot see %s - a fine-grained token's selected "
+            "repositories must include it" % DEPLOY_TARGET),
+)
 
 
 class Criterion:
@@ -79,6 +95,20 @@ def _lines(raw: Iterable[str]) -> List[str]:
     return [line.rstrip("\n") for line in raw]
 
 
+def _annotated(line: str, phrase: str) -> bool:
+    """True only for a real workflow annotation carrying `phrase`.
+
+    A run log also contains the *script text* of every `run:` block, so the
+    resolver's own explanatory comments repeat its failure vocabulary (e.g.
+    "`bot token cannot read <owner/repo>@<ref>`"). Matching the bare phrase
+    therefore reported a failing precondition for every successful run - the
+    comment was read as the error. Only `::error::`/`::warning::` annotations
+    are authoritative.
+    """
+    lowered = line.lower()
+    return any(marker in lowered for marker in ANNOTATION) and phrase in lowered
+
+
 def token_source(lines: Iterable[str]) -> Tuple[str, str]:
     """Which credential the resolver selected, and whether the vault one was rejected.
 
@@ -87,16 +117,23 @@ def token_source(lines: Iterable[str]) -> Tuple[str, str]:
     """
     source = NO_TOKEN_SOURCE
     rejected = False
+    guidance = ""
     for line in lines:
         lowered = line.lower()
         if VAULT_SELECTED in lowered:
             source = VAULT
         elif CI_SELECTED in lowered:
             source = CI_FALLBACK
-        if VAULT_REJECTED in lowered and "cannot read" in lowered:
+        if _annotated(line, VAULT_REJECTED):
             rejected = True
+            for status, advice in REJECTION_GUIDANCE:
+                if "http %s" % status in lowered:
+                    guidance = advice
+                    break
     if rejected:
-        return source, "the vault BOT_TOKEN was rejected and named in a warning"
+        return source, "the vault BOT_TOKEN was rejected and named in a warning%s" % (
+            " - " + guidance if guidance else ""
+        )
     if source == NO_TOKEN_SOURCE:
         return source, "the run log has no 'Using the bot token from ...' line"
     if source == CI_FALLBACK:
@@ -132,7 +169,7 @@ def evaluate(log_lines: Iterable[str], steps: Dict[str, str]) -> List[Criterion]
         source_verdict = FAIL
 
     precondition = steps.get(PRECONDITION_STEP, "")
-    if any(CACHE_MISS in line.lower() for line in lines):
+    if any(_annotated(line, CACHE_MISS) for line in lines):
         precondition_verdict, precondition_detail = FAIL, (
             "the precondition failed with 'bot token cannot read <owner/repo>@<ref>'"
         )
