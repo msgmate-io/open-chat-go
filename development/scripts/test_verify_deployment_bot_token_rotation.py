@@ -117,6 +117,30 @@ class PreconditionTests(unittest.TestCase):
         )
         self.assertEqual(_criterion(criteria, "2").verdict, rot.FAIL)
 
+    # ci#1044: a `gh run view --log` dump contains the *script text* of every
+    # `run:` block, so the resolver's own explanatory comments repeat its failure
+    # vocabulary. Reading those comments as annotations reported a failed
+    # precondition for every successful run (first caught against run 43130639468,
+    # whose resolver step concluded `success`).
+    def test_resolver_source_comment_is_not_a_precondition_failure(self):
+        comment = (
+            "      # `bot token cannot read <owner/repo>@<ref>` when neither works."
+        )
+        criteria = rot.evaluate(VAULT_LOG + [comment], GREEN_STEPS)
+        self.assertEqual(_criterion(criteria, "2").verdict, rot.OK)
+
+    def test_resolver_warning_comment_is_not_a_vault_rejection(self):
+        comment = (
+            "      # name about the one it skipped, and fails with"
+        )
+        warning_text_comment = (
+            "      # The deployment vault BOT_TOKEN for the profile cannot read it."
+        )
+        criteria = rot.evaluate(
+            VAULT_LOG + [comment, warning_text_comment], GREEN_STEPS
+        )
+        self.assertEqual(_verdicts(criteria), [rot.OK] * 3)
+
     def test_absent_step_is_unknown(self):
         criteria = rot.evaluate(VAULT_LOG, {})
         self.assertEqual(_criterion(criteria, "2").verdict, rot.UNKNOWN)
