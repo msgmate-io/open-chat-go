@@ -357,7 +357,7 @@ export function LoginSection({
 
     useEffect(() => {
         let cancelled = false
-        fetch("/api/v1/integrations/intentity_provider/config", { headers: { Accept: "application/json" } })
+        fetch("/api/v1/integrations/identity_provider/config", { headers: { Accept: "application/json" } })
             .then((res) => (res.ok ? res.json() : null))
             .then((cfg) => {
                 if (!cancelled && cfg?.enabled && cfg?.login_start_url) {
