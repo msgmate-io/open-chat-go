@@ -105,12 +105,24 @@ Do not lean on the exemptions for ordinary work - link the leaf issue.
 
 ### Report tests truthfully
 
-The coding sandbox has no Go toolchain, so `go test ./...` and the E2E suites
-cannot have run there. In the pull request body (and in the final summary) state
-exactly which command ran and in which environment, or say that nothing ran and
-that PR CI is the gate. Claiming a suite that did not run is worse than
-reporting an untested change: PR CI is authoritative and nobody has to trust the
-claim. No polling, no "CI is green" unless a check-run read actually said so.
+The coder sandbox image ships a Go toolchain pinned to `backend/go.mod` with a
+warmed module cache, so `go build ./...` and targeted `go test ./<pkg>/...` are
+expected to work offline after checkout. Any other suite (full `go test ./...`,
+E2E, image builds) is still CI-only.
+
+**If `go` is missing, do not claim tests passed.** Run the readiness probe:
+
+```bash
+development/scripts/check_coder_sandbox_readiness.sh
+```
+
+When it reports `missing_cli: go` / `go: MISSING`, state `go: MISSING` in the
+pull request body and push only behind the CI gate. In the pull request body (and
+in the final summary) state exactly which command ran and in which environment,
+or say that nothing ran and that PR CI is the gate. Claiming a suite that did not
+run is worse than reporting an untested change: PR CI is authoritative and nobody
+has to trust the claim. No polling, no "CI is green" unless a check-run read
+actually said so.
 
 ### A branch without a pull request is not a deliverable
 
