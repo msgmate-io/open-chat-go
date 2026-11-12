@@ -114,7 +114,7 @@ python3 -m venv .venv
 | Profile | Includes | Extra repos |
 | --- | --- | --- |
 | `core-only` (default) | `mcp`, `rest_api_tool`, `go_client`, `community_coder` | – |
-| `community-coder` | public coder + TUI profile | – |
+| `community-coder` | public coder + base integrations (the private `tui` client is added by the private `default` profile) | – |
 | `default` | core integrations plus deployment-provided integrations | profile setup |
 | `full` | every integration | profile setup |
 | `full-ci` | every integration plus private CI tooling | profile setup |
