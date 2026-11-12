@@ -148,6 +148,34 @@ Before reporting, re-read the pull request with `github_pr_view` and confirm
 `base=dev`, `draft=false`, the label set and the body. Do not rely on the
 create call having echoed what you asked for.
 
+## Merging the `dev` -> `main` promotion PR is allowed, verifying it is required
+
+The `[Dev promotion]` pull request is special: merging it is the deployment hop
+to ci.msgmate.io, and it is created and refreshed by CI automation - never create,
+retarget, relabel or close it yourself. But you *may* merge **that** pull
+request once every required check on it is green (ci#1055); no maintainer click
+is needed for the loop to close. Decide with the tested predicate instead of
+reading API payloads by eye:
+
+```bash
+development/scripts/promotion_hop.sh merge              # 0 merge, 1 wait, 2 refuse
+development/scripts/promotion_hop.sh deploy <VERSION>   # 0 healthy, 1 broken
+```
+
+`merge` refuses anything that is not `dev` -> `main`, and it collapses duplicate
+check-runs onto the **newest** instance per (name, app) before deciding - a
+cancelled label-event duplicate leaving a stale `PR Test Merge Requirement =
+FAILURE` on the commit is *not* a red gate (blocker 2 of ci#1055), and the
+instances it disregarded are printed as `ignored superseded check-run instances`.
+Exit `1` means "not yet" (a replacement run still has to conclude, or the branch
+is `BEHIND` - use `github_pr_update_branch`); exit `2` means a real red or a
+structurally wrong hop, so do not merge and report it.
+
+After the merge, run `deploy` and report the deployed VERSION. A successful
+rollout is not acceptance: a ticket with a behavioural criterion closes only once
+its feature has been observed working on ci.msgmate.io, and a deployment serving
+an older (or unmerged-branch, ci#890) VERSION is a breakage to ticket, not a note.
+
 ## A green PR that is "behind" the base branch
 
 When a required gate (for example `PR Test Merge Requirement`) fails **only**
