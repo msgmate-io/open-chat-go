@@ -3511,10 +3511,30 @@ jobs:
               echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
               exit 1
             fi
+            # ci#1057: the dispatched CI ref can legitimately advance between the
+            # dispatch and the creation of the run - another merge to the CI
+            # repository's default branch lands in that window (observed with the
+            # ci#1054 OUT_TOKEN_FILE fix: dispatched from d6e098a, the run was
+            # created from the newer d9b803de). The previous strict equality
+            # guard then dyed the whole PR run red although the dispatch was
+            # correct and the deploy itself succeeded, and the deploy could never
+            # be observed as green. Accept the observed sha when it is the
+            # dispatched commit itself or a *descendant* of it (the CI ref only
+            # moves forward), and keep rejecting a run created from an unrelated
+            # commit, which is what this guard exists for.
             if [ -n "${DISPATCH_REF_SHA:-}" ] && [ -n "${run_sha:-}" ] && [ "$run_sha" != "$DISPATCH_REF_SHA" ]; then
-              echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA}."
-              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
-              exit 1
+              compare_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/compare/${DISPATCH_REF_SHA}...${run_sha}" || true)"
+              compare_status="$(jq -r '.status // ""' <<< "${compare_json:-"{}"}" 2>/dev/null || echo "")"
+              case "$compare_status" in
+                ahead|identical)
+                  echo "::notice::CI run $run_id was created from ${run_sha}, which is '${compare_status}' relative to the dispatched ${DISPATCH_REF} commit ${DISPATCH_REF_SHA}; the dispatched CI ref advanced after the dispatch, so this run still belongs to this dispatch."
+                  ;;
+                *)
+                  echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA} (compare status '${compare_status:-unknown}')."
+                  echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+                  exit 1
+                  ;;
+              esac
             fi
 
             if [ "$run_status" != "completed" ]; then
