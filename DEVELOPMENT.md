@@ -39,6 +39,43 @@ lightweight PR CI. Release hops from `main` to `production` and the private
 full-build/deployment automation are maintainer-controlled; the public workflow
 files and the application code live here.
 
+### The promotion hop is agent-closable, and verifying it is the price
+
+Merging the `[Dev promotion]` pull request is what deploys ci.msgmate.io, so
+while that merge stayed a maintainer click the loop could never close itself:
+tickets piled up as "implemented" but never "live" (ci#1055). The development
+lead may therefore merge the promotion PR on its own once **all required checks
+on it are green** - and must then verify that the deployment actually serves the
+promoted code. The two decisions are implemented once, as unit-tested
+predicates, in `development/scripts/promotion_hop.py`:
+
+```bash
+development/scripts/promotion_hop.sh merge                 # may the hop be merged now?
+development/scripts/promotion_hop.sh deploy <VERSION>      # is that version live?
+```
+
+`merge` exits `0` merge, `1` wait (green not reached), `2` refuse (the PR is not
+the `dev` -> `main` hop, is a draft, has conflicts, or a required check really
+failed). Do not re-derive the rules from raw API payloads: the direct cause of
+the false-blocked promotion PRs was a *superseded* duplicate check-run - a
+`labeled` event spawns a second `pull_request` dispatch for the same SHA, the
+duplicate is cancelled by the shared `pr-ci-<pr>-<sha>` concurrency group, and
+its `always()` gate carries on to leave a FAILURE `PR Test Merge Requirement`
+on the commit while the live run's check of the same name goes green. The
+predicate collapses the check list onto the **newest** instance per
+(name, app) - the same rule the auto-approve gate applies (ci#847) - and lists
+every instance it disregarded as `ignored superseded check-run instances`, so a
+refusal is never based on a stale red and a real red is never whitewashed.
+
+`deploy` treats a merge as *not* acceptance. It fails unless the rollout
+completed, every pod is ready, and `https://ci.msgmate.io/api/v1/metrics/health`
+answers `200` with `{"status":"ok","version":"<VERSION>"}`. A host serving an
+older version - or one that only exists on unmerged branches (ci#890) - is a
+broken deployment, not a note: report it on the ticket and loop, do not close the
+ticket. A ticket with a behavioural criterion closes only after its feature has
+been observed working on ci.msgmate.io; a green promotion PR and a successful
+rollout are necessary, never sufficient.
+
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
 section for it); `PR Test Merge Requirement` reads that and nothing else.
