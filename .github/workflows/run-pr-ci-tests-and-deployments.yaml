@@ -1920,7 +1920,7 @@ jobs:
       # the suite to matching tests (union of all such labels).
       tags: ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_tags }}
       opencode_provider: openrouter
-      opencode_model: deepseek/deepseek-v4-flash-0731
+      opencode_model: deepseek/deepseek-v4.1-flash-1017
       sandbox_interaction_timeout: "720"
       upload_artifacts: true
       post_results: true
@@ -2271,8 +2271,10 @@ jobs:
         # ci#813: every feature/bugfix PR implements exactly one leaf issue in
         # the private tracker. GitHub cannot auto-close a cross-repository issue,
         # so this gate and the post-merge closure in the auto-consolidation
-        # runner own the invariant. Keep this regex in sync with
-        # nativecoder.LinkedIssueNumbers.
+        # runner own the invariant. Both read the body through the one shared
+        # parser `development/scripts/linked_ci_issues.sh` (ci#1034); its rules
+        # are pinned by `development/scripts/tests/test_merge_gate_verdict.sh`,
+        # which also runs from the PR CI self-test step.
         #
         # ci#862: a consolidation PR (chore/consolidate*) is exempt from the
         # whole linked-issue requirement, not just from the one-standalone-
@@ -2351,21 +2353,32 @@ jobs:
             fi
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
-          # ci#824: a closing line must be standalone, exactly like
-          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
-          # line (`[ \t]*$`). Without that anchor this pattern also matched
-          # prose such as "Fix ci#824: crash on empty config" or
-          # "Closes ci#824 and also ci#999", importing leaf issues the author
-          # never linked - while the Go parser used by the consolidation runner
-          # ignored them. The two copies are pinned together by
-          # TestWorkflowLinkedIssueGrepStaysAnchored.
-          mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
-              | sed -E 's/.*#([0-9]+).*/\1/' \
-              | sort -n -u
-          )
+          # ci#824/ci#1034: one shared helper decides which leaf issues a body
+          # closes, because the post-merge closure job below must import exactly
+          # what this gate admitted (this used to be two copies of one regex).
+          # The reference must still be a *standalone* closing line - prose such
+          # as "Fix ci#824: crash on empty config" or "Closes ci#824 and also
+          # ci#999" never imports an issue the author did not link - but a
+          # standalone line wrapped in ordinary markdown (a list bullet, bold,
+          # a table cell) or ending in sentence punctuation now counts.
+          parser=development/scripts/linked_ci_issues.sh
+          if [ ! -f "${parser}" ]; then
+            # This job checks out the PR head, so a branch started before
+            # ci#1034 does not carry the shared parser yet. Read the base
+            # branch's copy rather than failing on a missing file - the rules
+            # stay identical to the closure job's either way.
+            curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/contents/${parser}?ref=${{ github.event.pull_request.base.ref }}" \
+              > "${parser}"
+          fi
+          mapfile -t issues < <(bash "${parser}" "${RUNNER_TEMP}/pr-body.md")
           if [ "${#issues[@]}" -eq 0 ]; then
-            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line."
+            # ci#1034: state the rule verbatim, next to the fix, so a red gate
+            # is actionable without reading the parser.
+            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line - a line whose only content is that reference, which may be wrapped in markdown (a '- ' bullet, **bold**, a | table cell |) and may end in a full stop, but may not share the line with any other prose. Add it under a '## Tracker' heading (the PR template already carries one); editing the body is enough, no new commit is needed."
             exit 1
           fi
           if [ "$consolidation" != true ] && [ "${#issues[@]}" -ne 1 ]; then
@@ -2435,6 +2448,15 @@ jobs:
           # the group over and reports accepted=false; the replacement run's
           # gate owns the verdict from then on.
           PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
+          # ci#1033: a run cancelled by the "Cancel superseded workflow runs for
+          # this PR" entry step of a NEWER run has no sibling attempt for its own
+          # SHA (the successor carries a different SHA), so waiting for a
+          # replacement can only burn the whole budget while holding the
+          # `pr-ci-<PR>-<SHA>` group - which is what kept the successor's gate
+          # from ever concluding on PR #9 (run 42955395696 sat in_progress here
+          # until the budget). After this short grace the reconciler defers to the
+          # newer run's gate instead of waiting.
+          PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS: ${{ vars.PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS || '30' }}
         run: |
           set -uo pipefail
           set +e
@@ -2674,6 +2696,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
+
+      # ci#1033/ci#1034: the merge-gate verdict is decided by the shared
+      # linked-issue parser plus the superseded-attempt rules. Pin both end to
+      # end: a cancelled attempt is never a verdict, a still-running newer
+      # attempt reads as pending (not red), and a closing reference wrapped in
+      # a bullet/bold/table cell counts while prose does not.
+      - name: Merge gate verdict self-test
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_merge_gate_verdict.sh
 
       # ci#740: unit-test the sandbox provider-failure classifier so the
       # "account failure (never retry)" vs "provider unreachable (transient
@@ -3640,7 +3672,7 @@ jobs:
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
           AI_TEST_BASELINE_BACKEND: openrouter
-          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4-flash-0731
+          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4.1-flash-1017
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
           AI_PROCESS_TESTS_VERBOSE: "1"
           PYTHONUNBUFFERED: "1"
@@ -5032,6 +5064,17 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true
     steps:
+      # ci#1034: the body is parsed by the same repository script the gate uses,
+      # so this job needs the workspace; the base branch is the merged tree.
+      - name: Checkout base branch for the linked-issue parser
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          # Only the parser is needed; keep the post-merge job cheap.
+          sparse-checkout: development/scripts
+          sparse-checkout-cone-mode: false
+
       - name: Close every linked leaf issue
         env:
           LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -5042,19 +5085,11 @@ jobs:
             exit 0
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
-          # ci#824: a closing line must be standalone, exactly like
-          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
-          # line (`[ \t]*$`). Without that anchor this pattern also matched
-          # prose such as "Fix ci#824: crash on empty config" or
-          # "Closes ci#824 and also ci#999", importing leaf issues the author
-          # never linked - while the Go parser used by the consolidation runner
-          # ignored them. The two copies are pinned together by
-          # TestWorkflowLinkedIssueGrepStaysAnchored.
-          mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
-              | sed -E 's/.*#([0-9]+).*/\1/' \
-              | sort -n -u
-          )
+          # ci#824/ci#1034: same shared helper as the `PR Test Merge
+          # Requirement` gate, so this job can only close issues the gate
+          # admitted (the two anchored `grep` copies had to be kept in sync by
+          # hand, and the anchored form rejected a bullet/bold/table-cell line).
+          mapfile -t issues < <(bash development/scripts/linked_ci_issues.sh "${RUNNER_TEMP}/pr-body.md")
           if [ "${#issues[@]}" -eq 0 ]; then
             echo "No linked CI issues in the merged PR body; nothing to close."
             exit 0
