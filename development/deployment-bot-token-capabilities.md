@@ -105,3 +105,35 @@ Verification of the running deployment itself still goes through `Live Runtime
 Canary` (`repository_dispatch: live-canary`) and the log-monitoring workflow —
 this script reads run metadata, and neither mutates the cluster nor touches the
 vault.
+
+## Re-issuing the vault `BOT_TOKEN` (maintainer procedure)
+
+The rotation itself is a credential action on the vault and cannot be done from
+CI or from an agent sandbox; every code-side half of ci#1044 is in place to make
+it provable before and after the fact.
+
+1. Create a **fine-grained** PAT (`github_pat_…`) with resource owner
+   `msgmate-io` and the *selected repositories* list containing
+   `msgmate-io/open-chat-go` (a token scoped to another org repo answers 404 and
+   reproduces the `git` exit 128 of run `42959618854`).
+2. Grant `Contents: read`, `Pull requests: read and write`, and
+   `Packages: read and write` (the deploy pulls/pushes
+   `ghcr.io/msgmate-io/open-chat-go:pr-<n>-<sha>`).
+3. Prove the candidate **before** storing it:
+   `python3 development/scripts/check_bot_token_capabilities.py --token-file <file>`.
+   It must print no `MISSING` row; `pull_requests:write` stays `UNVERIFIED` by
+   design and is settled by the deploy's preview-URL comment.
+4. Write it into the `BOT_TOKEN` item of the `msgmate-io-pr-deployment` and
+   staging SecretSpec profiles. Never paste it into an issue, PR or commit.
+5. Confirm the rotation on the next `[Dev promotion]` deployment:
+   `python3 development/scripts/verify_deployment_bot_token_rotation.py --log-file … --jobs-json …`
+   must print `ROTATED`. Until then the run stays green on the CI-secret
+   fallback and the report stays `NOT ROTATED` — a working state, not a correct
+   one.
+
+Current state at the time of writing: the vault item answers
+`HTTP 401 - invalid, expired or revoked` (run `43130639468`), so the fix is a
+re-issue, not a scope change; the CI-secret fallback is deliberately kept.
+
+Verification of the deployed runtime still goes through `Live Runtime Canary`
+(`repository_dispatch: live-canary`) and the log-monitoring workflow.
