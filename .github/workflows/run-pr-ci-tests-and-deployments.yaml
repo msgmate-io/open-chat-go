@@ -4162,6 +4162,13 @@ jobs:
               "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
               -d "$labels_payload" >/dev/null
             echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
+            # ci#1077: arm auto-merge on the refresh path too, so the promotion
+            # lands by itself as soon as the labelled CI run is green.
+            if GH_TOKEN="$PR_TOKEN" gh pr merge "$existing_pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
+              echo "Auto-merge armed on promotion PR #${existing_pr_number}."
+            else
+              echo "::warning::Could not arm auto-merge on promotion PR #${existing_pr_number}; merge it manually once green."
+            fi
             exit 0
           fi
 
@@ -4182,6 +4189,13 @@ jobs:
             "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d "$labels_payload" >/dev/null
           echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+          # ci#1077: arm auto-merge right after creation so `dev` -> `main`
+          # needs no human click once every required check is green.
+          if GH_TOKEN="$PR_TOKEN" gh pr merge "$pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
+            echo "Auto-merge armed on promotion PR #${pr_number}."
+          else
+            echo "::warning::Could not arm auto-merge on promotion PR #${pr_number}; merge it manually once green."
+          fi
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
