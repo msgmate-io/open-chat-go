@@ -25,6 +25,12 @@ credential:
 
 The report carries verdicts and step names only - no token, no vault content -
 and the script never makes a network request.
+
+Because the rotation itself is a vault action no code can perform, `--plan` prints
+the outstanding work instead of the verdict: the current rejection status, the two
+profiles that hold the item, the capability set the replacement must carry, and
+the two commands that prove it before and after the re-issue. It never sees the
+credential, so it cannot leak one.
 """
 
 from __future__ import annotations
@@ -55,6 +61,23 @@ ANNOTATION = ("::error::", "::warning::", "##[error]", "##[warning]")
 # `msgmate-io/open-chat-go` is the deploy target the vault item must be able to
 # read (see development/deployment-bot-token-capabilities.md).
 DEPLOY_TARGET = "msgmate-io/open-chat-go"
+
+# The vault items a rotation has to touch. Both profiles read the same credential
+# (`msgmate-io-staging` backs the promotion hop, `msgmate-io-pr-deployment` the
+# per-PR deploys), and rotating only one leaves the other on the fallback.
+REISSUE_PROFILES = ("msgmate-io-pr-deployment", "msgmate-io-staging")
+
+# What the re-issued item must be able to do - the capability set of
+# check_bot_token_capabilities.py, restated here because a re-issue request that
+# does not state it is how the rejected token got issued in the first place.
+REISSUE_CAPABILITIES = (
+    "fine-grained PAT (`github_pat_...`) whose selected-repositories list "
+    "includes msgmate-io/open-chat-go",
+    "`contents:read` on msgmate-io/open-chat-go (actions/checkout)",
+    "`pull_requests:write` on msgmate-io/open-chat-go (preview-URL comment)",
+    "`packages:read` and `packages:write` for "
+    "ghcr.io/msgmate-io/open-chat-go (pr-<n>-<sha> images)",
+)
 
 # What a named rejection of the vault item actually costs, keyed by the HTTP
 # status the resolver reports. 401 means the credential is dead (re-issue);
@@ -139,6 +162,76 @@ def token_source(lines: Iterable[str]) -> Tuple[str, str]:
     if source == CI_FALLBACK:
         return source, "the deploy ran on the CI repository secret BOT_TOKEN"
     return source, "the deploy ran on the deployment profile's vault BOT_TOKEN"
+
+
+def rejection_status(lines: Iterable[str]) -> str:
+    """The HTTP status the resolver reported for the vault item, or "" if none.
+
+    Only the annotated rejection warning is considered, so the resolver's own
+    explanatory text (which mentions the same statuses) cannot answer this.
+    """
+    for line in lines:
+        if not _annotated(line, VAULT_REJECTED):
+            continue
+        lowered = line.lower()
+        for status, _ in REJECTION_GUIDANCE:
+            if "http %s" % status in lowered:
+                return status
+    return ""
+
+
+def reissue_plan(lines: Iterable[str], steps: Optional[Dict[str, str]] = None) -> str:
+    """What the maintainer still has to do, and how the result is proven.
+
+    ci#1044 cannot be closed by code: rotating a credential is a vault action. This
+    renders the remaining work from the *run evidence* so the re-issue is asked for
+    with the current rejection status, the exact profiles and the capability set -
+    never the credential, whose value this module never sees.
+    """
+    lines = _lines(lines)
+    steps = steps or {}
+    source, detail = token_source(lines)
+    status = rejection_status(lines)
+    criteria = evaluate(lines, steps)
+    rotated = all(c.verdict == OK for c in criteria)
+
+    out = ["ci#1044 deployment BOT_TOKEN re-issue plan", ""]
+    out.append("run evidence: token source = %s" % source)
+    out.append("run evidence: %s" % detail)
+    if status:
+        for code, advice in REJECTION_GUIDANCE:
+            if code == status:
+                out.append("rejection:   HTTP %s - %s" % (code, advice))
+    out.append("")
+
+    if rotated:
+        out.append("No re-issue outstanding: the deployment ran on the profile's vault BOT_TOKEN.")
+        out.append("Re-run this against the newest `[Dev promotion]` run if that changes.")
+        return "\n".join(out)
+
+    out.append("Action: re-issue the vault `BOT_TOKEN` item (vault only, never a PR/issue/commit).")
+    out.append("Profiles:")
+    for profile in REISSUE_PROFILES:
+        out.append("  - %s" % profile)
+    out.append("The credential must be:")
+    for capability in REISSUE_CAPABILITIES:
+        out.append("  - %s" % capability)
+    out.append("")
+    out.append("Prove the candidate before storing it (must print no MISSING row):")
+    out.append("  python3 development/scripts/check_bot_token_capabilities.py --token-file <file>")
+    out.append("Confirm the rotation on the next `[Dev promotion]` deployment:")
+    out.append("  gh run view <run-id> --repo msgmate-io/open-chat-go --log > /tmp/run.log")
+    out.append("  gh run view <run-id> --repo msgmate-io/open-chat-go --json jobs > /tmp/run-jobs.json")
+    out.append(
+        "  python3 development/scripts/verify_deployment_bot_token_rotation.py "
+        "--log-file /tmp/run.log --jobs-json /tmp/run-jobs.json"
+    )
+    out.append("")
+    out.append(
+        "Until then the deploy stays green on the ci#1042 CI-secret fallback and this "
+        "plan stays NOT ROTATED. Keep the fallback."
+    )
+    return "\n".join(out)
 
 
 def step_conclusions(jobs: Any) -> Dict[str, str]:
@@ -235,6 +328,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--observations-json",
         help="offline JSON: {\"log_lines\": [...], \"steps\": {...}} or {\"jobs\": [...]}",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="print the outstanding ci#1044 re-issue plan instead of the verdict",
+    )
     args = parser.parse_args(argv)
 
     steps: Dict[str, str] = {}
@@ -248,7 +346,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         steps = step_conclusions(json.loads(raw)) if raw.strip() else {}
 
     criteria = evaluate(log_lines, steps)
-    print(render(criteria))
+    if args.plan:
+        print(reissue_plan(log_lines, steps))
+    else:
+        print(render(criteria))
     return 0 if all(c.verdict == OK for c in criteria) else 1
 
 

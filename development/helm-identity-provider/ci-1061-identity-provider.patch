@@ -1,0 +1,159 @@
+diff --git a/backend/templates/backend.yaml b/backend/templates/backend.yaml
+index 15b4132..52924db 100644
+--- a/backend/templates/backend.yaml
++++ b/backend/templates/backend.yaml
+@@ -18,6 +18,19 @@
+ {{- fail "backend.configFile.existingSecret requires backend.configFile.existingSecretKey" }}
+ {{- end }}
+ {{- end }}
++{{- $idp := .Values.identityProvider | default dict }}
++{{- $idpEnabled := $idp.enabled | default false }}
++{{- if $idpEnabled }}
++{{- if not $idp.issuer }}
++{{- fail "identityProvider.enabled requires identityProvider.issuer" }}
++{{- end }}
++{{- if not $idp.clientID }}
++{{- fail "identityProvider.enabled requires identityProvider.clientID" }}
++{{- end }}
++{{- if not $idp.existingSecret }}
++{{- fail "identityProvider.enabled requires identityProvider.existingSecret (it holds the OIDC client secret and the identity map; never put either in values)" }}
++{{- end }}
++{{- end }}
+ apiVersion: v1
+ kind: Secret
+ metadata:
+@@ -135,6 +148,42 @@ spec:
+             - name: OPEN_CHAT_CONFIG
+               value: {{ $configFile.path | quote }}
+             {{- end }}
++            {{- if $idpEnabled }}
++            # ci#1061 - generic OIDC identity provider. Only the non-secret
++            # settings live here; the client secret and the identity-to-user
++            # bootstrap map are read from the identityProvider.existingSecret.
++            - name: OCI_IDENTITY_PROVIDER_ENABLED
++              value: "true"
++            - name: OCI_IDENTITY_PROVIDER_PRESET
++              value: {{ ($idp.preset | default "keycloak") | quote }}
++            - name: OCI_IDENTITY_PROVIDER_ISSUER
++              value: {{ $idp.issuer | quote }}
++            - name: OCI_IDENTITY_PROVIDER_CLIENT_ID
++              value: {{ $idp.clientID | quote }}
++            - name: OCI_IDENTITY_PROVIDER_REDIRECT_URL
++              value: {{ $idp.redirectURL | quote }}
++            - name: OCI_IDENTITY_PROVIDER_SCOPES
++              value: {{ ($idp.scopes | default "openid profile email") | quote }}
++            {{- if $idp.defaultRole }}
++            - name: OCI_IDENTITY_PROVIDER_DEFAULT_ROLE
++              value: {{ $idp.defaultRole | quote }}
++            {{- end }}
++            - name: OCI_IDENTITY_PROVIDER_ALLOW_UNMAPPED
++              value: {{ ($idp.allowUnmapped | default false) | toString | quote }}
++            - name: OCI_IDENTITY_PROVIDER_CLIENT_SECRET
++              valueFrom:
++                secretKeyRef:
++                  name: {{ $idp.existingSecret | quote }}
++                  key: {{ ($idp.clientSecretKey | default "client-secret") | quote }}
++            - name: OCI_IDENTITY_PROVIDER_BOOTSTRAP_JSON
++              valueFrom:
++                secretKeyRef:
++                  name: {{ $idp.existingSecret | quote }}
++                  key: {{ ($idp.bootstrapJSONKey | default "bootstrap-json") | quote }}
++                  # Optional so a deployment can start before the identity map
++                  # is known; the integration then defaults to an empty map.
++                  optional: true
++            {{- end }}
+           envFrom:
+             - secretRef:
+                 name: backend-env
+diff --git a/backend/values.msgmate-io-production.yaml b/backend/values.msgmate-io-production.yaml
+index 82c9a47..47b8928 100644
+--- a/backend/values.msgmate-io-production.yaml
++++ b/backend/values.msgmate-io-production.yaml
+@@ -62,3 +62,22 @@ postgresql:
+   external:
+     existingSecret: postgres-dsn
+     dsnKey: DB_PATH
++
++# ci#1061 - Keycloak at id.msgmate.io as the msgmate.io login provider. The
++# release stays a pure OIDC client (the IdP runs in its own namespace, so an IdP
++# restart never rolls the backend). The chart only points the backend at it; the
++# client secret and the identity-to-user map live in the
++# `open-chat-identity-provider` Secret (keys `client-secret` and
++# `bootstrap-json`), never in this file.
++#
++# allowUnmapped stays false: only identities mapped in that Secret get a local
++# account. Rollback: set `enabled: false` here and `helm upgrade` - the routes go
++# back to 404, the button disappears and password login is unaffected.
++identityProvider:
++  enabled: true
++  preset: keycloak
++  issuer: https://id.msgmate.io/realms/main
++  clientID: open-chat
++  redirectURL: https://msgmate.io/api/v1/integrations/identity_provider/login/callback
++  existingSecret: open-chat-identity-provider
++  allowUnmapped: false
+diff --git a/backend/values.msgmate-io-staging.yaml b/backend/values.msgmate-io-staging.yaml
+index 8f4dadb..28a7640 100644
+--- a/backend/values.msgmate-io-staging.yaml
++++ b/backend/values.msgmate-io-staging.yaml
+@@ -62,3 +62,22 @@ postgresql:
+   external:
+     existingSecret: postgres-dsn
+     dsnKey: DB_PATH
++
++# ci#1061 - Keycloak at id.stage.msgmate.io as the stage.msgmate.io login provider. The
++# release stays a pure OIDC client (the IdP runs in its own namespace, so an IdP
++# restart never rolls the backend). The chart only points the backend at it; the
++# client secret and the identity-to-user map live in the
++# `open-chat-identity-provider` Secret (keys `client-secret` and
++# `bootstrap-json`), never in this file.
++#
++# allowUnmapped stays false: only identities mapped in that Secret get a local
++# account. Rollback: set `enabled: false` here and `helm upgrade` - the routes go
++# back to 404, the button disappears and password login is unaffected.
++identityProvider:
++  enabled: true
++  preset: keycloak
++  issuer: https://id.stage.msgmate.io/realms/main
++  clientID: open-chat
++  redirectURL: https://stage.msgmate.io/api/v1/integrations/identity_provider/login/callback
++  existingSecret: open-chat-identity-provider
++  allowUnmapped: false
+diff --git a/backend/values.yaml b/backend/values.yaml
+index fb0c138..2238556 100644
+--- a/backend/values.yaml
++++ b/backend/values.yaml
+@@ -104,3 +104,33 @@ postgresql:
+     # password in a values file.
+     existingSecret: ""
+     dsnKey: DB_PATH
++
++# ci#1061 - generic OIDC identity provider, rendered as the "sign in with your
++# identity provider" button next to the password form. The change is additive and
++# fails closed: while `enabled` is false the chart renders no `OCI_IDENTITY_PROVIDER_*`
++# env at all, the integration's routes answer 404 and password login is untouched.
++identityProvider:
++  enabled: false
++  # keycloak | authentik | generic. Selects default scopes and claim names; all
++  # presets use standard OIDC discovery.
++  preset: keycloak
++  # OIDC issuer URL; discovery is read from <issuer>/.well-known/openid-configuration.
++  issuer: ""
++  # OIDC client id (also the ID token audience).
++  clientID: ""
++  # Exact callback URL registered at the identity provider. Set it explicitly
++  # instead of relying on request-base detection: an inexact value is the usual
++  # cause of redirect_uri_mismatch.
++  redirectURL: ""
++  # Space or comma separated; `openid` is always included.
++  scopes: "openid profile email"
++  # Role for locally created mapped users whose mapping names none.
++  # Admin-like roles also set is_admin.
++  defaultRole: ""
++  # Keep false so an identity without a mapping never gets an account.
++  allowUnmapped: false
++  # Secret holding the confidential client credentials and the identity map.
++  # Never a secret value in a values file (same rule as the postgresql block).
++  existingSecret: ""
++  clientSecretKey: client-secret
++  bootstrapJSONKey: bootstrap-json
