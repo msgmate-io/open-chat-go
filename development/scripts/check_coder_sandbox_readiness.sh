@@ -161,6 +161,20 @@ else
   note "     authoritative full-suite gate. Never shell out to raw docker commands (ci#787)."
 fi
 
+# ci#1048: the same self-check finding (ci#687) also named a missing `gh` CLI as
+# part of `sandbox_misprovisioned_workspace`. The typed GitHub tools work without
+# it, so the absence is guidance, not a hard blocker - but it must be stated with
+# the machine-readable `missing_cli:` token so a reader can tell "no CLI here"
+# apart from "the agent gave up".
+note "== github CLI (ci#1048) =="
+if command -v gh >/dev/null 2>&1; then
+  note "ok   gh CLI on PATH ($(command -v gh))"
+else
+  note "missing_cli: gh"
+  note "WARN gh is not installed in this sandbox; use the typed GitHub tools"
+  note "     (github_pr_create, github_issue_comment, ...) instead of shelling out to gh."
+fi
+
 if [ "$status" -eq 0 ]; then
   note "== ready: local targeted Go checks can run =="
 else
