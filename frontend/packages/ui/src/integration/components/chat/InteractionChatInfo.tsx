@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@open-chat-go/ui";
 import { CollapseIndicator } from "../CollapseIndicator";
+import { ChatInfoBits } from "./ChatInfoBits";
 import { ChatDetailsPanel, type ChatDetailsTabId } from "./ChatDetailsPanel";
 
 /**
@@ -199,6 +200,9 @@ export function InteractionChatInfo({
   // integration) takes precedence over the bot name in the header, mirroring
   // how the chat list labels the row.
   const chatTitle = (chat?.settings?.title || "").trim();
+  // Information bits an integration attached to this interaction (ci#1027); the
+  // server already normalizes them, the component only renders.
+  const infoBits = Array.isArray(chat?.settings?.info_bits) ? chat.settings.info_bits : [];
   // The tool catalog, the model payload and the init data all live in the
   // details tabs (ci#749); the header only keeps the toggle and the menu
   // shortcuts into a section.
@@ -304,6 +308,11 @@ export function InteractionChatInfo({
         {headerActions ? (
           <div className="mt-2 flex flex-wrap items-center justify-end gap-1 md:hidden">{headerActions}</div>
         ) : null}
+
+        {/* Per-interaction information bits (ci#1027): the context an integration
+            attached to this chat (eg the triggering GitHub issue) renders as one
+            collapsed strip below the header row on every breakpoint. */}
+        {infoBits.length > 0 ? <ChatInfoBits bits={infoBits} className="mt-2 px-0.5" /> : null}
       </Card>
 
       <ChatDetailsDialog

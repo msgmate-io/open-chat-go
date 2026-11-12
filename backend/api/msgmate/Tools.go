@@ -75,6 +75,12 @@ func init() {
 	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
 	// task; the turn reader promotes its call into `task_completed` metadata.
 	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
+	// ci#1035: `github_pr_edit` closes the gap between github_pr_create and
+	// github_pr_merge: an existing PR's title/body/state/base/labels can be
+	// edited as a typed, read-back-verified write instead of `gh pr edit` in
+	// coder_bash. Same free-name rule: an integration shipping its own
+	// `github_pr_edit` keeps ownership.
+	registerToolConstructorIfFree("github_pr_edit", nil, NewGitHubPREditTool)
 }
 
 // registerToolConstructorIfFree registers a builtin constructor only when the

@@ -266,6 +266,7 @@ var Tabels []interface{} = []interface{}{
 	&ActionTaskDismissal{},
 	&ProductLandingPageConfig{},
 	&WorkspaceLease{},
+	&EventClaim{},
 }
 
 var Migrations []Migration = []Migration{
@@ -296,6 +297,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ProductLandingPageConfig{}},
 	SeedProductLandingPageConfigsMigration{},
 	TableMigration{&WorkspaceLease{}},
+	TableMigration{&EventClaim{}},
 	GrantDefaultPermissionsMigration{},
 	// IndexMigration runs last so every table it indexes exists, and is
 	// idempotent (CREATE INDEX IF NOT EXISTS) for repeated boots (ci#850).
