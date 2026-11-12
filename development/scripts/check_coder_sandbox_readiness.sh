@@ -104,6 +104,34 @@ else
   status=1
 fi
 
+# ci#1038 acceptance: "in a fresh repo:open-chat-go sandbox, `go version && go
+# build ./...` succeeds offline after checkout". Presence, version and a cache
+# directory are only proxies for that; the original bug was an image that looked
+# provisioned while no build had ever run. So compile the tree here with the
+# network fetches disabled: GOPROXY=off turns any missing module into a hard
+# error instead of a silent download, which is exactly the offline contract the
+# sandbox image promises. Skipped (not failed) while go.work is absent, because
+# the private integration modules only resolve after the profile setup.
+if command -v go >/dev/null 2>&1 && [ -f "$root/backend/go.work" ]; then
+  if [ -d "$(go env GOMODCACHE)/cache/download" ]; then
+    note "== offline build check (GOPROXY=off, go build ./...) =="
+    build_log="$(mktemp)"
+    if ( cd "$root/backend" && GOFLAGS=-mod=mod GOPROXY=off go build ./... ) >"$build_log" 2>&1; then
+      note "ok   go build ./... succeeds offline from the warmed module cache"
+    else
+      note "MISS go build ./... fails offline in this sandbox:"
+      sed -e 's/^/     /' "$build_log" | tail -n 12
+      note "     do not report a green build: state this failure and let PR CI gate the change."
+      status=1
+    fi
+    rm -f "$build_log"
+  else
+    note "SKIP offline build check: no warmed module cache (see the MISS above)."
+  fi
+else
+  note "SKIP offline build check: needs go and backend/go.work (see the MISS lines above)."
+fi
+
 if command -v openchat-integrations >/dev/null 2>&1; then
   note "ok   openchat-integrations on PATH"
 elif [ -x "$root/.venv/bin/openchat-integrations" ]; then

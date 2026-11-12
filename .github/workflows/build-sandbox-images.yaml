@@ -161,3 +161,67 @@ jobs:
             echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
             sleep 15
           done
+
+      # ci#1038: a sandbox image without a usable Go toolchain is exactly the
+      # failure this ticket is about (`which go` -> "no go in (...)" while
+      # `git`/`gh` existed), and it was only ever noticed by an agent trying to
+      # run `go build`/`go test` in a fresh workspace - never by the image build,
+      # which happily published it. So the published image is now the thing that
+      # gets verified: run it with `--network none` and require the pinned
+      # toolchain, GOTOOLCHAIN=local and a warmed module cache, i.e. the
+      # acceptance criterion "go version && go build ./... succeeds offline".
+      - name: Verify Go toolchain in the built image
+        if: inputs.dry_run == false
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+          TEMPLATE: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          # Variants that back a coder workspace (auto_sandbox `minimal`, ci#465,
+          # and the `coding` workspace image). The other palette members are
+          # domain images (odoo/android/vnc/...) and carry no Go contract.
+          case "${TEMPLATE}" in
+            coding|minimal) : ;;
+            *) echo "no Go toolchain contract for variant ${TEMPLATE}; skipping"; exit 0 ;;
+          esac
+          # The version contract is the repo's own `go` directive: an image whose
+          # toolchain is older than backend/go.mod cannot compile the monorepo,
+          # and one that is newer only because GOTOOLCHAIN=auto fetched it cannot
+          # do so offline. Both are exactly the ci#1038 failure mode.
+          EXPECTED_GO="$(awk '$1=="go"{print $2; exit}' backend/go.mod)"
+          test -n "${EXPECTED_GO}" || { echo "::error::no 'go' directive in backend/go.mod"; exit 1; }
+          # No network: proves the module cache really is warmed, so a later
+          # `go build ./...` in a fresh sandbox cannot depend on a fetch.
+          #
+          # Scope note: the literal `go build ./...` of the monorepo cannot run
+          # here - backend/go.mod pulls private integration modules that only
+          # resolve after `build_tools.sh prepare --profile full-ci` materializes
+          # backend/go.work, and the image itself carries no checkout. The image's
+          # contract is therefore "toolchain usable offline"; the repo-level build
+          # is covered by the sandbox readiness probe
+          # (development/scripts/check_coder_sandbox_readiness.sh) and by PR CI.
+          docker run --rm --network none --entrypoint sh \
+            -e "EXPECTED_GO=${EXPECTED_GO}" \
+            -e "IMAGE_URL=${IMAGE_URL}" \
+            "${IMAGE_URL}" -c '
+            set -eu
+            command -v go >/dev/null || { echo "missing_cli: go" >&2; exit 1; }
+            go version
+            [ "$(go env GOTOOLCHAIN)" = local ] || {
+              echo "GOTOOLCHAIN=$(go env GOTOOLCHAIN); offline builds would download a toolchain" >&2
+              exit 1
+            }
+            # `go version` prints "go version go1.24.3 linux/amd64"; compare
+            # major.minor.patch numerically against backend/go.mod.
+            have="$(go env GOVERSION | sed "s/^go//")"
+            lowest="$(printf "%s\n%s\n" "${have}" "${EXPECTED_GO}" | sort -V | head -n1)"
+            [ "${lowest}" = "${EXPECTED_GO}" ] || {
+              echo "toolchain ${have} is older than the go.mod directive ${EXPECTED_GO}" >&2
+              exit 1
+            }
+            test -d "$(go env GOMODCACHE)/cache/download" || {
+              echo "no warmed module cache at $(go env GOMODCACHE)/cache/download" >&2
+              exit 1
+            }
+            echo "ok: go ${have} (>= ${EXPECTED_GO}) usable offline in ${IMAGE_URL}"
+          '

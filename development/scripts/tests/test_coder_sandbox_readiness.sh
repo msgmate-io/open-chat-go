@@ -97,6 +97,56 @@ if ! command -v gh >/dev/null 2>&1; then
   esac
 fi
 
+# 5. ci#1038 acceptance: the probe must actually exercise `go build ./...` with
+#    fetches disabled, not just look at a cache directory. Two fake toolchains
+#    drive both branches of that check hermetically (no real Go needed):
+#    a build that succeeds must be reported as ok, a build that fails must be
+#    reported as MISS so an agent cannot mistake it for a green run.
+mk_fake_root() {
+  local root="$1" build_rc="$2"
+  mkdir -p "$root/backend" "$root/development/scripts" "$root/modcache/cache/download" "$root/bin"
+  printf 'module backend\n\ngo 1.26.0\n' >"$root/backend/go.mod"
+  : >"$root/backend/go.work"
+  cp "$SCRIPT" "$root/development/scripts/check_coder_sandbox_readiness.sh"
+  cat >"$root/bin/go" <<EOF
+#!/bin/sh
+case "\$1 \$2" in
+  "env GOMODCACHE") echo "$root/modcache" ;;
+  "env GOVERSION") echo "go1.26.0" ;;
+  "env GOTOOLCHAIN") echo "local" ;;
+  *) exit ${build_rc} ;;
+esac
+EOF
+  chmod +x "$root/bin/go"
+}
+
+fake_ok="$(mktemp -d)"
+fake_bad="$(mktemp -d)"
+mk_fake_root "$fake_ok" 0
+mk_fake_root "$fake_bad" 1
+
+ok_out="$(cd "$fake_ok/backend" && PATH="$fake_ok/bin:$PATH" bash "$fake_ok/development/scripts/check_coder_sandbox_readiness.sh" "$fake_ok" 2>&1)"
+case "$ok_out" in
+  *"offline build check"*) : ;;
+  *) fail "probe must run an offline build check section (ci#1038 acceptance)" ;;
+esac
+case "$ok_out" in
+  *"ok   go build ./... succeeds offline"*) : ;;
+  *) fail "probe must report a successful offline go build as ok" ;;
+esac
+case "$ok_out" in
+  *"MISS go build ./..."*) fail "probe must not report a successful offline build as MISS" ;;
+  *) : ;;
+esac
+
+bad_out="$(cd "$fake_bad/backend" && PATH="$fake_bad/bin:$PATH" bash "$fake_bad/development/scripts/check_coder_sandbox_readiness.sh" "$fake_bad" 2>&1)"
+case "$bad_out" in
+  *"MISS go build ./... fails offline"*) : ;;
+  *) fail "probe must report a failing offline go build as MISS (ci#1038)" ;;
+esac
+
+rm -rf "$fake_ok" "$fake_bad"
+
 if [ "$failures" -ne 0 ]; then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
