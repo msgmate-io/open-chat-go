@@ -1545,6 +1545,13 @@ func createBotInteraction(
 	if toolNames, err := collectToolNames(effectiveConfig["tools"]); err == nil {
 		effectiveConfig, _ = agentdefaults.ApplyAgentInteractionDefaults(effectiveConfig, toolNames, req.Tags, req.ToolInit, req.ConfigOverrides)
 	}
+	// ci#1049: bind the server-owned tool-init pins from the dispatch trigger
+	// (`repo:`/`issue:` tags, else the post-action repo/number) and grant the
+	// pinned write tool only when such a pin exists. The reserved section is
+	// stamped after every caller-influenced config step, so no dispatch can
+	// choose (or suppress) the target of a granted write tool; without a
+	// trigger-derived target nothing is pinned and the tool is not granted.
+	effectiveConfig = applyInteractionToolInitPins(effectiveConfig, req.Tags)
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(toolInitStagePrefix, err)}
 	}

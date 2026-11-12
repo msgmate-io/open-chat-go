@@ -5,11 +5,11 @@ import (
 	"backend/apierror"
 	"backend/chatstate"
 	"backend/database"
-	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 	"net/http"
 	"strconv"
 	"strings"
@@ -97,8 +97,23 @@ type AgentDispatchRequest struct {
 	// instead of burning a second full agent (ci#625).
 	DedupeKey string `json:"dedupe_key,omitempty"`
 	// Force starts a new interaction even when DedupeKey matches a live one,
-	// for the rare case a duplicate is explicitly wanted.
-	Force               bool                   `json:"force,omitempty"`
+	// for the rare case a duplicate is explicitly wanted. It does NOT bypass
+	// the durable idempotency guard (IdempotencyKey): dedupe_key guards against
+	// a *concurrent* twin, idempotency against a *replayed event*, and a replay
+	// stays a replay even when forced (ci#1047).
+	Force bool `json:"force,omitempty"`
+	// IdempotencyKey is the durable dispatch identity of one trigger event
+	// (ci#1047), eg "issue:1047:opened". It is claimed in the event_claims
+	// ledger *before* the interaction is created, so a retried or redelivered
+	// dispatch of the same event - across restarts, replicas and timeouts -
+	// returns the already created interaction with `deduplicated: true`
+	// instead of starting a second agent. Composed with TriggerID; an empty
+	// IdempotencyKey keeps the pre-ci#1047 behaviour exactly.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// TriggerID scopes IdempotencyKey to the producer trigger that emitted the
+	// event (eg the poll_triggers row). The same key under a different trigger
+	// is a different event and dispatches normally.
+	TriggerID           string                 `json:"trigger_id,omitempty"`
 	Workspace           string                 `json:"workspace,omitempty"`
 	Sandbox             string                 `json:"sandbox,omitempty"`
 	ConfigOverrides     map[string]interface{} `json:"config_overrides,omitempty"`
@@ -272,10 +287,62 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		createReq.RequireConfirmation = *req.RequireConfirmation
 	}
 
+	// ci#1047: claim the trigger event durably *before* the side effect, so a
+	// replayed delivery (webhook redelivery, repeated cron poll, caller retry
+	// after a timeout, or the same request landing on another replica after a
+	// restart) can never start a second agent. The claim is committed to the
+	// database, so it outlives this process - unlike the live-interaction
+	// dedupe above, which only sees interactions that still exist.
+	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
+	triggerID := strings.TrimSpace(req.TriggerID)
+	if idempotencyKey != "" {
+		claim, claimed, claimErr := database.ClaimEvent(DB, database.EventClaimScopeAgentDispatch, triggerID, idempotencyKey)
+		if claimErr != nil {
+			writeBotAPIError(w, http.StatusInternalServerError, "idempotency_claim_failed", "Unable to claim the dispatch event")
+			return
+		}
+		if !claimed {
+			// The event was already claimed by an earlier (or concurrent)
+			// dispatch: return that interaction instead of starting a second
+			// agent. force=true deliberately does not bypass this - a replay is
+			// a replay. An empty chat_uuid means the winning dispatch is still
+			// in flight; the caller retries and gets the chat then.
+			respondAgentJSON(w, http.StatusOK, map[string]interface{}{
+				"success":              true,
+				"deduplicated":         true,
+				"idempotency_key":      idempotencyKey,
+				"trigger_id":           triggerID,
+				"event_claim_state":    claim.State,
+				"dedupe_key":           dedupeKey,
+				"chat_uuid":            claim.ChatUUID,
+				"bot":                  botDisplayName(runtime),
+				"bot_uuid":             runtime.UUID,
+				"acting_user_uuid":     actingUser.UUID,
+				"acting_user_username": actingUser.Username,
+				"tags":                 database.NormalizeChatTags(dispatchTags),
+			})
+			return
+		}
+	}
+
 	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, createReq, requestBaseURL(r))
 	if err != nil {
+		if idempotencyKey != "" {
+			// The dispatch did not happen, so the event stays retryable instead
+			// of being lost behind a claim for a chat that never existed.
+			if releaseErr := database.ReleaseEventClaim(DB, database.EventClaimScopeAgentDispatch, triggerID, idempotencyKey); releaseErr != nil {
+				logging.Errorf("failed to release idempotency claim for event %q: %v", idempotencyKey, releaseErr)
+			}
+		}
 		writeCreateInteractionError(w, err)
 		return
+	}
+	if idempotencyKey != "" {
+		if markErr := database.MarkEventClaimFired(DB, database.EventClaimScopeAgentDispatch, triggerID, idempotencyKey, response.ChatUUID); markErr != nil {
+			// The interaction exists: never fail the dispatch over bookkeeping,
+			// the claim simply stays "claimed" and still deduplicates replays.
+			logging.Errorf("failed to mark idempotency claim fired for event %q: %v", idempotencyKey, markErr)
+		}
 	}
 
 	view := AgentInteractionView{
