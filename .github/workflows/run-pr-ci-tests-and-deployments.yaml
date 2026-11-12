@@ -2875,6 +2875,18 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_auto_approve_stale_check_instances.py -v
 
+      # ci#1055: the `main <- dev` promotion hop is what deploys ci.msgmate.io,
+      # and it used to be the one human-gated step of the loop. The lead may
+      # merge it once its required checks are green and must then verify the
+      # deployment; both decisions live in development/scripts/promotion_hop.py
+      # as pure predicates so a stale duplicate check-run (blocker 2 of ci#1055)
+      # can never veto a green promotion, and a rollout that did not serve the
+      # promoted VERSION can never count as live.
+      - name: Promotion hop verdict unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_promotion_hop.py -v
+
       # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
       # Deployment of the CI deployment with probe_timeout_too_low,
       # probe_budget_too_short, startup_probe_missing and
