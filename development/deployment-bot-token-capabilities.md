@@ -106,6 +106,27 @@ Canary` (`repository_dispatch: live-canary`) and the log-monitoring workflow —
 this script reads run metadata, and neither mutates the cluster nor touches the
 vault.
 
+## `--plan`: the outstanding re-issue request
+
+ci#1044 is a credential task, so no code change can close it. What the scripts can
+do is keep the *request* accurate. `--plan` renders the outstanding work from a
+real run's evidence instead of only a verdict:
+
+```bash
+python3 development/scripts/verify_deployment_bot_token_rotation.py \
+    --log-file /tmp/run.log --jobs-json /tmp/run-jobs.json --plan
+```
+
+The plan prints the observed token source, the vault rejection status with its
+status-specific guidance (`401` = dead credential, re-issue; `403` = capability or
+rate limit; `404` = the token's selected-repositories list excludes
+`msgmate-io/open-chat-go`), the two profiles whose `BOT_TOKEN` item has to be
+rewritten, the capability set the replacement must carry, and the two commands that
+prove it (capability check before storing, rotation verdict after the next
+deployment). It reports `No re-issue outstanding` only when the same run already
+satisfies all three acceptance criteria, and it never sees a credential, so a plan
+cannot leak one.
+
 ## Re-issuing the vault `BOT_TOKEN` (maintainer procedure)
 
 The rotation itself is a credential action on the vault and cannot be done from
