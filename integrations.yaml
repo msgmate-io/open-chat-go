@@ -58,9 +58,13 @@ profiles:
     - rest_api_tool
     - go_client
     - community_coder
-    # `open-chat code` is the coder alias for the TUI; a profile that ships a
-    # coder integration also ships the terminal client so the alias is usable.
-    - tui
+    # NOTE: `tui` must not be listed here. The TUI is a *private* integration;
+    # its profile membership is contributed by the private manifest fragment
+    # (`development/ci/openchat/integrations.private.yaml`), which adds it to
+    # `default`. A public-only build (android/release, no fragment) does not
+    # know the id and aborts with
+    # `profile 'community-coder' references unknown integration 'tui'`.
+    # See open-chat-go-ci#1058.
 
 integrations:
   community_coder:
