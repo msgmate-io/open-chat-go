@@ -70,6 +70,33 @@ bash "$SCRIPT" "$empty_root/nope" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 2 ] || fail "a missing repo root must exit 2 (got $rc)"
 
+# 4. ci#1048: the same self-check finding that reported a misprovisioned coder
+#    workspace (ci#687) also named a missing `gh` CLI. The probe must always
+#    report on it, either as available or with the machine-readable
+#    `missing_cli: gh` token, so a reader can tell it apart from an agent that
+#    simply gave up.
+case "$out" in
+  *"github CLI (ci#1048)"*) : ;;
+  *) fail "probe output must contain the github CLI section (ci#1048)" ;;
+esac
+
+fake_bin="$(mktemp -d)"
+trap 'rm -rf "$empty_root" "$fake_bin"' EXIT
+printf '#!/bin/sh\nexit 0\n' >"$fake_bin/gh"
+chmod +x "$fake_bin/gh"
+gh_out="$(PATH="$fake_bin:$PATH" bash "$SCRIPT" "$empty_root" 2>&1)"
+case "$gh_out" in
+  *"ok   gh CLI on PATH"*) : ;;
+  *) fail "probe must report a resolvable gh CLI as ok" ;;
+esac
+
+if ! command -v gh >/dev/null 2>&1; then
+  case "$out" in
+    *"missing_cli: gh"*) : ;;
+    *) fail "probe must emit missing_cli: gh when gh is absent" ;;
+  esac
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1

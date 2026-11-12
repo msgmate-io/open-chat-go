@@ -1,6 +1,9 @@
 package agentdefaults
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Task-repo reconciliation (ci#687, surfaced by the native-coder self-check
 // suite ci#622).
@@ -36,7 +39,24 @@ const (
 	WorkspaceRepoConfigKey = "git_repo"
 	// TaskRepoTagPrefix marks a dispatch tag that names the task repository.
 	TaskRepoTagPrefix = "repo:"
+	// AutoSandboxConfigKey is the selector init key asking the sandbox backend
+	// for a fresh per-chat workspace instead of reattaching an existing one.
+	AutoSandboxConfigKey = "auto_sandbox"
 )
+
+// WorkspaceIdentityConfigKeys are the `coder_select_workspace` init payload keys
+// that name an *already provisioned* sandbox workspace instead of a repository
+// to clone. A stored role-bot pin may carry both a stale git_repo and a stale
+// workspace identity; rewriting only git_repo would leave the identity in place
+// and the selector would keep handing the agent the pre-selected monorepo
+// checkout (ci#1048, the remaining half of ci#687).
+var WorkspaceIdentityConfigKeys = []string{
+	"workspace",
+	"workspace_uuid",
+	"workspace_id",
+	"sandbox_workspace_uuid",
+	"sandbox_uuid",
+}
 
 // TaskRepoFromTags returns the canonical `owner/name` slug named by the dispatch
 // tags, or "" when the dispatch does not name a task repo.
@@ -131,18 +151,33 @@ func RepoPrefix(reference string) string {
 // (the request's tool_init) is passed separately so an explicit selection is
 // always left alone, and a config without a contradicting pin is returned
 // unchanged.
+//
+// ci#1048: a stored pin that names a *provisioned workspace* (auto_sandbox
+// selection, workspace_uuid, ...) is equally contradicting - the selector then
+// hands the agent the pre-provisioned monorepo checkout and never clones the
+// task repo, which is how the development-lead role failed the ci#622 selfcheck
+// with `sandbox_misprovisioned_workspace`. Such a pin is reconciled by pinning
+// the task repo and dropping the stale workspace identity, so provisioning
+// clones the task repository instead of reattaching the wrong checkout.
 func ReconcileTaskRepo(config map[string]interface{}, tags []string, explicitToolInit map[string]interface{}) map[string]interface{} {
 	taskRepo := TaskRepoFromTags(tags)
 	if taskRepo == "" || config == nil {
 		return config
 	}
 	stored := pinnedWorkspaceRepo(config)
-	if RepoSlug(stored) == "" || RepoSlug(stored) == taskRepo {
-		// Nothing pinned, or already the task repo: leave it to the ordinary
-		// seeding path.
+	storedSelector := selectorOf(config)
+	explicitSelector := selectorOf(map[string]interface{}{ToolInitConfigKey: explicitToolInit})
+	repoKnown := RepoSlug(stored) != ""
+	if repoKnown && RepoSlug(stored) == taskRepo {
+		// Already the task repo: leave it to the ordinary seeding path.
 		return config
 	}
-	if RepoSlug(pinnedWorkspaceRepo(map[string]interface{}{ToolInitConfigKey: explicitToolInit})) != "" {
+	if !repoKnown && !pinsProvisionedWorkspace(storedSelector) {
+		// Nothing pinned at all: the ordinary seeding path pins the task repo.
+		return config
+	}
+	if pinsProvisionedWorkspace(explicitSelector) ||
+		RepoSlug(pinnedWorkspaceRepo(map[string]interface{}{ToolInitConfigKey: explicitToolInit})) != "" {
 		// The caller pinned the workspace for this interaction explicitly.
 		return config
 	}
@@ -151,18 +186,96 @@ func ReconcileTaskRepo(config map[string]interface{}, tags []string, explicitToo
 	for key, value := range config {
 		out[key] = value
 	}
+	reconciledSelector := make(map[string]interface{}, len(storedSelector))
+	for key, value := range storedSelector {
+		reconciledSelector[key] = value
+	}
+	prefix := RepoPrefix(stored)
+	if !repoKnown {
+		prefix = RepoPrefix(taskRepo)
+	}
+	reconciledSelector[WorkspaceRepoConfigKey] = prefix + taskRepo
+	// The stale identity is what keeps the agent attached to the wrong
+	// checkout; the task repo pin above wins only if it is dropped.
+	for _, key := range WorkspaceIdentityConfigKeys {
+		delete(reconciledSelector, key)
+	}
+	reconciledInit := make(map[string]interface{}, len(toolInitOf(config)))
 	toolInit, _ := config[ToolInitConfigKey].(map[string]interface{})
-	reconciledInit := make(map[string]interface{}, len(toolInit))
 	for key, value := range toolInit {
 		reconciledInit[key] = value
 	}
-	selector, _ := toolInit[WorkspaceSelectorTool].(map[string]interface{})
-	reconciledSelector := make(map[string]interface{}, len(selector))
-	for key, value := range selector {
-		reconciledSelector[key] = value
-	}
-	reconciledSelector[WorkspaceRepoConfigKey] = RepoPrefix(stored) + taskRepo
 	reconciledInit[WorkspaceSelectorTool] = reconciledSelector
 	out[ToolInitConfigKey] = reconciledInit
 	return out
+}
+
+// selectorOf returns the `tool_init.<selector>` sub-map of a config, or nil.
+func selectorOf(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	selector, _ := toolInitOf(config)[WorkspaceSelectorTool].(map[string]interface{})
+	return selector
+}
+
+// toolInitOf returns the `tool_init` sub-map of a config, or nil.
+func toolInitOf(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	toolInit, _ := config[ToolInitConfigKey].(map[string]interface{})
+	return toolInit
+}
+
+// pinsProvisionedWorkspace reports whether a workspace selector names an already
+// provisioned sandbox workspace instead of a repository to clone: either an
+// identity key is set, or the payload asks for `auto_sandbox` without naming a
+// repository (the shape a role bot ends up with after it once selected a
+// workspace by hand).
+func pinsProvisionedWorkspace(selector map[string]interface{}) bool {
+	if len(selector) == 0 {
+		return false
+	}
+	for _, key := range WorkspaceIdentityConfigKeys {
+		if value, ok := selector[key]; ok && strings.TrimSpace(stringOfAny(value)) != "" {
+			return true
+		}
+	}
+	if auto, ok := selector[AutoSandboxConfigKey]; ok && truthy(auto) &&
+		strings.TrimSpace(stringOfAny(selector[WorkspaceRepoConfigKey])) == "" {
+		return true
+	}
+	return false
+}
+
+// stringOfAny renders a JSON-ish selector value as a trimmed string.
+func stringOfAny(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case nil:
+		return ""
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
+	}
+}
+
+// truthy reports whether a JSON-ish selector value means "yes".
+func truthy(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "on":
+			return true
+		}
+		return false
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	}
+	return false
 }
