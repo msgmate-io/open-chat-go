@@ -225,6 +225,33 @@ func TestNoLegacyIdentityProviderRepoReferences(t *testing.T) {
 		"frontend_assets": true, ".integrations": true, "vendor": true,
 	}
 
+	// generatedPaths are not repository content: `openchat-integrations sync`
+	// materializes them from the (private) integration manifests at build time,
+	// so they are gitignored here and are not ours to police. The rename of the
+	// integration *there* - the private `development/ci` manifest key still
+	// spells the legacy name - happens in the ci repository (see
+	// development/scripts/migrate-identity-provider-integration.sh). Scanning
+	// those paths would only report artefacts of the machine the test happens
+	// to run on, which is why the guard used to fail in CI while passing on a
+	// tree where the integration had never been synced.
+	generatedPaths := []string{
+		filepath.Join("backend", "go.work"),
+		filepath.Join("backend", "go.work.sum"),
+		filepath.Join("backend", "integrations", "externalintegrations", "imports_gen.go"),
+		filepath.Join("backend", "integrations", "externalintegrations", "sources_gen.go"),
+		filepath.Join("development", "ci"),
+		filepath.Join("development", "helm"),
+	}
+
+	isGenerated := func(rel string) bool {
+		for _, generated := range generatedPaths {
+			if rel == generated || strings.HasPrefix(rel, generated+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// These two files are the detectors themselves: they have to spell the
 	// legacy name out in order to look for it.
 	guardFiles := map[string]bool{
@@ -237,17 +264,21 @@ func TestNoLegacyIdentityProviderRepoReferences(t *testing.T) {
 		if err != nil {
 			return nil
 		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
 		if d.IsDir() {
 			if path == root {
 				return nil
 			}
 			name := d.Name()
-			if skipDirs[name] || (strings.HasPrefix(name, ".") && name != ".github") {
+			if skipDirs[name] || (strings.HasPrefix(name, ".") && name != ".github") || isGenerated(rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if guardFiles[d.Name()] {
+		if isGenerated(rel) || guardFiles[d.Name()] {
 			return nil
 		}
 		info, err := d.Info()
@@ -259,10 +290,6 @@ func TestNoLegacyIdentityProviderRepoReferences(t *testing.T) {
 			return nil
 		}
 		if strings.Contains(string(content), legacyIdentityRepoNames) {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				rel = path
-			}
 			offenders = append(offenders, rel)
 		}
 		return nil
