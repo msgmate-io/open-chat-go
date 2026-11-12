@@ -1,0 +1,30 @@
+# Sandbox stack for the `identity_provider` integration (ci#1052).
+#
+# Brings up a throw-away Keycloak with a pre-seeded realm so the OIDC login flow
+# can be exercised end to end without any LLM call and without a real IdP.
+# Everything in here is a disposable sandbox credential, never a real secret.
+#
+#   docker compose -f development/sandbox/identity_provider/docker-compose.yaml up -d
+#   python3 development/sandbox/identity_provider/verify_login.py
+#   docker compose -f development/sandbox/identity_provider/docker-compose.yaml down -v
+name: open-chat-identity-provider-sandbox
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: sandbox-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: sandbox-admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realm:/opt/keycloak/data/import:ro
+    healthcheck:
+      # The readiness endpoint only answers once the imported realm is live.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q 'UP'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
