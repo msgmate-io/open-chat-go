@@ -47,6 +47,10 @@ REALM_FILE = Path("development") / "identity-provider" / "realm" / "msgmate-io-m
 CHART_PATCH = Path("development") / "helm-identity-provider" / "ci-1061-identity-provider.patch"
 RUNBOOK = Path("development") / "identity-provider" / "README.md"
 
+# The rendered IdP deployment (see development/identity-provider/render_keycloak_manifests.py).
+DEPLOYMENT_DIR = Path("development") / "identity-provider" / "deploy"
+SANDBOX_COMPOSE = Path("development") / "sandbox" / "identity_provider" / "docker-compose.yaml"
+
 # The realm both environments authenticate against. Keycloak issuers end in
 # /realms/<realm>, so the realm name is part of the issuer contract.
 REALM_NAME = "main"
@@ -158,6 +162,166 @@ def _environment_name(value_file_suffix: str) -> str:
 
 def _truthy(value: str | None) -> bool:
     return str(value).strip().lower() in {"true", "yes", "on", "1"}
+
+
+def _read_text(path: Path) -> str:
+    """Read a repository file, returning "" when it is absent.
+
+    A missing artifact must fail the contract with a readable message rather than
+    raise, because the usual cause is "the renderer was never run".
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+# Env vars whose value must come from a Secret. `KC_DB_PASSWORD` and the bootstrap
+# admin password are the two the deployment needs, and ci#1061 must never commit
+# a credential, so a plain `value:` next to one of these is a hard failure.
+SECRET_ENV_RE = re.compile(r"(?i)(password|secret|token|credential)")
+ENV_NAME_RE = re.compile(r"^\s*-\s+name:\s*([A-Za-z0-9_]+)\s*$")
+ENV_VALUE_RE = re.compile(r"^\s+value:\s*(.*?)\s*$")
+IMAGE_RE = re.compile(r"^\s*(?:image|-?\s*image):\s*([^\s#]+)", re.MULTILINE)
+
+
+def deployment_image(manifest: str) -> str:
+    match = IMAGE_RE.search(manifest)
+    return match.group(1) if match else ""
+
+
+def sandbox_image(compose: str) -> str:
+    in_keycloak = False
+    for line in compose.splitlines():
+        stripped = line.strip()
+        if re.match(r"^keycloak:\s*$", stripped):
+            in_keycloak = True
+            continue
+        if in_keycloak:
+            match = re.match(r"^image:\s*([^\s#]+)", stripped)
+            if match:
+                return match.group(1)
+            if stripped and not stripped.startswith("#") and line.startswith("  ") and not line.startswith("    "):
+                in_keycloak = False
+    return ""
+
+
+def inline_secret_envs(manifest: str) -> list[str]:
+    """Return env vars that look secret-bearing but carry an inline ``value``."""
+
+    offenders: list[str] = []
+    current: str | None = None
+    for line in manifest.splitlines():
+        name = ENV_NAME_RE.match(line)
+        if name:
+            current = name.group(1)
+            continue
+        value = ENV_VALUE_RE.match(line)
+        if value and current and SECRET_ENV_RE.search(current):
+            if value.group(1).strip():
+                offenders.append(current)
+        if line.strip() and not line.startswith(" "):
+            current = None
+    return offenders
+
+
+def evaluate_deployment(
+    manifests: dict[str, str],
+    sandbox_compose: str,
+) -> Findings:
+    """Check the rendered IdP deployments against the issuer contract.
+
+    The realm/chart half of ci#1061 already pins what the *client* side expects.
+    This half pins what the *deployment* must supply for those values to work: the
+    issuer host in ``KC_HOSTNAME``, TLS on that host, the realm import, and no
+    committed credential.
+    """
+
+    findings = Findings()
+    deployed_images: dict[str, str] = {}
+
+    for environment in sorted(ENVIRONMENTS):
+        app_host, idp_host = ENVIRONMENTS[environment]
+        manifest = manifests.get(environment, "")
+        if not manifest.strip():
+            findings.fail(
+                f"{environment}: missing rendered identity provider deployment "
+                f"(development/identity-provider/deploy/keycloak-msgmate-io-{environment}.yaml) - "
+                "run development/identity-provider/render_keycloak_manifests.py --write"
+            )
+            continue
+
+        # The issuer the chart points at is https://<idp host>/realms/<realm>; Keycloak
+        # only announces that issuer when KC_HOSTNAME names the same host.
+        expected_kc_hostname = f"https://{idp_host}"
+        if "KC_HOSTNAME" not in manifest or expected_kc_hostname not in manifest:
+            findings.fail(
+                f"{environment}: KC_HOSTNAME must be {expected_kc_hostname!r} - any other value "
+                f"makes the ID token issuer differ from the chart's issuer and every login fails"
+            )
+        if "KC_HOSTNAME_STRICT" not in manifest:
+            findings.fail(
+                f"{environment}: set KC_HOSTNAME_STRICT so a Host-rewriting proxy cannot change the issuer"
+            )
+        if not re.search(r"^\s*args:\s*\[[^\]]*\"--import-realm\"", manifest, re.MULTILINE):
+            findings.fail(
+                f"{environment}: the deployment must start with --import-realm, otherwise the "
+                f"committed realm template never reaches the cluster"
+            )
+        for required in ("kind: Deployment", "kind: Service", "kind: Ingress", "kind: NetworkPolicy"):
+            if required not in manifest:
+                findings.fail(f"{environment}: the deployment is missing a {required.split(': ')[1]}")
+
+        # TLS on the issuer host, because sslRequired: external and because the
+        # backend refuses to talk to a plaintext issuer.
+        if f"- {idp_host}" not in manifest:
+            findings.fail(f"{environment}: the Ingress must serve the issuer host {idp_host!r} over TLS")
+        if app_host in manifest and idp_host not in manifest:
+            findings.fail(
+                f"{environment}: the identity provider must not be served on the application host"
+            )
+
+        offenders = inline_secret_envs(manifest)
+        if offenders:
+            findings.fail(
+                f"{environment}: {sorted(set(offenders))} carry an inline value - "
+                "credentials belong in a Secret referenced with secretKeyRef"
+            )
+        if re.search(r"^kind:\s*Secret\s*$", manifest, re.MULTILINE):
+            findings.fail(
+                f"{environment}: the rendered deployment must not contain a Secret manifest - "
+                "the operator creates keycloak-db / keycloak-admin out of band"
+            )
+        for secret_name in sorted(set(re.findall(r"secretKeyRef:\s*\n\s*name:\s*([A-Za-z0-9.-]+)", manifest))):
+            findings.note(f"{environment}: credential from Secret {secret_name!r}")
+        if PLACEHOLDER_SECRET in manifest:
+            findings.fail(
+                f"{environment}: the realm's client-secret placeholder must not be baked into the "
+                "deployment - the Secret carries the real value"
+            )
+
+        deployed_images[environment] = deployment_image(manifest)
+        findings.note(
+            f"{environment}: {deployment_image(manifest) or 'NO IMAGE'} serving https://{idp_host}, "
+            f"issuer https://{idp_host}/realms/{REALM_NAME}"
+        )
+
+    images = {image for image in deployed_images.values() if image}
+    if len(images) > 1:
+        findings.fail(
+            f"staging and production must run the same identity provider image, got {sorted(images)}"
+        )
+    image = next(iter(images), "")
+    sandbox = sandbox_image(sandbox_compose)
+    if image and sandbox and image != sandbox:
+        findings.fail(
+            f"the deployed identity provider image {image!r} differs from the sandbox "
+            f"{sandbox!r} - the login flow proven locally is not the one being deployed"
+        )
+    if image and not sandbox:
+        findings.fail("could not read the keycloak image from the sandbox compose file")
+
+    return findings
 
 
 def evaluate(realm: dict, chart_environments: dict[str, dict[str, str]]) -> Findings:
@@ -299,6 +463,15 @@ def check_repository(root: Path = ROOT) -> Findings:
     findings = evaluate(realm, parse_chart_patch(patch))
     if not (root / RUNBOOK).is_file():
         findings.fail(f"missing deployment runbook {RUNBOOK.name}")
+    deployment = evaluate_deployment(
+        {
+            environment: _read_text(root / DEPLOYMENT_DIR / f"keycloak-msgmate-io-{environment}.yaml")
+            for environment in ENVIRONMENTS
+        },
+        _read_text(root / SANDBOX_COMPOSE),
+    )
+    findings.extend(deployment)
+    findings.notes.extend(deployment.notes)
     return findings
 
 
