@@ -126,6 +126,99 @@ func TestReconcileTaskRepoNoOpCases(t *testing.T) {
 	})
 }
 
+// ci#1048: the development-lead role failed the ci#622 selfcheck with
+// `sandbox_misprovisioned_workspace` because its stored pin named an *already
+// provisioned* workspace (auto_sandbox / workspace_uuid), so the selector
+// reattached the pre-selected monorepo checkout instead of cloning the task
+// repo. Reconciliation must rewrite the repo AND drop the stale identity.
+func TestReconcileTaskRepoDropsStaleWorkspaceIdentity(t *testing.T) {
+	taskTags := []string{"repo:msgmate-io/open-chat-go"}
+
+	t.Run("stale identity next to a stale repo pin", func(t *testing.T) {
+		config := storedPinnedConfig("https://github.com/msgmate-io/msgmate-coder-mcp")
+		selector := selectorOf(config)
+		selector["workspace_uuid"] = "0a4ae1e6-105d-411e-a084-9e21977fa42d"
+
+		reconciled := ReconcileTaskRepo(config, taskTags, nil)
+
+		if got, want := pinnedRepoOf(t, reconciled), "https://github.com/msgmate-io/open-chat-go"; got != want {
+			t.Fatalf("reconciled pin = %q, want %q", got, want)
+		}
+		if got := selectorOf(reconciled)["workspace_uuid"]; got != nil {
+			t.Fatalf("stale workspace identity survived reconciliation: %#v", got)
+		}
+		// the input config is never mutated
+		if got := selectorOf(config)["workspace_uuid"]; got != "0a4ae1e6-105d-411e-a084-9e21977fa42d" {
+			t.Fatalf("input config was mutated: %#v", got)
+		}
+	})
+
+	t.Run("provisioned workspace pin without a repo", func(t *testing.T) {
+		config := map[string]interface{}{
+			ToolInitConfigKey: map[string]interface{}{
+				WorkspaceSelectorTool: map[string]interface{}{
+					"auto_sandbox":   true,
+					"workspace_uuid": "afad9eba-8bab-429d-895a-4da76b1fdc49",
+				},
+			},
+		}
+
+		reconciled := ReconcileTaskRepo(config, taskTags, nil)
+
+		if got, want := pinnedRepoOf(t, reconciled), "https://github.com/msgmate-io/open-chat-go"; got != want {
+			t.Fatalf("reconciled pin = %q, want %q", got, want)
+		}
+		selector := selectorOf(reconciled)
+		for _, key := range WorkspaceIdentityConfigKeys {
+			if value, ok := selector[key]; ok {
+				t.Fatalf("stale identity key %q survived: %#v", key, value)
+			}
+		}
+		if selector[AutoSandboxConfigKey] != true {
+			t.Fatalf("auto_sandbox flag was dropped: %#v", selector)
+		}
+	})
+
+	t.Run("identity without repo is left alone when no task repo is named", func(t *testing.T) {
+		config := map[string]interface{}{
+			ToolInitConfigKey: map[string]interface{}{
+				WorkspaceSelectorTool: map[string]interface{}{
+					"workspace_uuid": "afad9eba-8bab-429d-895a-4da76b1fdc49",
+				},
+			},
+		}
+		if got := ReconcileTaskRepo(config, []string{"branch:dev"}, nil); len(got) != 1 {
+			t.Fatalf("config without a task repo was rewritten: %#v", got)
+		}
+	})
+
+	t.Run("caller reattached a workspace explicitly", func(t *testing.T) {
+		config := storedPinnedConfig("https://github.com/msgmate-io/msgmate-coder-mcp")
+		explicit := map[string]interface{}{
+			WorkspaceSelectorTool: map[string]interface{}{
+				"workspace_uuid": "afad9eba-8bab-429d-895a-4da76b1fdc49",
+			},
+		}
+
+		reconciled := ReconcileTaskRepo(config, taskTags, explicit)
+
+		if got, want := pinnedRepoOf(t, reconciled), "https://github.com/msgmate-io/msgmate-coder-mcp"; got != want {
+			t.Fatalf("explicit caller workspace pin was overridden: %q", got)
+		}
+	})
+
+	t.Run("empty identity value is not a pin", func(t *testing.T) {
+		config := map[string]interface{}{
+			ToolInitConfigKey: map[string]interface{}{
+				WorkspaceSelectorTool: map[string]interface{}{"workspace_uuid": "   "},
+			},
+		}
+		if got := ReconcileTaskRepo(config, taskTags, nil); len(got) != 1 {
+			t.Fatalf("blank identity was treated as a pin: %#v", got)
+		}
+	})
+}
+
 // ci#622: the rewrite keeps the host the stored pin was written with, so a
 // non-github or ssh-scp workspace selection is not silently moved.
 func TestReconcileTaskRepoKeepsConfiguredHost(t *testing.T) {

@@ -113,9 +113,14 @@ type AgentDispatchRequest struct {
 	// TriggerID scopes IdempotencyKey to the producer trigger that emitted the
 	// event (eg the poll_triggers row). The same key under a different trigger
 	// is a different event and dispatches normally.
-	TriggerID           string                 `json:"trigger_id,omitempty"`
-	Workspace           string                 `json:"workspace,omitempty"`
-	Sandbox             string                 `json:"sandbox,omitempty"`
+	TriggerID string `json:"trigger_id,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Sandbox   string `json:"sandbox,omitempty"`
+	// SandboxUUID binds the interaction to an already provisioned sandbox the
+	// agent attaches to instead of creating a fresh one (ci#1060). It is
+	// recorded in `agent_dispatch` metadata so a later `continue` keeps working
+	// in the very same sandbox instead of restarting from a new one.
+	SandboxUUID         string                 `json:"sandbox_uuid,omitempty"`
 	ConfigOverrides     map[string]interface{} `json:"config_overrides,omitempty"`
 	ToolInit            map[string]interface{} `json:"tool_init,omitempty"`
 	RequireConfirmation *bool                  `json:"require_confirmation,omitempty"`
@@ -1151,6 +1156,9 @@ func agentDispatchMeta(req AgentDispatchRequest) map[string]interface{} {
 	}
 	if value := strings.TrimSpace(req.Sandbox); value != "" {
 		meta["sandbox"] = value
+	}
+	if value := strings.TrimSpace(req.SandboxUUID); value != "" {
+		meta["sandbox_uuid"] = value
 	}
 	return meta
 }
