@@ -23,6 +23,10 @@ const (
 	TurnEndedCancelled         = "cancelled"
 	TurnEndedNoUsableCall      = "no_usable_tool_call"
 	TurnEndedConfirmablePause  = "confirmable_pause"
+	// TurnEndedEmptyFinalText is recorded when a turn ran tool calls but
+	// settled without any final assistant text, even after the single
+	// synthetic summary nudge (ci#1065).
+	TurnEndedEmptyFinalText = "empty_final_text"
 )
 
 // TurnOutcome records how a native coder turn ended and what its tool-call
@@ -49,6 +53,10 @@ type TurnOutcome struct {
 	// sent (ci#680), so the reader can surface it as `context_budget` metadata
 	// and the `coder_context` tool can answer with the turn's real numbers.
 	Context ContextUsageReport
+	// EmptyFinalStreak is the interaction state of ci#1065: how many turns of
+	// the interaction in a row ended without a final summary, including this
+	// one. AutoContinue reads it to report a streak instead of retrying.
+	EmptyFinalStreak int
 }
 
 // reason returns the recorded reason, or the completed default for a nil outcome.
@@ -212,6 +220,8 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 		return "It was stopped before it produced a final answer. The work already done is kept - send another message to continue from here."
 	case TurnEndedConfirmablePause:
 		return "It is waiting for you to confirm an action before it continues."
+	case TurnEndedEmptyFinalText:
+		return "The turn ended after tool calls without a final summary."
 	default:
 		return "The model returned no text for this turn. The work already done is kept - send another message to continue from here."
 	}
