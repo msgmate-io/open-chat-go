@@ -115,6 +115,12 @@ echo "$OUT" | grep -q "Integration module CI passed for $FAKE_ROOT/clients/integ
   || fail "script did not report success for the full path:\n$OUT"
 # Three levels below the root is exactly the depth `../../../backend` needs.
 [ -d "$FAKE_ROOT/clients/integrations" ] || fail "expected parents of the workspace path to exist"
+# The module's `replace backend => ../../../backend` must land back on the repo
+# root - i.e. inside the workspace - which is only true at the full depth.
+mkdir -p "$FAKE_ROOT/backend"
+RESOLVED="$(cd "$FAKE_ROOT/clients/integrations/demo_integration" && cd ../../../backend && pwd)"
+[ "$RESOLVED" = "$FAKE_ROOT/backend" ] \
+  || fail "'../../../backend' resolved to $RESOLVED, not $FAKE_ROOT/backend (ci#1075)"
 
 # --- case 2: an absolute workspace path is used as given --------------------
 mkdir -p "$TMP/outside"
