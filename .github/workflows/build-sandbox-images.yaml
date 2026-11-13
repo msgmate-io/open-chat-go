@@ -161,3 +161,25 @@ jobs:
             echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
             sleep 15
           done
+
+      # ci#1062 (image half of ci#1038): a green build only proves the Dockerfile
+      # ran, not that the *published* image can build Go. Probe the image that was
+      # just pushed: `go` must resolve for login and non-login shells,
+      # GOTOOLCHAIN must be local, $GOMODCACHE/cache/download must be populated,
+      # and the toolchain must be >= backend/go.mod. The evidence is posted to the
+      # job summary so it can be quoted on the ticket.
+      - name: Verify coding image Go contract
+        if: matrix.variant == 'coding' && inputs.dry_run == false
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Coding sandbox image Go contract (ci#1062)"
+            echo '```'
+            bash development/scripts/check_sandbox_coding_image_go.sh \
+              --image "${IMAGE_URL}" "${GITHUB_WORKSPACE}" || rc=$?
+            echo '```'
+            echo "image: \`${IMAGE_URL}\`"
+            exit "${rc:-0}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
