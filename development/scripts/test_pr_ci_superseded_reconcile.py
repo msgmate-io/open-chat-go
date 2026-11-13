@@ -397,7 +397,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(
             out.get("replacement_run"),
             NEWER - 2,
-            "the newest non-cancelled run that carries the gate job owns the verdict",
+            "the newest non-cancelled run that owns the verdict",
         )
         self.assertEqual(
             self.cancelled,
