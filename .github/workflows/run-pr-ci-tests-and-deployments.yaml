@@ -4292,6 +4292,8 @@ jobs:
           ${commit_lines}
 
           Label policy: feature PRs target \`dev\` with \`test\` only; consolidation PRs (\`chore/consolidate-*\`) target \`dev\` with \`test\`,\`e2e\`; this promotion PR is the only one carrying \`deploy\` and \`sandbox-test\`.
+
+          Merge policy (ci#1066): the \`main\` ruleset requires one approving review from a reviewer with write access. Only a configured \`CONSOLIDATE_APPROVER_TOKEN\` for a write-access identity (or a ruleset bypass actor for the automation identity) satisfies that automatically; without one this PR stays green while the auto-approve run reports "awaiting maintainer merge" and a maintainer merges it.
           EOF
           )"
           else
