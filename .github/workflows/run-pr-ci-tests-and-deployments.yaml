@@ -2553,7 +2553,7 @@ jobs:
           # by construction and this guard would re-dye the gate red right after a
           # supersede was adopted above. Keep it for every non-superseded run (an
           # untested tree must never look mergeable) and skip it only when this run
-          # was accepted as superseded, i.e. a newer same-SHA run carries the gate.
+          # was accepted as superseded, i.e. a newer same-SHA run owns the verdict.
           if [ "${superseded_accepted}" != "true" ] &&
              cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."

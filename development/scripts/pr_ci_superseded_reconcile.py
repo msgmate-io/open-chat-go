@@ -498,7 +498,8 @@ def reconcile(args, token, out=None):
             # ci#1069: yielding is not a verdict, but it is also not a reason to
             # dye the gate red for a commit whose real verdict is being produced
             # by the run we just handed the group to. Accept iff that run is a
-            # newer, non-cancelled, gate-carrying attempt for the same SHA: its
+            # newer, non-cancelled attempt for the same SHA that owns the verdict
+            # (see `yielded_gate_carrier` - ownership, not gate-job presence): its
             # `PR Test Merge Requirement` check is newer than ours and therefore
             # the one branch protection evaluates, while our red check would be a
             # stale duplicate for a tree with zero executed steps. A hand-cancel,
