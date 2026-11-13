@@ -307,19 +307,61 @@ def gate_verdict(runs, repo, token):
 
 
 def yielded_gate_carrier(repo, runs, current_run_id, token):
-    """Newest newer, non-cancelled run that actually contains the gate job.
+    """Newest newer, non-superseded run that demonstrably owns the verdict.
 
     This is the ci#1069 acceptance test for a *yielded* run: the run this one
     handed the concurrency group to must be a real gating attempt for the same
-    commit. A queued run already lists its jobs (`status: queued`, no
-    conclusion), so the gate job is visible before it starts - which is what
-    separates a starved PR CI replacement from the `closed`-event deployment
-    runs of the same SHA (no gate job, cannot testify) and from a run whose gate
-    job was itself cancelled (also cannot testify). Anything else fails closed.
+    commit, so that its own `PR Test Merge Requirement` check - newer than ours -
+    is the commit's verdict.
+
+    A replacement that has not FINISHED can only be judged on what it has not
+    given up: a gate job already concluded *superseded* (cancelled/stale) can
+    never testify, and neither can the `closed`-event deployment runs of the same
+    SHA - which need no special case, because they only exist once the PR is
+    closed or the head moved, and both are accepted at the top of `reconcile`
+    before a yield is ever considered. Job *presence* is explicitly not the test:
+    GitHub materialises a `needs`-gated job lazily, so a freshly handed-over run
+    lists no gate job yet (see the ci#1069 note on PR #52 below).
+
+    A run that has FINISHED is judged on its gate conclusion, which must be a
+    real verdict.
+
+    Anything else fails closed.
     """
     newer = [r for r in runs if (r.get("id") or 0) > current_run_id]
     for run in sorted(newer, key=lambda r: r.get("id") or 0, reverse=True):
         if is_superseded(run.get("conclusion")):
+            continue
+        # ci#1069 regression, measured live on PR #52: run 43354888370 was already
+        # `in_progress` with 27 jobs listed and NO `PR Test Merge Requirement` job
+        # at all (GitHub creates a `needs`-gated job lazily; it appeared minutes
+        # later). Requiring the gate job to be *visible* therefore made this
+        # function return None, exit 5 dyed the gate red, and the exact 3-4-run
+        # burst this module exists for still failed - for a commit whose real
+        # verdict was already being produced by that very run.
+        if run.get("status") != "completed":
+            jobs = list(api_pages(repo, "/actions/runs/%s/jobs" % run.get("id"), token))
+            gate_outcomes = [
+                job.get("conclusion")
+                for job in jobs
+                if (job.get("name") or "") == GATE_JOB_NAME
+            ]
+            if gate_outcomes:
+                # A gate job that already concluded superseded can never testify;
+                # one that has not concluded yet will produce the verdict.
+                if all(is_superseded(c) for c in gate_outcomes):
+                    continue
+                return run
+            # No gate job listed at all. Two very different situations share that
+            # shape, and they must not be treated alike:
+            #   * `in_progress` with a populated job list - the gate job simply
+            #     has not been materialised yet (see the ci#1069 note above).
+            #     This is the live shape and it must be adopted.
+            #   * anything else, in particular a run that has not started: it has
+            #     produced no evidence that it gates this commit (the `closed`
+            #     -event deployment runs look like this), so it fails closed.
+            if run.get("status") == "in_progress" and jobs:
+                return run
             continue
         conclusion = gate_conclusion(repo, run.get("id"), token)
         if conclusion is None or is_superseded(conclusion):

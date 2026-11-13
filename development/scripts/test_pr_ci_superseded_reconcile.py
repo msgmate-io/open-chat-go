@@ -470,6 +470,54 @@ class ReconcileTests(unittest.TestCase):
         self.assertIsNotNone(carrier)
         self.assertEqual(carrier["id"], NEWER - 1)
 
+    def test_yielded_gate_carrier_accepts_an_unmaterialised_gate_job(self):
+        """ci#1069, measured live on PR #52: the lazily-materialised gate job.
+
+        Run 43354888370 was the starved replacement for 07f72b74 and was already
+        `in_progress` with 27 jobs listed when the yielding run looked - and not
+        one of them was `PR Test Merge Requirement`, because GitHub creates a
+        `needs`-gated job only after its dependencies finish. Requiring the gate
+        job to be visible therefore rejected the only real replacement, exited 5
+        and dyed the gate red for a commit whose verdict that run was producing.
+        An `in_progress` replacement that has not given up the verdict must be
+        adopted; a `queued` one that lacks the gate job still must not (it will
+        never gate this commit).
+        """
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [
+                    {"name": "Label Guidance", "status": "completed", "conclusion": "success"},
+                    {"name": "Unit Tests", "status": "in_progress", "conclusion": None},
+                ],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, status="in_progress"),
+            run(NEWER - 1, status="in_progress"),
+        ]
+        # The newest non-cancelled candidate is the cancelled-gate one: skipped
+        # by the superseded-gate test, not by job presence.
+        carrier = mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token")
+        self.assertIsNotNone(carrier, "an in-progress replacement owns the verdict")
+        self.assertEqual(carrier["id"], NEWER - 1)
+
+    def test_yielded_gate_carrier_still_rejects_a_queued_run_without_the_gate(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [{"name": "Deploy to CI", "status": "queued", "conclusion": None}],
+            },
+        )
+        mod._FETCH = api
+        self.assertIsNone(
+            mod.yielded_gate_carrier(
+                ns().repo, [run(NEWER, status="queued")], CURRENT, "token"
+            )
+        )
+
     def test_failed_cancel_fails_closed(self):
         self.cancel_error = urllib.error.HTTPError(
             "url", 403, "Forbidden", None, io.BytesIO(b"")
