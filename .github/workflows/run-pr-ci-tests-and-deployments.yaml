@@ -2929,6 +2929,22 @@ jobs:
           python3 development/scripts/redis_chart_readiness_contract.py \
             --chart-file development/redis-readiness/chart-redis-template.after.yaml
 
+      # ci#1061: the deployed identity provider (the Keycloak realm behind
+      # id.msgmate.io) and the chart values that point the backend at it live in
+      # different places and are edited at different times. Their disagreement only
+      # surfaces as a browser-side `redirect_uri_mismatch` / `invalid_client` during
+      # a live login, so pin the agreement (and the no-committed-secrets rule)
+      # statically here.
+      - name: Identity provider realm/chart contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_identity_provider_realm_contract.py -v
+
+      - name: Identity provider realm/chart contract
+        run: |
+          set -euo pipefail
+          python3 development/scripts/identity_provider_realm_contract.py
+
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
