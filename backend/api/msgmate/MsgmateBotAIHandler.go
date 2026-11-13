@@ -635,6 +635,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	// large tool outputs under the provider window instead of failing with
 	// "exceeded maximum context".
 	contextBudget := ResolveContextBudget(configMap)
+	// ci#1065: how many turns of this interaction already ended without a final
+	// summary in a row. The tool loop uses it to stop nudging a model that keeps
+	// going empty, and reports the updated value back through the turn outcome.
+	emptyFinalStreak := int(mapInt64OrDefault(configMap, emptyFinalStreakConfigKey, 0))
 
 	endpoint, err = resolveChatProviderEndpoint(backend, endpoint)
 	if err != nil {
@@ -725,6 +729,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 			Budget:                       &turnBudget,
 			Outcome:                      turnOutcome,
 			Context:                      contextBudget,
+			EmptyFinalStreak:             emptyFinalStreak,
 		},
 	)
 
@@ -1661,6 +1666,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// window instead of only learning it from a failed turn.
 			if outcome.Context.BudgetChars > 0 {
 				metadata["context_budget"] = outcome.Context.Metadata()
+			}
+			// ci#1065: how many turns of the interaction ended without a final
+			// summary in a row, so AutoContinue can retry the first occurrence
+			// and report a streak instead of retrying it.
+			if outcome.EmptyFinalStreak > 0 {
+				metadata[emptyFinalStreakMetadata] = outcome.EmptyFinalStreak
 			}
 			// ci#747 RC2/RC3: a cap or a transient provider/workspace failure
 			// must not leave the interaction waiting for a human. Enqueue exactly
