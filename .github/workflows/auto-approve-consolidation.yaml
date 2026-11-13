@@ -51,6 +51,23 @@ name: Auto-approve consolidation PRs
 #     PR that is merely `BEHIND` gets its branch updated (which re-triggers CI
 #     and this workflow) instead of failing.
 #
+# ci#1066: the approval half cannot be produced at all until a write-access
+# approver identity is configured (`CONSOLIDATE_APPROVER_TOKEN`) or the `main`
+# ruleset gains a bypass actor: a `github.token` approval is not "a review from a
+# reviewer with write access", and the promotion PR's author cannot approve its
+# own PR. Choosing approval-vs-bypass is a maintainer security decision, so the
+# preflight *classifies* the blocker instead of guessing (the classification is
+# symmetric with ci#1067: every credential state that cannot post an approval is
+# named and reported as "awaiting a maintainer merge", so a red auto-approve run
+# keeps meaning "a real regression"):
+#   * token rejected (HTTP 401)            -> `token_rejected`, reported/awaiting;
+#   * token accepted but without write access (`repos.permissions.push` false)
+#                                          -> `token_unprivileged`, reported/awaiting;
+#   * token missing                        -> warn, let the review call decide.
+# A `dev` -> `main` promotion PR that is green and only lacks the approval gets a
+# `::notice::Awaiting maintainer merge (ci#1066)` plus *one* idempotent comment
+# explaining how to re-enable the automated hop.
+#
 # Required admin step (one of, see DEVELOPMENT.md):
 #   * Preferred: create a dedicated reviewer identity (GitHub App or a
 #     fine-grained PAT with `pull_requests: write`) and store its token as the
@@ -250,7 +267,16 @@ jobs:
           #   token_missing  - no approver token and no resolvable fallback
           #                    identity: warn, keep going and let the review call
           #                    be the authoritative check.
+          #   token_unprivileged - ci#1066: the token resolves to an identity but
+          #                    that identity has no write access to this
+          #                    repository (`repos.permissions.push` false), so its
+          #                    approval can never satisfy the `main` ruleset
+          #                    ("1 approving review by reviewers with write
+          #                    access"). Same treatment as `token_rejected`: name
+          #                    it, report the PRs as awaiting a maintainer merge
+          #                    and exit 0 before the PR loop.
           credential_state=""
+          approver_ready="false"
           reviewer="$(gh api user --jq '.login' 2>/dev/null || true)"
           if [ -z "$reviewer" ] || [ "$reviewer" = "null" ]; then
             reviewer=""
@@ -260,6 +286,25 @@ jobs:
               credential_state="token_missing"
               echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured and no resolvable fallback identity; falling back to github.token. This only works when Actions are allowed to approve PRs or the ruleset has a bypass actor for it."
             fi
+          elif [ "$HAS_APPROVER_TOKEN" = "true" ]; then
+            # ci#1066: a resolvable identity is not enough - the `main` ruleset
+            # only accepts an approval from a reviewer *with write access*.
+            can_write="$(gh api "repos/${REPO}" --jq '.permissions.push // false' 2>/dev/null || true)"
+            case "$can_write" in
+              true)
+                approver_ready="true"
+                echo "Approver identity '${reviewer}' has write access to ${REPO}."
+                ;;
+              '')
+                # Some installation tokens cannot report repository permissions;
+                # the review call is the authoritative check for them (ci#538).
+                approver_ready="true"
+                echo "::warning::Could not verify whether '${reviewer}' has write access to ${REPO}; the review call is the authoritative check."
+                ;;
+              *)
+                credential_state="token_unprivileged"
+                ;;
+            esac
           fi
 
           # ci#1067: green PRs that only lack the write-access approval are
@@ -289,21 +334,38 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           }
 
-          if [ "$credential_state" = "token_rejected" ]; then
-            echo "CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401 / no resolvable /user): no approval can be posted until the reviewer identity token is re-issued (ci#1066)."
-            echo "::notice::CONSOLIDATE_APPROVER_TOKEN was rejected by the API; the PR(s) are left to a maintainer merge. Re-issue the reviewer identity token (ci#1066)."
-            IFS=',' read -ra rejected_numbers <<< "$PRS"
-            for number in ${rejected_numbers[@]+"${rejected_numbers[@]}"}; do
+          # ci#1066: both unusable-credential states are reported the same way -
+          # the identity cannot post an approval the `main` ruleset accepts, so
+          # the PR(s) are named as awaiting a maintainer merge and the run stays
+          # green. Only the actionable text differs.
+          case "$credential_state" in
+            token_rejected)
+              echo "CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401 / no resolvable /user): no approval can be posted until the reviewer identity token is re-issued (ci#1066)."
+              echo "::notice::CONSOLIDATE_APPROVER_TOKEN was rejected by the API; the PR(s) are left to a maintainer merge. Re-issue the reviewer identity token (ci#1066)."
+              reason="token rejected"
+              ;;
+            token_unprivileged)
+              echo "CONSOLIDATE_APPROVER_TOKEN is accepted as '${reviewer}' but that identity has no write access to ${REPO} (repos.permissions.push is false), so its approval cannot satisfy the '1 approving review by reviewers with write access' ruleset (ci#1066)."
+              echo "::notice::CONSOLIDATE_APPROVER_TOKEN belongs to '${reviewer}', which has no write access to ${REPO}; its approval cannot satisfy the main ruleset, so the PR(s) are left to a maintainer merge. Re-issue the token for a write-access identity (ci#1066)."
+              reason="approver lacks write access"
+              ;;
+            *)
+              reason=""
+              ;;
+          esac
+          if [ -n "$reason" ]; then
+            IFS=',' read -ra blocked_numbers <<< "$PRS"
+            for number in ${blocked_numbers[@]+"${blocked_numbers[@]}"}; do
               case "$number" in
                 ''|*[!0-9]*) continue ;;
               esac
-              add_awaiting "$number" "token rejected"
+              add_awaiting "$number" "$reason"
             done
             write_summary
-            echo "Skipping the PR loop: every call would fail with the same 401 and be misreported as an unreadable PR."
+            echo "Skipping the PR loop: the acting identity cannot post an approval the ruleset accepts, so every merge attempt would fail the same way and be misreported as an unreadable PR."
             exit 0
           fi
-          echo "Acting as '${reviewer:-unknown}' (credential: ${credential_state:-usable})."
+          echo "Acting as '${reviewer:-unknown}' (credential: ${credential_state:-usable}, write-access approver identity: ${approver_ready})."
 
           failures=0
 
@@ -548,6 +610,24 @@ jobs:
               if [ "$rule_blocked" = "true" ]; then
                 # The PR is green; only the write-access approval is missing.
                 # Hand it to a maintainer and keep the run green.
+                # ci#1066: the `dev` -> `main` promotion hop is the one PR a
+                # maintainer has to merge by hand in this state, so the status is
+                # also stated *in the PR* (a notice plus exactly one comment) -
+                # a job summary of a past run is not where a maintainer looks.
+                # Idempotent: the comment is posted at most once per PR.
+                if [ "$base_ref" = "main" ] && [ "$head_ref" = "dev" ]; then
+                  echo "::notice::PR #${number} (${head_ref} -> ${base_ref}) is green and verified, but merging it needs an approving review from a write-access identity, which this automation cannot post (no CONSOLIDATE_APPROVER_TOKEN for a write-access identity and no working ruleset bypass actor for the acting identity). Awaiting maintainer merge (ci#1066)."
+                  awaiting_note="Awaiting maintainer merge (ci#1066): every required check on this \`dev\` -> \`main\` promotion PR is green and was verified via the API, but the \`main\` ruleset requires an approving review from a reviewer with write access and this workflow acts without a write-access approver identity (\`CONSOLIDATE_APPROVER_TOKEN\` is unset, unusable or unprivileged, and no ruleset bypass actor is registered for it). A maintainer can merge this PR as-is; configuring the approver token for a write-access identity or a bypass actor re-enables the automated promotion hop."
+                  existing_note="$(gh pr view "$number" --repo "$REPO" --json comments \
+                    --jq '[.comments[]?.body | select(contains("Awaiting maintainer merge (ci#1066)"))] | length' \
+                    2>/dev/null || echo 0)"
+                  if [ "${existing_note:-0}" = "0" ]; then
+                    gh pr comment "$number" --repo "$REPO" --body "$awaiting_note" >/dev/null 2>&1 \
+                      || echo "::warning::Could not post the awaiting-maintainer-merge note on PR #${number}."
+                  else
+                    echo "PR #${number} already carries the awaiting-maintainer-merge note; not repeating it."
+                  fi
+                fi
                 echo "PR #${number} is green; only a write-access approval is missing (rule: review required). Leaving it to a maintainer merge."
                 add_awaiting "$number" "$blocked_reason"
               else

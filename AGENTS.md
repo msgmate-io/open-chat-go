@@ -121,6 +121,16 @@ pull request body and push only behind the CI gate.
 `development/scripts/install_sandbox_go_toolchain.sh --check` is the self-check and
 `go: MISSING` is the only acceptable report when it fails; repair with the same
 script (never a manual `export PATH`) and re-run it before claiming anything.
+Whoever changes the coding image itself (ci#1062) has a second gate:
+`development/scripts/check_sandbox_coding_image_go.sh --dockerfile <coding
+Dockerfile>` is the static drift check (`GOTOOLCHAIN=local`, an `/etc/profile.d`
+PATH shim for login shells, a build-time warmed module cache, and a Go version
+that is derived from `backend/go.mod` via `install_sandbox_go_toolchain.sh` or
+pinned at or above its directive), and `--image <published-ref>` is the
+behavioural acceptance run (login + non-login `command -v go`, populated
+`$GOMODCACHE/cache/download`, readiness probe verdict) that
+`build-sandbox-images.yaml` executes on the image it just pushed. Neither mode
+may be "verified" by a green build alone.
 In the pull request body (and
 in the final summary) state exactly which command ran and in which environment,
 or say that nothing ran and that PR CI is the gate. Claiming a suite that did not
