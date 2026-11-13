@@ -36,7 +36,8 @@ for tool in go gofmt; do
     # recognise "no toolchain here" instead of trusting an agent's narrative.
     note "missing_cli: $tool"
     note "MISS $tool is installed at /usr/local/go/bin/$tool but not on PATH;"
-    note "     export PATH=/usr/local/go/bin:/dev_bin:$PATH"
+    note "     run development/scripts/install_sandbox_go_toolchain.sh to wire it up"
+    note "     (one repair path: it exports PATH and persists it for later shells)."
     status=1
   else
     note "missing_cli: $tool"
@@ -159,6 +160,20 @@ else
   note "     Docker-dependent checks (compose up, image builds, e2e) cannot run locally here;"
   note "     use the docker_sandbox_* tools where a daemon exists and otherwise let PR CI be the"
   note "     authoritative full-suite gate. Never shell out to raw docker commands (ci#787)."
+fi
+
+# ci#1048: the same self-check finding (ci#687) also named a missing `gh` CLI as
+# part of `sandbox_misprovisioned_workspace`. The typed GitHub tools work without
+# it, so the absence is guidance, not a hard blocker - but it must be stated with
+# the machine-readable `missing_cli:` token so a reader can tell "no CLI here"
+# apart from "the agent gave up".
+note "== github CLI (ci#1048) =="
+if command -v gh >/dev/null 2>&1; then
+  note "ok   gh CLI on PATH ($(command -v gh))"
+else
+  note "missing_cli: gh"
+  note "WARN gh is not installed in this sandbox; use the typed GitHub tools"
+  note "     (github_pr_create, github_issue_comment, ...) instead of shelling out to gh."
 fi
 
 if [ "$status" -eq 0 ]; then

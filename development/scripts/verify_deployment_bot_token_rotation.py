@@ -25,6 +25,12 @@ credential:
 
 The report carries verdicts and step names only - no token, no vault content -
 and the script never makes a network request.
+
+Because the rotation itself is a vault action no code can perform, `--plan` prints
+the outstanding work instead of the verdict: the current rejection status, the two
+profiles that hold the item, the capability set the replacement must carry, and
+the two commands that prove it before and after the re-issue. It never sees the
+credential, so it cannot leak one.
 """
 
 from __future__ import annotations
@@ -50,6 +56,39 @@ VAULT_SELECTED = "using the bot token from deployment vault"
 CI_SELECTED = "using the bot token from ci repository secret"
 VAULT_REJECTED = "the deployment vault bot_token"
 CACHE_MISS = "bot token cannot read"
+ANNOTATION = ("::error::", "::warning::", "##[error]", "##[warning]")
+
+# `msgmate-io/open-chat-go` is the deploy target the vault item must be able to
+# read (see development/deployment-bot-token-capabilities.md).
+DEPLOY_TARGET = "msgmate-io/open-chat-go"
+
+# The vault items a rotation has to touch. Both profiles read the same credential
+# (`msgmate-io-staging` backs the promotion hop, `msgmate-io-pr-deployment` the
+# per-PR deploys), and rotating only one leaves the other on the fallback.
+REISSUE_PROFILES = ("msgmate-io-pr-deployment", "msgmate-io-staging")
+
+# What the re-issued item must be able to do - the capability set of
+# check_bot_token_capabilities.py, restated here because a re-issue request that
+# does not state it is how the rejected token got issued in the first place.
+REISSUE_CAPABILITIES = (
+    "fine-grained PAT (`github_pat_...`) whose selected-repositories list "
+    "includes msgmate-io/open-chat-go",
+    "`contents:read` on msgmate-io/open-chat-go (actions/checkout)",
+    "`pull_requests:write` on msgmate-io/open-chat-go (preview-URL comment)",
+    "`packages:read` and `packages:write` for "
+    "ghcr.io/msgmate-io/open-chat-go (pr-<n>-<sha> images)",
+)
+
+# What a named rejection of the vault item actually costs, keyed by the HTTP
+# status the resolver reports. 401 means the credential is dead (re-issue);
+# 404/403 mean it is alive but not scoped for this repository (a different fix,
+# and the one that reproduced the git exit 128 of run 42959618854).
+REJECTION_GUIDANCE = (
+    ("401", "the credential is invalid, expired or revoked - re-issue the vault item"),
+    ("403", "the credential lacks contents:read, or the API rate limit is exhausted"),
+    ("404", "the credential cannot see %s - a fine-grained token's selected "
+            "repositories must include it" % DEPLOY_TARGET),
+)
 
 
 class Criterion:
@@ -79,6 +118,20 @@ def _lines(raw: Iterable[str]) -> List[str]:
     return [line.rstrip("\n") for line in raw]
 
 
+def _annotated(line: str, phrase: str) -> bool:
+    """True only for a real workflow annotation carrying `phrase`.
+
+    A run log also contains the *script text* of every `run:` block, so the
+    resolver's own explanatory comments repeat its failure vocabulary (e.g.
+    "`bot token cannot read <owner/repo>@<ref>`"). Matching the bare phrase
+    therefore reported a failing precondition for every successful run - the
+    comment was read as the error. Only `::error::`/`::warning::` annotations
+    are authoritative.
+    """
+    lowered = line.lower()
+    return any(marker in lowered for marker in ANNOTATION) and phrase in lowered
+
+
 def token_source(lines: Iterable[str]) -> Tuple[str, str]:
     """Which credential the resolver selected, and whether the vault one was rejected.
 
@@ -87,21 +140,98 @@ def token_source(lines: Iterable[str]) -> Tuple[str, str]:
     """
     source = NO_TOKEN_SOURCE
     rejected = False
+    guidance = ""
     for line in lines:
         lowered = line.lower()
         if VAULT_SELECTED in lowered:
             source = VAULT
         elif CI_SELECTED in lowered:
             source = CI_FALLBACK
-        if VAULT_REJECTED in lowered and "cannot read" in lowered:
+        if _annotated(line, VAULT_REJECTED):
             rejected = True
+            for status, advice in REJECTION_GUIDANCE:
+                if "http %s" % status in lowered:
+                    guidance = advice
+                    break
     if rejected:
-        return source, "the vault BOT_TOKEN was rejected and named in a warning"
+        return source, "the vault BOT_TOKEN was rejected and named in a warning%s" % (
+            " - " + guidance if guidance else ""
+        )
     if source == NO_TOKEN_SOURCE:
         return source, "the run log has no 'Using the bot token from ...' line"
     if source == CI_FALLBACK:
         return source, "the deploy ran on the CI repository secret BOT_TOKEN"
     return source, "the deploy ran on the deployment profile's vault BOT_TOKEN"
+
+
+def rejection_status(lines: Iterable[str]) -> str:
+    """The HTTP status the resolver reported for the vault item, or "" if none.
+
+    Only the annotated rejection warning is considered, so the resolver's own
+    explanatory text (which mentions the same statuses) cannot answer this.
+    """
+    for line in lines:
+        if not _annotated(line, VAULT_REJECTED):
+            continue
+        lowered = line.lower()
+        for status, _ in REJECTION_GUIDANCE:
+            if "http %s" % status in lowered:
+                return status
+    return ""
+
+
+def reissue_plan(lines: Iterable[str], steps: Optional[Dict[str, str]] = None) -> str:
+    """What the maintainer still has to do, and how the result is proven.
+
+    ci#1044 cannot be closed by code: rotating a credential is a vault action. This
+    renders the remaining work from the *run evidence* so the re-issue is asked for
+    with the current rejection status, the exact profiles and the capability set -
+    never the credential, whose value this module never sees.
+    """
+    lines = _lines(lines)
+    steps = steps or {}
+    source, detail = token_source(lines)
+    status = rejection_status(lines)
+    criteria = evaluate(lines, steps)
+    rotated = all(c.verdict == OK for c in criteria)
+
+    out = ["ci#1044 deployment BOT_TOKEN re-issue plan", ""]
+    out.append("run evidence: token source = %s" % source)
+    out.append("run evidence: %s" % detail)
+    if status:
+        for code, advice in REJECTION_GUIDANCE:
+            if code == status:
+                out.append("rejection:   HTTP %s - %s" % (code, advice))
+    out.append("")
+
+    if rotated:
+        out.append("No re-issue outstanding: the deployment ran on the profile's vault BOT_TOKEN.")
+        out.append("Re-run this against the newest `[Dev promotion]` run if that changes.")
+        return "\n".join(out)
+
+    out.append("Action: re-issue the vault `BOT_TOKEN` item (vault only, never a PR/issue/commit).")
+    out.append("Profiles:")
+    for profile in REISSUE_PROFILES:
+        out.append("  - %s" % profile)
+    out.append("The credential must be:")
+    for capability in REISSUE_CAPABILITIES:
+        out.append("  - %s" % capability)
+    out.append("")
+    out.append("Prove the candidate before storing it (must print no MISSING row):")
+    out.append("  python3 development/scripts/check_bot_token_capabilities.py --token-file <file>")
+    out.append("Confirm the rotation on the next `[Dev promotion]` deployment:")
+    out.append("  gh run view <run-id> --repo msgmate-io/open-chat-go --log > /tmp/run.log")
+    out.append("  gh run view <run-id> --repo msgmate-io/open-chat-go --json jobs > /tmp/run-jobs.json")
+    out.append(
+        "  python3 development/scripts/verify_deployment_bot_token_rotation.py "
+        "--log-file /tmp/run.log --jobs-json /tmp/run-jobs.json"
+    )
+    out.append("")
+    out.append(
+        "Until then the deploy stays green on the ci#1042 CI-secret fallback and this "
+        "plan stays NOT ROTATED. Keep the fallback."
+    )
+    return "\n".join(out)
 
 
 def step_conclusions(jobs: Any) -> Dict[str, str]:
@@ -132,7 +262,7 @@ def evaluate(log_lines: Iterable[str], steps: Dict[str, str]) -> List[Criterion]
         source_verdict = FAIL
 
     precondition = steps.get(PRECONDITION_STEP, "")
-    if any(CACHE_MISS in line.lower() for line in lines):
+    if any(_annotated(line, CACHE_MISS) for line in lines):
         precondition_verdict, precondition_detail = FAIL, (
             "the precondition failed with 'bot token cannot read <owner/repo>@<ref>'"
         )
@@ -198,6 +328,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--observations-json",
         help="offline JSON: {\"log_lines\": [...], \"steps\": {...}} or {\"jobs\": [...]}",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="print the outstanding ci#1044 re-issue plan instead of the verdict",
+    )
     args = parser.parse_args(argv)
 
     steps: Dict[str, str] = {}
@@ -211,7 +346,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         steps = step_conclusions(json.loads(raw)) if raw.strip() else {}
 
     criteria = evaluate(log_lines, steps)
-    print(render(criteria))
+    if args.plan:
+        print(reissue_plan(log_lines, steps))
+    else:
+        print(render(criteria))
     return 0 if all(c.verdict == OK for c in criteria) else 1
 
 

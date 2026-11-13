@@ -53,6 +53,16 @@ CI_FALLBACK_LOG = [
     "2026-11-11T14:00:01Z Using the bot token from CI repository secret BOT_TOKEN.",
 ]
 
+# Run 43279510029 (the newest `[Dev promotion]` deploy at the time of writing)
+# reports HTTP 401, i.e. the vault credential is dead rather than mis-scoped.
+EXPIRED_VAULT_LOG = [
+    "2026-11-11T14:00:00Z ::warning::The deployment vault BOT_TOKEN for "
+    "'msgmate-io-pr-deployment' cannot read msgmate-io/open-chat-go@dev "
+    "(HTTP 401 - invalid, expired or revoked). Continuing with CI repository "
+    "secret BOT_TOKEN.",
+    "2026-11-11T14:00:01Z Using the bot token from CI repository secret BOT_TOKEN.",
+]
+
 
 def _verdicts(criteria):
     return [c.verdict for c in criteria]
@@ -117,6 +127,30 @@ class PreconditionTests(unittest.TestCase):
         )
         self.assertEqual(_criterion(criteria, "2").verdict, rot.FAIL)
 
+    # ci#1044: a `gh run view --log` dump contains the *script text* of every
+    # `run:` block, so the resolver's own explanatory comments repeat its failure
+    # vocabulary. Reading those comments as annotations reported a failed
+    # precondition for every successful run (first caught against run 43130639468,
+    # whose resolver step concluded `success`).
+    def test_resolver_source_comment_is_not_a_precondition_failure(self):
+        comment = (
+            "      # `bot token cannot read <owner/repo>@<ref>` when neither works."
+        )
+        criteria = rot.evaluate(VAULT_LOG + [comment], GREEN_STEPS)
+        self.assertEqual(_criterion(criteria, "2").verdict, rot.OK)
+
+    def test_resolver_warning_comment_is_not_a_vault_rejection(self):
+        comment = (
+            "      # name about the one it skipped, and fails with"
+        )
+        warning_text_comment = (
+            "      # The deployment vault BOT_TOKEN for the profile cannot read it."
+        )
+        criteria = rot.evaluate(
+            VAULT_LOG + [comment, warning_text_comment], GREEN_STEPS
+        )
+        self.assertEqual(_verdicts(criteria), [rot.OK] * 3)
+
     def test_absent_step_is_unknown(self):
         criteria = rot.evaluate(VAULT_LOG, {})
         self.assertEqual(_criterion(criteria, "2").verdict, rot.UNKNOWN)
@@ -152,6 +186,69 @@ class StepAssertionTests(unittest.TestCase):
     def test_step_conclusions_ignores_malformed_entries(self):
         self.assertEqual(rot.step_conclusions(None), {})
         self.assertEqual(rot.step_conclusions([None, 5, {"steps": None}]), {})
+
+
+class ReissuePlanTests(unittest.TestCase):
+    """ci#1044 cannot be closed by code: the plan states the remaining vault action.
+
+    The rotation is a maintainer action on the vault, so what code can own is the
+    request: which profiles still hold the rejected item, the capability set the
+    replacement must carry, and how the result is proven. Pinning it here keeps a
+    re-issue request from being raised again without the scope that the rejected
+    token was missing.
+    """
+
+    def test_plan_names_both_profiles_and_the_capability_set(self):
+        plan = rot.reissue_plan(CI_FALLBACK_LOG, GREEN_STEPS)
+        for profile in rot.REISSUE_PROFILES:
+            self.assertIn(profile, plan)
+        self.assertIn("msgmate-io-pr-deployment", plan)
+        self.assertIn("msgmate-io-staging", plan)
+        self.assertIn("fine-grained", plan)
+        self.assertIn("contents:read", plan)
+        self.assertIn("pull_requests:write", plan)
+        self.assertIn("packages:write", plan)
+        self.assertIn("ghcr.io/msgmate-io/open-chat-go", plan)
+
+    def test_plan_reports_the_rejection_status_from_the_warning(self):
+        self.assertEqual(rot.rejection_status(CI_FALLBACK_LOG), "404")
+        self.assertEqual(
+            rot.rejection_status(EXPIRED_VAULT_LOG), "401"
+        )
+        self.assertEqual(rot.rejection_status(VAULT_LOG), "")
+
+    def test_plan_carries_the_status_specific_guidance(self):
+        self.assertIn("re-issue the vault item", rot.reissue_plan(EXPIRED_VAULT_LOG))
+        self.assertIn(
+            "selected repositories must include",
+            rot.reissue_plan(CI_FALLBACK_LOG),
+        )
+
+    def test_plan_stays_outstanding_on_a_fallback_deploy(self):
+        plan = rot.reissue_plan(CI_FALLBACK_LOG, GREEN_STEPS)
+        self.assertIn("Action: re-issue the vault `BOT_TOKEN` item", plan)
+        self.assertIn("Keep the fallback", plan)
+        self.assertNotIn("No re-issue outstanding", plan)
+
+    def test_plan_reports_nothing_outstanding_after_rotation(self):
+        plan = rot.reissue_plan(VAULT_LOG, GREEN_STEPS)
+        self.assertIn("No re-issue outstanding", plan)
+        self.assertNotIn("Action: re-issue", plan)
+
+    def test_plan_never_carries_a_credential(self):
+        log = CI_FALLBACK_LOG + ["::add-mask::" + FAKE_VAULT_TOKEN]
+        plan = rot.reissue_plan(log, GREEN_STEPS)
+        self.assertNotIn(FAKE_VAULT_TOKEN, plan)
+        self.assertNotIn("github_pat_" + "A" * 40, plan)
+
+    def test_cli_prints_the_plan_on_request(self):
+        payload = json.dumps({"log_lines": CI_FALLBACK_LOG, "steps": GREEN_STEPS})
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = rot.main(["--observations-json", payload, "--plan"])
+        self.assertEqual(code, 1)
+        self.assertIn("re-issue plan", buffer.getvalue())
+        self.assertIn("msgmate-io-staging", buffer.getvalue())
 
 
 class ReportTests(unittest.TestCase):
