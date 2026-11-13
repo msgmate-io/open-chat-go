@@ -3,6 +3,8 @@ import { MessageItem, BotMessageGroup } from "./MessageItem"
 import React, { useEffect, useState, useRef, forwardRef, useCallback, type ReactNode } from 'react';
 import { CollapseIndicator } from "../CollapseIndicator";
 import { usePartialMessageStore } from "./PartialMessages";
+import { useAddPartialMessage, usePartialMessage, useRemovePartialMessage } from "./PartialMessages.selectors";
+import { createScrollPin } from "./scrollPin";
 import { useSidePanelCollapse } from "./ChatBase";
 import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
 import { InteractionChatInfo } from "./InteractionChatInfo";
@@ -101,7 +103,12 @@ export function MessagesScroll({
     onRefresh?: () => void | Promise<unknown>;
 }) {
     const [text, setText] = useState("");
-    const { partialMessages, removePartialMessage, addPartialMessage } = usePartialMessageStore()
+    // Narrow selectors only: `usePartialMessageStore()` (whole store) re-rendered
+    // this view on every streamed delta of every chat. A per-chat selector keeps
+    // a delta to chat B from touching chat A's transcript at all.
+    const partialMessage = usePartialMessage(chatUUID ?? undefined);
+    const removePartialMessage = useRemovePartialMessage();
+    const addPartialMessage = useAddPartialMessage();
     const [isSendingMessage, setIsSendingMessage] = useState(false)
 
     const scrollRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
@@ -186,13 +193,24 @@ export function MessagesScroll({
         shouldAutoScrollRef.current = true;
     }, [chatUUID]);
 
+    // One rAF-coalesced pin for the whole transcript. A streamed reply produces
+    // dozens of state updates per second; a scroll write per update forces a
+    // layout flush each time. Scheduling at most one write per animation frame
+    // keeps streaming smooth, and nothing is scheduled while the user has
+    // scrolled away from the bottom, so reading history is never interrupted.
+    const scrollPinRef = useRef<ReturnType<typeof createScrollPin> | null>(null);
+    if (scrollPinRef.current === null) {
+        scrollPinRef.current = createScrollPin({
+            getElement: () => scrollRef.current,
+            shouldPin: () => shouldAutoScrollRef.current,
+        });
+    }
+
     useEffect(() => {
-        if (!shouldAutoScrollRef.current) return;
-        const scrollElement = scrollRef.current;
-        if (!scrollElement) return;
-        const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
-        scrollElement.scrollTop = maxScroll;
-    }, [messages, partialMessages]);
+        scrollPinRef.current?.schedule();
+    }, [messages, partialMessage]);
+
+    useEffect(() => () => scrollPinRef.current?.cancel(), []);
 
     const onSendMessage = async (
         payload?: ChatUISendPayload | Array<{ file_id: string; display_name?: string }>,
@@ -272,9 +290,9 @@ export function MessagesScroll({
     }
     
     const hasPartialMessage = chatUUID ? (
-        partialMessages?.[chatUUID]?.text?.length > 0 || 
-        partialMessages?.[chatUUID]?.thoughts?.length > 0 ||
-        (partialMessages?.[chatUUID]?.tool_calls?.length ?? 0) > 0
+        partialMessage?.text?.length > 0 ||
+        partialMessage?.thoughts?.length > 0 ||
+        (partialMessage?.tool_calls?.length ?? 0) > 0
     ) : false;
 
     const isBotResponding = hasPartialMessage || Boolean((chat as any)?.status?.is_active);
@@ -424,21 +442,21 @@ export function MessagesScroll({
                         interactionState={(chat as any)?.status?.state}
                     />
                 )}
-                {chatUUID && chat && user && partialMessages?.[chatUUID] && (
+                {chatUUID && chat && user && partialMessage && (
                     <MessageItem 
                         key={`msg_${chatUUID}`} 
                         message={{
                             uuid: `partial_${chatUUID}`,
-                            text: partialMessages[chatUUID]?.text || '',
-                            thoughts: partialMessages[chatUUID]?.thoughts || [],
-                            meta_data: partialMessages[chatUUID]?.meta_data,
-                            tool_calls: partialMessages[chatUUID]?.tool_calls,
-                            is_generating: partialMessages[chatUUID]?.meta_data?.finished !== true
+                            text: partialMessage.text || '',
+                            thoughts: partialMessage.thoughts || [],
+                            meta_data: partialMessage.meta_data,
+                            tool_calls: partialMessage.tool_calls,
+                            is_generating: partialMessage.meta_data?.finished !== true
                         }} 
                         chat={chat} 
                         chatUUID={chatUUID || undefined}
                         selfIsSender={
-                            partialMessages[chatUUID]?.meta_data?.partial_sender === "user"
+                            partialMessage.meta_data?.partial_sender === "user"
                                 ? true
                                 : Boolean((chat as any)?.sender_uuid && user?.uuid === (chat as any).sender_uuid)
                         } 

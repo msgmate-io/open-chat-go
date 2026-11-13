@@ -36,10 +36,12 @@ with io.open(RECONCILER, encoding="utf-8") as _handle:
     SOURCE = _handle.read()
 
 
-def run(run_id, status="completed", attempt=1, created_at=None):
+def run(run_id, status="completed", attempt=1, created_at=None, conclusion=None):
     payload = {"id": run_id, "status": status, "run_attempt": attempt}
     if created_at is not None:
         payload["created_at"] = created_at
+    if conclusion is not None:
+        payload["conclusion"] = conclusion
     return payload
 
 
@@ -47,8 +49,8 @@ def gate(name=GATE, status="completed", conclusion="success"):
     return {"name": name, "status": status, "conclusion": conclusion}
 
 
-def open_pr(head=HEAD, state="open"):
-    return {"state": state, "head": {"sha": head}, "labels": LABELS}
+def open_pr(head=HEAD, state="open", ref="fix/ci-659"):
+    return {"state": state, "head": {"sha": head, "ref": ref}, "labels": LABELS}
 
 
 class FakeApi:
@@ -71,6 +73,32 @@ class FakeApi:
         return {"workflow_runs": self.runs}
 
 
+REPO = "msgmate-io/open-chat-go"
+
+
+BRANCH = "fix/merge-gate-verdict-1033-1034"
+
+
+class BranchRunsApi(FakeApi):
+    """FakeApi that serves the same-SHA listing and the head-branch listing apart.
+
+    `newer_branch_run` queries `/actions/workflows/<file>/runs?branch=<ref>`
+    (ci#1033 self-cancellation fingerprint) while `replacement_runs` queries
+    `...?head_sha=<sha>`; the two listings must be distinguishable.
+    """
+
+    def __init__(self, same_sha=(), branch=(), jobs=None, pull=None):
+        FakeApi.__init__(self, pull=pull, runs=same_sha, jobs=jobs)
+        self.branch = list(branch)
+        self.seen = []
+
+    def __call__(self, url, token):
+        self.seen.append(url)
+        if "/runs?branch=" in url:
+            return {"workflow_runs": self.branch}
+        return FakeApi.__call__(self, url, token)
+
+
 def ns(**over):
     base = dict(
         repo="msgmate-io/open-chat-go",
@@ -79,6 +107,7 @@ def ns(**over):
         run_id=CURRENT,
         wait_seconds=0,
         yield_seconds=60,
+        empty_grace_seconds=0,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -184,8 +213,87 @@ class ReconcileTests(unittest.TestCase):
         api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 0)
-        self.assertIn("is running", summary)
+        self.assertIn("in_progress", summary)
+        self.assertIn(str(NEWER), summary)
         self.assertEqual(self.cancelled, [], "a progressing run must not be cancelled")
+
+    # ci#1033: a superseded attempt is not a verdict. The head e846fb8d of a
+    # consolidation PR had five runs (four `cancelled`, one live) and the
+    # required check stayed `COMPLETED/FAILURE` from attempt 1 while attempt 2
+    # ran, so a green tree read red. The verdict must come from the newest
+    # completed, non-cancelled attempt, and a still-running newer attempt must
+    # read as pending rather than inherit the older red.
+    def test_cancelled_attempt_is_skipped_for_the_newer_green_attempt(self):
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled"),
+                run(NEWER + 1, conclusion="success"),
+            ],
+            jobs={NEWER: [gate(conclusion="cancelled")], NEWER + 1: [gate()]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        # The winning run id is logged so the adopted attempt is identifiable.
+        self.assertIn("replacement run %s gate job concluded success" % (NEWER + 1), summary)
+
+    def test_cancelled_run_is_never_a_verdict_even_with_a_red_gate_job(self):
+        # A cancelled attempt whose gate job concluded before the cancellation
+        # must not be read as red; the older completed green attempt testifies.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1), run(NEWER, conclusion="cancelled")],
+            jobs={
+                NEWER + 1: [gate()],
+                NEWER: [gate(conclusion="failure")],
+            },
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        self.assertIn("replacement run %s" % (NEWER + 1), summary)
+
+    def test_older_red_attempt_does_not_shadow_a_newer_green_one(self):
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1), run(NEWER)],
+            jobs={NEWER + 1: [gate()], NEWER: [gate(conclusion="failure")]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 0)
+        self.assertIn("replacement run %s" % (NEWER + 1), summary)
+
+    def test_red_gate_job_of_the_newest_completed_attempt_still_rejects(self):
+        # The fix must not weaken the gate: a real (non-cancelled) red verdict
+        # on the newest completed attempt is still adopted as a rejection.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER + 1)],
+            jobs={NEWER + 1: [gate(conclusion="failure")]},
+        )
+        code, summary = self.reconcile(api)
+        self.assertEqual(code, 1)
+        self.assertIn("concluded failure", summary)
+
+    def test_newer_in_progress_attempt_reads_as_pending_not_red(self):
+        # ci#1033: while a newer attempt for the same SHA is in_progress the
+        # commit has no verdict - it must not inherit the older red.
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 0)
+        self.assertIn(str(NEWER), summary)
+        self.assertIn("pending verdict", summary)
+        # A queued attempt that starves behind this run's concurrency group hands
+        # the group over instead of stamping a red verdict on the tree.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="queued", created_at=CREATED_STARVED)],
+        )
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 5)
+        self.assertIn("yielded:", summary)
+
+    def test_is_superseded_helper(self):
+        self.assertTrue(mod.is_superseded("cancelled"))
+        self.assertTrue(mod.is_superseded("stale"))
+        self.assertFalse(mod.is_superseded("failure"))
+        self.assertFalse(mod.is_superseded("success"))
+        self.assertFalse(mod.is_superseded(None))
 
     def test_starved_replacement_makes_this_run_yield_the_group(self):
         # 39407028825: `pending` for 12+ minutes with an empty repository queue,
@@ -255,6 +363,160 @@ class ReconcileTests(unittest.TestCase):
         code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
         self.assertEqual(code, 5)
         self.assertIn("yielded:", summary)
+
+    def test_yield_with_a_gate_carrying_replacement_is_accepted(self):
+        """ci#1069: the 3-4-run burst that dyed the gate red.
+
+        Observed shape: a `labeled`/`unlabeled` burst cancels three runs for the
+        same SHA while a starved replacement sits queued behind this run's own
+        `pr-ci-<pr>-<sha>` concurrency group. Yielding is now accepted when that
+        replacement is a newer, non-cancelled run that owns the verdict: its
+        `PR Test Merge Requirement` check is the newer, authoritative verdict for
+        the commit, so this run must not stamp a second, red one.
+        """
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 1, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 2, status="queued", created_at=CREATED_STARVED),
+            ],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [gate(conclusion="cancelled")],
+                NEWER - 2: [gate(status="queued", conclusion=None)],
+            },
+        )
+        out = {}
+        mod._FETCH = api
+        code, summary = mod.reconcile(ns(), "token", out)
+        self.assertEqual(code, 0, summary)
+        self.assertTrue(summary.startswith("accepted:"), summary)
+        self.assertIn("yielded:", summary, "the yield is still reported, then accepted")
+        self.assertIn(str(NEWER - 2), summary)
+        self.assertEqual(
+            out.get("replacement_run"),
+            NEWER - 2,
+            "the newest non-cancelled run that owns the verdict",
+        )
+        self.assertEqual(
+            self.cancelled,
+            [mod.API + "/repos/msgmate-io/open-chat-go/actions/runs/%d/cancel" % CURRENT],
+            "the group is still handed over; acceptance does not replace the yield",
+        )
+
+    def test_yield_without_a_gate_carrying_replacement_stays_rejected(self):
+        """ci#1069 fails closed: a yield with no verdict owner stays 5.
+
+        A `closed`-event deployment run of the same SHA never contains the
+        `PR Test Merge Requirement` job and a run whose gate job was itself
+        cancelled cannot testify either, so neither may be adopted.
+        """
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 1, status="queued", created_at=CREATED_STARVED),
+                run(NEWER - 2, status="queued", created_at=CREATED_STARVED),
+            ],
+            jobs={
+                NEWER - 1: [{"name": "Deploy to CI", "status": "queued", "conclusion": None}],
+                NEWER - 2: [gate(status="completed", conclusion="cancelled")],
+            },
+        )
+        out = {}
+        mod._FETCH = api
+        code, summary = mod.reconcile(ns(), "token", out)
+        self.assertEqual(code, 5, summary)
+        self.assertTrue(summary.startswith("yielded:"), summary)
+        self.assertIsNone(out.get("replacement_run"))
+
+    def test_yielded_gate_carrier_skips_current_older_and_cancelled_runs(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                CURRENT: [gate(status="queued", conclusion=None)],
+                NEWER - 5: [gate(status="queued", conclusion=None)],
+                NEWER - 1: [gate(conclusion="cancelled")],
+                NEWER: [gate(conclusion="cancelled")],
+                CURRENT - 5: [gate(status="queued", conclusion=None)],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, conclusion="cancelled"),
+            run(NEWER - 1, conclusion="cancelled"),
+            run(CURRENT - 5, status="queued"),
+            run(CURRENT, status="queued"),
+        ]
+        self.assertIsNone(mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token"))
+
+    def test_yielded_gate_carrier_picks_the_newest_qualifying_run(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [gate(status="in_progress", conclusion=None)],
+                NEWER - 2: [gate(status="queued", conclusion=None)],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, conclusion="cancelled"),
+            run(NEWER - 1, status="in_progress"),
+            run(NEWER - 2, status="queued"),
+        ]
+        carrier = mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token")
+        self.assertIsNotNone(carrier)
+        self.assertEqual(carrier["id"], NEWER - 1)
+
+    def test_yielded_gate_carrier_accepts_an_unmaterialised_gate_job(self):
+        """ci#1069, measured live on PR #52: the lazily-materialised gate job.
+
+        Run 43354888370 was the starved replacement for 07f72b74 and was already
+        `in_progress` with 27 jobs listed when the yielding run looked - and not
+        one of them was `PR Test Merge Requirement`, because GitHub creates a
+        `needs`-gated job only after its dependencies finish. Requiring the gate
+        job to be visible therefore rejected the only real replacement, exited 5
+        and dyed the gate red for a commit whose verdict that run was producing.
+        An `in_progress` replacement that has not given up the verdict must be
+        adopted; a `queued` one that lacks the gate job still must not (it will
+        never gate this commit).
+        """
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [
+                    {"name": "Label Guidance", "status": "completed", "conclusion": "success"},
+                    {"name": "Unit Tests", "status": "in_progress", "conclusion": None},
+                ],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, status="in_progress"),
+            run(NEWER - 1, status="in_progress"),
+        ]
+        # The newest non-cancelled candidate is the cancelled-gate one: skipped
+        # by the superseded-gate test, not by job presence.
+        carrier = mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token")
+        self.assertIsNotNone(carrier, "an in-progress replacement owns the verdict")
+        self.assertEqual(carrier["id"], NEWER - 1)
+
+    def test_yielded_gate_carrier_still_rejects_a_queued_run_without_the_gate(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [{"name": "Deploy to CI", "status": "queued", "conclusion": None}],
+            },
+        )
+        mod._FETCH = api
+        self.assertIsNone(
+            mod.yielded_gate_carrier(
+                ns().repo, [run(NEWER, status="queued")], CURRENT, "token"
+            )
+        )
 
     def test_failed_cancel_fails_closed(self):
         self.cancel_error = urllib.error.HTTPError(
@@ -440,6 +702,76 @@ class ReconcileTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 4)
+
+
+    def test_newer_branch_run_is_the_self_cancellation_fingerprint(self):
+        """ci#1033: a newer run of the head branch proves our own supersession."""
+        newer = 42955399999
+        api = BranchRunsApi(same_sha=[run(CURRENT)], branch=[run(newer), run(CURRENT)])
+        mod._FETCH = api
+        found = mod.newer_branch_run(REPO, BRANCH, CURRENT, "token")
+        self.assertEqual(found.get("id"), newer)
+        self.assertIn("runs?branch=", api.seen[-1])
+        # Nothing newer - or no branch to look up - is never a reason to defer.
+        mod._FETCH = BranchRunsApi(same_sha=[run(CURRENT)], branch=[run(CURRENT)])
+        self.assertIsNone(mod.newer_branch_run(REPO, BRANCH, CURRENT, "token"))
+        self.assertIsNone(mod.newer_branch_run(REPO, None, CURRENT, "token"))
+
+    def test_self_cancelled_run_defers_without_burning_the_budget(self):
+        """A run cancelled by its own successor must not hold the group for an hour.
+
+        The "Cancel superseded workflow runs for this PR" entry step of a newer
+        run cancels every in-progress/queued run of the same head branch, so a run
+        can be cancelled before any suite ran while NO other run for its SHA
+        exists (the successor has a different SHA). Waiting there held the gate job
+        - and the `pr-ci-<pr>-<sha>` concurrency group - until the budget expired,
+        which is the PR #9 hang (run 42955395696). Defer to the successor instead.
+        """
+        newer = 42955399999
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT)],
+            branch=[run(newer), run(CURRENT)],
+            pull=open_pr(ref=BRANCH),
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600)
+        self.assertEqual(code, 0)
+        self.assertIn("cancelled by the superseded-runs job of newer run %s" % newer, summary)
+        self.assertIn("instead of waiting out the 3600s budget", summary)
+        # Decided on the first iteration: the wait budget was not consumed.
+        self.assertEqual(self.now[0], 1000.0)
+
+    def test_self_cancellation_waits_out_the_empty_listing_grace_first(self):
+        """A sibling attempt still being created must not be missed (ci#1033)."""
+        newer = 42955399999
+        api = BranchRunsApi(
+            same_sha=[], branch=[run(newer), run(CURRENT)], pull=open_pr(ref=BRANCH)
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600, empty_grace_seconds=3)
+        self.assertEqual(code, 0)
+        self.assertIn("newer run %s" % newer, summary)
+        # Three one-second polls of the empty SHA listing, then the deferral.
+        self.assertEqual(self.now[0], 1003.0)
+
+    def test_self_cancellation_shortcut_needs_a_newer_branch_run(self):
+        """A hand-cancelled run has no successor, so it must keep failing closed."""
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT)], branch=[run(CURRENT)], pull=open_pr(ref=BRANCH)
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 3)
+        self.assertTrue(summary.startswith("budget-expired:"))
+
+    def test_a_same_sha_candidate_outranks_the_self_cancellation_shortcut(self):
+        """A real replacement for the SHA must still testify; never short-circuit."""
+        api = BranchRunsApi(
+            same_sha=[run(CURRENT), run(NEWER)],
+            branch=[run(42955399999), run(CURRENT)],
+            jobs={NEWER: [gate(conclusion="failure")]},
+            pull=open_pr(ref=BRANCH),
+        )
+        code, summary = self.reconcile(api, wait_seconds=3600)
+        self.assertEqual(code, 1)
+        self.assertIn("concluded failure", summary)
 
 
 class PaginationTests(unittest.TestCase):

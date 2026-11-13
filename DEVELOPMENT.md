@@ -22,14 +22,101 @@ right place to pin the behaviour.
 
 ## Contributing, CI and deployment
 
-Open feature, bugfix, docs and chore pull requests against `main`. Release hops
-from `main` to `production` and the private full-build/deployment automation are
-maintainer-controlled; the public workflow files and the application code live
-here. Agent coordination and operational runbooks are maintained outside this
-repository.
+Open feature, bugfix, docs and chore pull requests against **`dev`**, the
+integration trunk - never against `main`, and never push to `dev` or `main`
+directly:
 
-Do not add agent runbooks, private integration documentation or deployment
-secrets to this repository.
+```bash
+git fetch origin dev
+git checkout -B <branch> origin/dev
+```
+
+`main` is only advanced by the automatic `[Dev promotion]` pull request
+(`dev` -> `main`); the heavy CI suites (`deploy`, `sandbox-test`, `build`,
+`e2e`, `test-core-only`, `ai-test-mock`, `ai-test-real`) run on that promotion
+PR only. An ordinary PR against `dev` carries the `test` label and runs the
+lightweight PR CI. Release hops from `main` to `production` and the private
+full-build/deployment automation are maintainer-controlled; the public workflow
+files and the application code live here.
+
+### The promotion hop is agent-closable, and verifying it is the price
+
+Merging the `[Dev promotion]` pull request is what deploys ci.msgmate.io, so
+while that merge stayed a maintainer click the loop could never close itself:
+tickets piled up as "implemented" but never "live" (ci#1055). The development
+lead may therefore merge the promotion PR on its own once **all required checks
+on it are green** - and must then verify that the deployment actually serves the
+promoted code. The two decisions are implemented once, as unit-tested
+predicates, in `development/scripts/promotion_hop.py`:
+
+```bash
+development/scripts/promotion_hop.sh merge                 # may the hop be merged now?
+development/scripts/promotion_hop.sh deploy <VERSION>      # is that version live?
+```
+
+`merge` exits `0` merge, `1` wait (green not reached), `2` refuse (the PR is not
+the `dev` -> `main` hop, is a draft, has conflicts, or a required check really
+failed). Do not re-derive the rules from raw API payloads: the direct cause of
+the false-blocked promotion PRs was a *superseded* duplicate check-run - a
+`labeled` event spawns a second `pull_request` dispatch for the same SHA, the
+duplicate is cancelled by the shared `pr-ci-<pr>-<sha>` concurrency group, and
+its `always()` gate carries on to leave a FAILURE `PR Test Merge Requirement`
+on the commit while the live run's check of the same name goes green. The
+predicate collapses the check list onto the **newest** instance per
+(name, app) - the same rule the auto-approve gate applies (ci#847) - and lists
+every instance it disregarded as `ignored superseded check-run instances`, so a
+refusal is never based on a stale red and a real red is never whitewashed.
+
+`deploy` treats a merge as *not* acceptance. It fails unless the rollout
+completed, every pod is ready, and `https://ci.msgmate.io/api/v1/metrics/health`
+answers `200` with `{"status":"ok","version":"<VERSION>"}`. A host serving an
+older version - or one that only exists on unmerged branches (ci#890) - is a
+broken deployment, not a note: report it on the ticket and loop, do not close the
+ticket. A ticket with a behavioural criterion closes only after its feature has
+been observed working on ci.msgmate.io; a green promotion PR and a successful
+rollout are necessary, never sufficient.
+
+### "Green" is not "mergeable" (ci#1066)
+
+A fully green promotion PR can still be unmergeable, and that is not a
+regression: the `main` ruleset requires **one approving review from a reviewer
+with write access**. A `github.token` review does not count (it is not a
+write-access reviewer) and the promotion PR's author cannot approve its own PR,
+so without a configured approver identity the hop needs a maintainer merge even
+though every check is green.
+
+`auto-approve-consolidation.yaml` therefore *classifies* the block instead of
+failing on it, and a red auto-approve run keeps meaning "something is really
+broken":
+
+| Credential state | Behaviour |
+| --- | --- |
+| `CONSOLIDATE_APPROVER_TOKEN` unset, identity unresolvable | `token_missing`: warning, the review call stays authoritative |
+| token rejected by the API (`401` / no `/user`) | `token_rejected`: noticed, PRs reported as awaiting a maintainer merge, run stays green |
+| token accepted but `repos.permissions.push` is not `true` | `token_unprivileged`: noticed, same awaiting-report, run stays green |
+| token accepted with write access | approval posted; a ruleset refusal afterwards is classified, never retried |
+
+On the `dev` -> `main` hop only, such a block also emits a `::notice::` and
+**one** idempotent PR comment stating that the PR is green and awaiting a
+maintainer merge. Any other merge failure - an unreadable PR, conflicts, a base
+branch modified mid-flight - still fails the run.
+
+To restore the unattended hop, either issue `CONSOLIDATE_APPROVER_TOKEN` for an
+identity with write access to this repository, or register a ruleset bypass actor
+for the automation identity. Both are security configuration decisions and stay
+with the maintainer.
+
+Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
+its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
+section for it); `PR Test Merge Requirement` reads that and nothing else.
+GitHub cannot auto-close a cross-repository issue, so the line is both the gate
+input and the closure instruction. Agent-facing working notes - including the
+full set of PR conventions (base, draft state, labels, tracker line, truthful
+test reporting) - live in [`AGENTS.md`](AGENTS.md).
+
+Agent coordination and operational runbooks are maintained outside this
+repository. Do not add agent runbooks, private integration documentation or
+deployment secrets to this repository.
 
 ## Clone the repository
 
@@ -94,7 +181,7 @@ python3 -m venv .venv
 | Profile | Includes | Extra repos |
 | --- | --- | --- |
 | `core-only` (default) | `mcp`, `rest_api_tool`, `go_client`, `community_coder` | – |
-| `community-coder` | public coder + TUI profile | – |
+| `community-coder` | public coder + base integrations (the private `tui` client is added by the private `default` profile) | – |
 | `default` | core integrations plus deployment-provided integrations | profile setup |
 | `full` | every integration | profile setup |
 | `full-ci` | every integration plus private CI tooling | profile setup |

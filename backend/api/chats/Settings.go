@@ -11,18 +11,46 @@ import (
 	"gorm.io/gorm"
 )
 
-// ChatSettingsView is the user-visible projection of a chat's server-side
-// settings. Today it only carries the optional chat title used to relabel a
-// chat (e.g. by the internal_automations integration).
-type ChatSettingsView struct {
-	Title string `json:"title,omitempty"`
+// ChatInfoBit is one per-interaction "information bit" (ci#1027): a compact,
+// read-only label/value pair an integration attaches to an interaction so the
+// shared chat UI can render it underneath the integration widget (eg the
+// triggering GitHub issue of a coding chat). Bits are user-facing only; they are
+// never forwarded to the chat backend as shared config.
+type ChatInfoBit struct {
+	Label string `json:"label"`
+	// Value is the displayed text; it defaults to the href when omitted.
+	Value string `json:"value,omitempty"`
+	// Href makes the bit a link. Only http(s), mailto and site-relative targets
+	// survive normalization, so a stored bit can never inject a script URL.
+	Href string `json:"href,omitempty"`
 }
+
+// ChatSettingsView is the user-visible projection of a chat's server-side
+// settings: the optional chat title used to relabel a chat (e.g. by the
+// internal_automations integration) plus the optional information bits the
+// widget renders below the chat header (ci#1027).
+type ChatSettingsView struct {
+	Title    string        `json:"title,omitempty"`
+	InfoBits []ChatInfoBit `json:"info_bits,omitempty"`
+}
+
+// Limits keep a chat's info-bit strip compact on every breakpoint and stop a
+// misbehaving integration from turning the widget into a wall of text.
+const (
+	maxChatInfoBits       = 12
+	maxChatInfoBitLabel   = 64
+	maxChatInfoBitValue   = 200
+	maxChatInfoBitHrefLen = 2048
+)
 
 type updateChatSettingsRequest struct {
 	Title *string `json:"title"`
 	// Tags replaces the chat's tag set when provided. Send an empty array to
 	// clear all tags. Nil leaves the existing tags untouched.
 	Tags *[]string `json:"tags"`
+	// InfoBits replaces the chat's information bits when provided. Send an empty
+	// array to clear them. Nil leaves the existing bits untouched.
+	InfoBits *[]ChatInfoBit `json:"info_bits"`
 }
 
 func chatSettingsViewFromRaw(raw json.RawMessage) *ChatSettingsView {
@@ -35,10 +63,90 @@ func chatSettingsViewFromRaw(raw json.RawMessage) *ChatSettingsView {
 	}
 	title, _ := config["title"].(string)
 	title = strings.TrimSpace(title)
-	if title == "" {
+	bits := decodeChatInfoBits(config["info_bits"])
+	if title == "" && len(bits) == 0 {
 		return nil
 	}
-	return &ChatSettingsView{Title: title}
+	return &ChatSettingsView{Title: title, InfoBits: bits}
+}
+
+// decodeChatInfoBits re-reads the stored `info_bits` array. The value round-trips
+// through the generic config map, so it is normalized again on read: a hand
+// edited or older row still renders the same way.
+func decodeChatInfoBits(raw interface{}) []ChatInfoBit {
+	if raw == nil {
+		return nil
+	}
+	blob, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var bits []ChatInfoBit
+	if err := json.Unmarshal(blob, &bits); err != nil {
+		return nil
+	}
+	return normalizeChatInfoBits(bits)
+}
+
+// normalizeChatInfoBits trims, caps and filters info bits: a bit without a label
+// is dropped (it could not be rendered), a bit without any text falls back to its
+// link target, and unsafe link schemes are stripped so the bit renders as plain
+// text instead of a link.
+func normalizeChatInfoBits(bits []ChatInfoBit) []ChatInfoBit {
+	out := make([]ChatInfoBit, 0, len(bits))
+	for _, bit := range bits {
+		label := trimToLen(bit.Label, maxChatInfoBitLabel)
+		if label == "" {
+			continue
+		}
+		href := sanitizeInfoBitHref(bit.Href)
+		value := trimToLen(bit.Value, maxChatInfoBitValue)
+		if value == "" {
+			value = href
+		}
+		if value == "" {
+			continue
+		}
+		out = append(out, ChatInfoBit{Label: label, Value: value, Href: href})
+		if len(out) >= maxChatInfoBits {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sanitizeInfoBitHref keeps a link target only when it is safe to render:
+// http(s), mailto or a site-relative path. Anything else (eg javascript:) is
+// dropped and the bit degrades to plain text.
+func sanitizeInfoBitHref(raw string) string {
+	href := trimToLen(raw, maxChatInfoBitHrefLen)
+	if href == "" {
+		return ""
+	}
+	lower := strings.ToLower(href)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "mailto:") {
+		return href
+	}
+	if strings.HasPrefix(href, "/") && !strings.HasPrefix(href, "//") {
+		return href
+	}
+	return ""
+}
+
+// trimToLen trims whitespace and truncates to at most limit runes.
+func trimToLen(raw string, limit int) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) > limit {
+		trimmed = strings.TrimSpace(string(runes[:limit]))
+	}
+	return trimmed
 }
 
 // loadChatSettingsViews batch-loads the visible settings for the given chats.
@@ -116,6 +224,16 @@ func (h *ChatsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			delete(config, "title")
 		} else {
 			config["title"] = title
+		}
+	}
+	if payload.InfoBits != nil {
+		// Info bits replace the whole strip: an empty array clears it, so an
+		// integration that no longer knows anything about the interaction does not
+		// leave stale labels behind (ci#1027).
+		if bits := normalizeChatInfoBits(*payload.InfoBits); len(bits) > 0 {
+			config["info_bits"] = bits
+		} else {
+			delete(config, "info_bits")
 		}
 	}
 	if payload.Tags != nil {

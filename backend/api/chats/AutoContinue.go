@@ -96,7 +96,7 @@ const (
 	defaultAutoContinueMax = 30
 	// defaultAutoContinueMaxIncompleteRetries bounds the retry budget of an
 	// incomplete turn (ci#724) when none is configured.
-	defaultAutoContinueMaxIncompleteRetries = 3
+	defaultAutoContinueMaxIncompleteRetries = 5
 	// defaultAutoContinueDelaySeconds is the default quiet period between turns.
 	defaultAutoContinueDelaySeconds = 10
 	// maxAutoContinueDelaySeconds caps a configured delay so a misconfigured
@@ -134,6 +134,21 @@ const (
 	// *unfinished* turn (ci#747, RC2).
 	turnEndedToolCallCap       = "tool_call_cap_reached"
 	turnEndedFailedToolCallCap = "failed_tool_call_cap_reached"
+	// turnEndedEmptyFinalText mirrors msgmate.TurnEndedEmptyFinalText
+	// (backend/api/msgmate/turn_outcome.go), again as a literal because of the
+	// import direction. The turn ran tool calls but settled without any final
+	// assistant text, even after the single summary nudge (ci#1065).
+	turnEndedEmptyFinalText = "empty_final_text"
+	// emptyFinalStreakMetadataKey is the message-metadata key carrying how many
+	// turns of the interaction ended without a final summary in a row, written
+	// by the native coder handler (ci#1065).
+	emptyFinalStreakMetadataKey = "empty_final_streak"
+	// emptyFinalStreakStateKey persists that counter across turns, so the loop
+	// can stop nudging a model that keeps ending empty.
+	emptyFinalStreakStateKey = "auto_continue_empty_final_streak"
+	// autoContinueEmptyFinalStreakReason is recorded when the loop stops on a
+	// consecutive empty-final streak instead of retrying it (ci#1065).
+	autoContinueEmptyFinalStreakReason = "empty_final_text_streak"
 )
 
 // autoContinueSettingsSchema documents the state keys stored in
@@ -324,6 +339,11 @@ type autoContinueState struct {
 	// cleanly, so a long run that hits one bad turn does not permanently
 	// exhaust its retry budget.
 	IncompleteRetries int
+	// EmptyFinalStreak counts the *consecutive* turns of the interaction that
+	// settled without a final assistant summary (ci#1065). It is the loop-side
+	// view of the tool loop's per-turn counter: one occurrence is retried, a
+	// streak of two reports the reason instead of retrying again.
+	EmptyFinalStreak int
 }
 
 // autoContinueDecision is the outcome of the loop decision for one finished
@@ -344,6 +364,10 @@ type autoContinueDecision struct {
 	// resolved to (ci#724). It is persisted with the loop state: incremented by
 	// an incomplete-turn retry, reset by a clean completion.
 	IncompleteRetries int
+	// EmptyFinalStreak is the resolved consecutive empty-final streak of the
+	// interaction (ci#1065). It is persisted with the loop state: incremented
+	// by an empty-final turn, reset by one that reported its work.
+	EmptyFinalStreak int
 }
 
 // decideAutoContinue decides whether a finished automated turn should schedule
@@ -401,6 +425,20 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 	// deliberately checked after the stop signals: an agent that *did* declare
 	// completion (marker or `task_completed`) has finished and must not be
 	// re-run. An explicit budget of 0 disables the retry.
+	// ci#1065: a turn that ran tool calls but settled without any final
+	// assistant text (even after the single summary nudge) is a turn that
+	// stopped before it reported. The first occurrence is retried through the
+	// bounded incomplete-turn path, because one nudge is cheap; a *consecutive*
+	// streak is not — the model keeps ending empty, so the loop reports the
+	// reason (`empty_final_text_streak`) instead of burning its budget on
+	// retries (see decideAutoContinue).
+	if streak := turnEndedEmptyFinalTextStreak(meta, state); streak >= 2 {
+		decision.EmptyFinalStreak = streak
+		decision.StopReason = autoContinueEmptyFinalStreakReason
+		return decision
+	} else if streak > 0 {
+		decision.EmptyFinalStreak = streak
+	}
 	if turnEndedIncompleteRetryable(meta) && config.MaxIncompleteRetries > 0 {
 		if state.IncompleteRetries >= config.MaxIncompleteRetries {
 			decision.StopReason = autoContinueIncompleteExhaustedReason
@@ -452,11 +490,48 @@ func turnEndedIncompleteRetryable(meta map[string]interface{}) bool {
 	}
 	reason, _ := meta[turnEndedMetadataKey].(string)
 	switch strings.TrimSpace(reason) {
-	case turnEndedNoUsableToolCall, turnEndedToolCallCap, turnEndedFailedToolCallCap:
+	case turnEndedNoUsableToolCall, turnEndedToolCallCap, turnEndedFailedToolCallCap,
+		// ci#1065: the *first* empty final is retryable (the tool loop already
+		// asked the model for a summary once); a consecutive streak is caught by
+		// the streak guard in decideAutoContinue before it ever gets here.
+		turnEndedEmptyFinalText:
 		return true
 	default:
 		return false
 	}
+}
+
+// turnEndedEmptyFinalTextStreak returns how many turns of the interaction ended
+// without a final summary in a row according to the finished turn: the
+// `empty_final_streak` metadata stamped by the native coder handler (ci#1065),
+// or - for a turn that does not stamp the counter - the persisted loop state
+// plus the turn that just ended. Zero means "this turn reported its work (or is
+// not an empty final)", i.e. no retry-limiting streak applies.
+func turnEndedEmptyFinalTextStreak(meta map[string]interface{}, state autoContinueState) int {
+	reason := ""
+	if meta != nil {
+		reason, _ = meta[turnEndedMetadataKey].(string)
+	}
+	if strings.TrimSpace(reason) != turnEndedEmptyFinalText {
+		return 0
+	}
+	if meta != nil {
+		switch value := meta[emptyFinalStreakMetadataKey].(type) {
+		case int:
+			if value > 0 {
+				return value
+			}
+		case int64:
+			if value > 0 {
+				return int(value)
+			}
+		case float64:
+			if value > 0 {
+				return int(value)
+			}
+		}
+	}
+	return state.EmptyFinalStreak + 1
 }
 
 // continuationOutstanding reports whether a continuation prompt was already
@@ -611,6 +686,7 @@ func scheduleAutoContinuePrompt(ctx context.Context, db *gorm.DB, client *asynq.
 		Pending:                true,
 		PendingSourceMessageID: decision.SourceMessageID,
 		IncompleteRetries:      decision.IncompleteRetries,
+		EmptyFinalStreak:       decision.EmptyFinalStreak,
 	})
 }
 
@@ -786,6 +862,10 @@ func loadAutoContinueState(db *gorm.DB, chatID uint) autoContinueState {
 	if retries, ok := configInt(config, autoContinueIncompleteRetriesStateKey); ok && retries > 0 {
 		state.IncompleteRetries = retries
 	}
+	// ci#1065: the consecutive empty-final turns of the interaction.
+	if streak, ok := configInt(config, emptyFinalStreakStateKey); ok && streak > 0 {
+		state.EmptyFinalStreak = streak
+	}
 	return state
 }
 
@@ -806,6 +886,11 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 	config[autoContinueTurnsStateKey] = state.Turns
 	config[autoContinueStoppedStateKey] = state.Stopped
 	config[autoContinuePendingStateKey] = state.Pending
+	if state.EmptyFinalStreak > 0 {
+		config[emptyFinalStreakStateKey] = state.EmptyFinalStreak
+	} else {
+		delete(config, emptyFinalStreakStateKey)
+	}
 	if state.IncompleteRetries > 0 {
 		config[autoContinueIncompleteRetriesStateKey] = state.IncompleteRetries
 	} else {

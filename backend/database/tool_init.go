@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,6 +35,173 @@ func WithTrustedBotRuntime(initData map[string]interface{}, botUser *User) map[s
 	}
 	base[TrustedToolRuntimeKey] = runtime
 	return base
+}
+
+// ToolInitPinsKey is the reserved shared-config key under which the backend
+// stores server-owned tool-init pins (ci#1049). A pin locks a tool's targeting
+// parameters to a value the *server* derived from the dispatch trigger (eg the
+// triggering GitHub issue), so a bot that is granted a write tool cannot pick a
+// different target. The key is never merged from caller input: interaction
+// creation writes it, every other write path only validates against it.
+const ToolInitPinsKey = "tool_init_pins"
+
+// ToolInitPinnedFieldRepo / ToolInitPinnedFieldIssueNumber are the targeting
+// fields a pin locks for the github issue-comment class of tools.
+const (
+	ToolInitPinnedFieldRepo        = "repo"
+	ToolInitPinnedFieldIssueNumber = "issue_number"
+)
+
+// ErrPinnedToolInit is returned when an update tries to change a pinned
+// tool-init value. Callers map it to a conflict (409 pinned_tool_init).
+var ErrPinnedToolInit = errors.New("pinned_tool_init")
+
+// ToolInitPinsFromConfig extracts the reserved server-owned pins from a decoded
+// shared config. The returned map is empty (never nil-unsafe) and is a deep
+// enough copy that callers may not mutate persisted state through it.
+func ToolInitPinsFromConfig(config map[string]interface{}) map[string]map[string]interface{} {
+	pins := map[string]map[string]interface{}{}
+	if config == nil {
+		return pins
+	}
+	raw, ok := config[ToolInitPinsKey].(map[string]interface{})
+	if !ok {
+		return pins
+	}
+	for toolName, rawPin := range raw {
+		payload, ok := rawPin.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		copied := map[string]interface{}{}
+		for key, value := range payload {
+			copied[key] = value
+		}
+		pins[strings.TrimSpace(toolName)] = copied
+	}
+	return pins
+}
+
+// ToolInitPinsFromChatConfig decodes a chat's shared config and returns its
+// pins. Malformed config yields no pins.
+func ToolInitPinsFromConfigData(configData []byte) map[string]map[string]interface{} {
+	if len(configData) == 0 {
+		return map[string]map[string]interface{}{}
+	}
+	config := map[string]interface{}{}
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return map[string]map[string]interface{}{}
+	}
+	return ToolInitPinsFromConfig(config)
+}
+
+// ToolInitPinsForChat reads the pins of a chat's shared config.
+func ToolInitPinsForChat(chat *Chat) map[string]map[string]interface{} {
+	if chat == nil || chat.SharedConfig == nil {
+		return map[string]map[string]interface{}{}
+	}
+	return ToolInitPinsFromConfigData(chat.SharedConfig.ConfigData)
+}
+
+// ApplyToolInitPins merges server-owned pins into a tool's init data. A pinned
+// value always wins over whatever the caller (or a stale/forged persisted row)
+// supplied, so execution can never be redirected away from the pinned target.
+// The input map is not mutated; a copy is returned.
+func ApplyToolInitPins(initData map[string]interface{}, pins map[string]map[string]interface{}) map[string]interface{} {
+	merged := map[string]interface{}{}
+	for key, value := range initData {
+		merged[key] = value
+	}
+	for toolName, pin := range pins {
+		payload, _ := merged[toolName].(map[string]interface{})
+		merged[toolName] = MergeToolInitPin(payload, pin)
+	}
+	return merged
+}
+
+// MergeToolInitPin overlays one tool's server-owned pin onto its init payload.
+// Pinned values always win; the input map is not mutated.
+func MergeToolInitPin(payload map[string]interface{}, pin map[string]interface{}) map[string]interface{} {
+	pinned := map[string]interface{}{}
+	for key, value := range payload {
+		pinned[key] = value
+	}
+	for key, value := range pin {
+		pinned[key] = value
+	}
+	return pinned
+}
+
+// ValidatePinnedToolInitUpdate rejects a tool-init update that tries to change a
+// value the server pinned. Only fields present in the update are compared: a
+// partial update that leaves the pinned fields untouched is allowed.
+func ValidatePinnedToolInitUpdate(pins map[string]map[string]interface{}, update map[string]interface{}) error {
+	if len(pins) == 0 || len(update) == 0 {
+		return nil
+	}
+	for toolName, rawValue := range update {
+		pin, pinned := pins[strings.TrimSpace(toolName)]
+		if !pinned {
+			continue
+		}
+		payload, ok := rawValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if err := comparePinnedField(toolName, ToolInitPinnedFieldRepo, pin, payload, normalizePinRepo); err != nil {
+			return err
+		}
+		if err := comparePinnedField(toolName, ToolInitPinnedFieldIssueNumber, pin, payload, normalizePinIssueNumber); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// comparePinnedField rejects an update field whose normalized value differs from
+// the pinned one. The pinned repo/number comparison is case-insensitive for the
+// repo and digit-trimmed for the number, so an equivalent restatement passes and
+// a redirect fails.
+func comparePinnedField(toolName string, field string, pin map[string]interface{}, update map[string]interface{}, normalize func(string) string) error {
+	pinnedRaw, hasPin := pin[field]
+	if !hasPin {
+		return nil
+	}
+	pinnedValue := normalize(fmt.Sprint(pinnedRaw))
+	if pinnedValue == "" {
+		return nil
+	}
+	requested, has := payloadField(update, field)
+	if !has {
+		return nil
+	}
+	if normalize(requested) != pinnedValue {
+		return fmt.Errorf("%w: tool_init[%q].%s is pinned", ErrPinnedToolInit, toolName, field)
+	}
+	return nil
+}
+
+// payloadField reads a string field out of an update payload, tolerating the
+// numeric JSON shape of issue_number.
+func payloadField(update map[string]interface{}, field string) (string, bool) {
+	value, ok := update[field]
+	if !ok || value == nil {
+		return "", false
+	}
+	return fmt.Sprint(value), true
+}
+
+func normalizePinRepo(repo string) string {
+	return strings.ToLower(strings.TrimSpace(repo))
+}
+
+func normalizePinIssueNumber(number string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(number))
+	trimmed = strings.TrimPrefix(trimmed, "issue:")
+	trimmed = strings.TrimPrefix(trimmed, "ci#")
+	trimmed = strings.TrimPrefix(trimmed, "gh#")
+	trimmed = strings.TrimPrefix(trimmed, "#")
+	return strings.TrimSpace(trimmed)
 }
 
 // ToolInitData represents tool initialization data for a specific chat interaction

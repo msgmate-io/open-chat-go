@@ -82,6 +82,7 @@ export {
   ChatDetailsDialogHeader,
   InteractionChatInfo,
 } from "./components/chat/InteractionChatInfo";
+export { ChatInfoBits, type ChatInfoBit } from "./components/chat/ChatInfoBits";
 export {
   ChatDetailsPanel,
   ToolDetailsDialog,

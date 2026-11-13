@@ -30,15 +30,63 @@ for tool in go gofmt; do
   if command -v "$tool" >/dev/null 2>&1; then
     note "ok   $tool on PATH ($(command -v "$tool"))"
   elif [ -x "/usr/local/go/bin/$tool" ]; then
+    # ci#1038: `missing_cli: <tool>` is the machine-readable form of a missing
+    # binary (the same token coder_bash reports for an absent CLI). It is emitted
+    # whenever the shell this probe runs in cannot see the tool, so a reader can
+    # recognise "no toolchain here" instead of trusting an agent's narrative.
+    note "missing_cli: $tool"
     note "MISS $tool is installed at /usr/local/go/bin/$tool but not on PATH;"
-    note "     export PATH=/usr/local/go/bin:/dev_bin:$PATH"
+    note "     run development/scripts/install_sandbox_go_toolchain.sh to wire it up"
+    note "     (one repair path: it exports PATH and persists it for later shells)."
     status=1
   else
+    note "missing_cli: $tool"
     note "MISS $tool is not installed in this image at all;"
     note "     the coder sandbox image must ship the Go toolchain before local checks are attempted."
     status=1
   fi
 done
+
+# ci#1038: the sandbox image now ships a Go toolchain that must satisfy the
+# `go` directive in backend/go.mod and a warmed module cache so `go build ./...`
+# works offline right after checkout. Without this, implementers could only
+# learn about a red build from CI.
+gomod_directive=""
+if [ -f "$root/backend/go.mod" ]; then
+  gomod_directive=$(awk '$1=="go"{print $2; exit}' "$root/backend/go.mod")
+fi
+if command -v go >/dev/null 2>&1; then
+  go_reported=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+  if [ "$(go env GOTOOLCHAIN 2>/dev/null)" = "local" ]; then
+    note "ok   GOTOOLCHAIN=local (no implicit toolchain download)"
+  else
+    note "MISS GOTOOLCHAIN=$(go env GOTOOLCHAIN 2>/dev/null); an offline build will try to download a toolchain."
+    note "     the sandbox image must export GOTOOLCHAIN=local (ci#1038)."
+    status=1
+  fi
+  if [ -n "$gomod_directive" ] && [ -n "$go_reported" ]; then
+    if [ "$(printf '%s\n%s\n' "$gomod_directive" "$go_reported" | sort -V | tail -n1)" = "$go_reported" ]; then
+      note "ok   go $go_reported satisfies backend/go.mod (go $gomod_directive)"
+    else
+      note "MISS go $go_reported is older than the backend/go.mod directive (go $gomod_directive);"
+      note "     bump GO_VERSION in the coder sandbox image (ci#1038)."
+      status=1
+    fi
+  fi
+  if [ -d "$(go env GOMODCACHE)/cache/download" ]; then
+    note "ok   warmed module cache present ($(go env GOMODCACHE)/cache/download)"
+  else
+    note "MISS no warmed module cache at $(go env GOMODCACHE)/cache/download;"
+    note "     an offline build will fail. The coder sandbox image must warm GOMODCACHE (ci#1038)."
+    status=1
+  fi
+else
+  note "go: MISSING"
+  note "     this sandbox has no usable Go toolchain, so NO local build or test run is"
+  note "     possible. Do not substitute narrative for a test run: say 'go: MISSING'"
+  note "     in your report and rely on CI as the only gate (ci#1038)."
+  status=1
+fi
 
 if [ -n "${GOPRIVATE:-}" ]; then
   note "ok   GOPRIVATE=$GOPRIVATE"
@@ -112,6 +160,20 @@ else
   note "     Docker-dependent checks (compose up, image builds, e2e) cannot run locally here;"
   note "     use the docker_sandbox_* tools where a daemon exists and otherwise let PR CI be the"
   note "     authoritative full-suite gate. Never shell out to raw docker commands (ci#787)."
+fi
+
+# ci#1048: the same self-check finding (ci#687) also named a missing `gh` CLI as
+# part of `sandbox_misprovisioned_workspace`. The typed GitHub tools work without
+# it, so the absence is guidance, not a hard blocker - but it must be stated with
+# the machine-readable `missing_cli:` token so a reader can tell "no CLI here"
+# apart from "the agent gave up".
+note "== github CLI (ci#1048) =="
+if command -v gh >/dev/null 2>&1; then
+  note "ok   gh CLI on PATH ($(command -v gh))"
+else
+  note "missing_cli: gh"
+  note "WARN gh is not installed in this sandbox; use the typed GitHub tools"
+  note "     (github_pr_create, github_issue_comment, ...) instead of shelling out to gh."
 fi
 
 if [ "$status" -eq 0 ]; then
