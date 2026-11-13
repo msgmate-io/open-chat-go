@@ -232,6 +232,16 @@ launches the TUI directly (optionally with `--bot`). When both are compiled in,
 `msgmate_coder` takes precedence. See the coder integration readmes for the
 full flag list.
 
+A second `open-chat code` in another shell is supported. The coder integration
+calls the core helper `EnsureLocalServer` (`backend/cmd/netutil.go`): when the
+configured host/port already answers `GET /api/version`, the listener belongs to
+an Open Chat server and the session **reuses** it instead of failing on the busy
+port; when the port is free the session binds it itself, and when another
+program holds it the boot still fails fast with `port … is already in use by
+another process`. Concurrent sessions also get their own TUI config directory,
+so they never share (or clobber) one `config.json` - see
+[Terminal UI §Configuration](/docs#tui).
+
 ## `open-chat tui`
 
 Launches the terminal UI when the `tui` integration is part of the build. All
