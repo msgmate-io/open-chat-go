@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -120,7 +121,9 @@ class ChartAgreementTests(unittest.TestCase):
     def test_the_committed_tree_satisfies_the_contract(self):
         findings = contract.check_repository(ROOT)
         self.assertEqual(list(findings), [], findings)
-        self.assertEqual(len(findings.notes), 3, findings.notes)
+        # Three realm/chart notes, plus the deployment notes the ci#1061 deployment
+        # half adds: both environments' Secret references and the served issuer.
+        self.assertEqual(len(findings.notes), 9, findings.notes)
 
     def test_issuer_for_the_wrong_host_fails(self):
         findings = self.evaluate({"issuer": "https://id.stage.msgmate.io/realms/main"})
@@ -297,6 +300,108 @@ class NoSecretTests(unittest.TestCase):
             "https://msgmate.io/api/v1/integrations/identity_provider/login/callback",
             "https://stage.msgmate.io/api/v1/integrations/identity_provider/login/callback",
         ])
+
+
+class DeploymentManifestTests(unittest.TestCase):
+    """The rendered IdP deployments are what actually serves id.msgmate.io."""
+
+    def setUp(self) -> None:
+        self.manifests = {
+            environment: (ROOT / contract.DEPLOYMENT_DIR / f"keycloak-msgmate-io-{environment}.yaml").read_text(
+                encoding="utf-8"
+            )
+            for environment in contract.ENVIRONMENTS
+        }
+        self.compose = (ROOT / contract.SANDBOX_COMPOSE).read_text(encoding="utf-8")
+
+    def evaluate(self, **overrides: str) -> contract.Findings:
+        manifests = dict(self.manifests)
+        manifests.update(overrides)
+        return contract.evaluate_deployment(manifests, self.compose)
+
+    def test_the_checked_in_manifests_satisfy_the_contract(self):
+        findings = self.evaluate()
+        self.assertEqual(list(findings), [])
+
+    def test_missing_manifest_is_reported_not_raised(self):
+        findings = self.evaluate(production="")
+        self.assertTrue(any("missing rendered identity provider deployment" in p for p in findings))
+
+    def test_issuer_host_must_match_the_chart_issuer(self):
+        broken = self.manifests["production"].replace("https://id.msgmate.io", "https://msgmate.io")
+        findings = self.evaluate(production=broken)
+        self.assertTrue(any("KC_HOSTNAME" in p for p in findings))
+
+    def test_realm_import_must_stay_enabled(self):
+        broken = self.manifests["production"].replace('args: ["start", "--import-realm"]', 'args: ["start"]')
+        findings = self.evaluate(production=broken)
+        self.assertTrue(any("--import-realm" in p for p in findings))
+
+    def test_an_inline_database_password_fails(self):
+        broken = self.manifests["production"].replace(
+            """            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db
+                  key: password""",
+            """            - name: KC_DB_PASSWORD
+              value: hunter2""",
+        )
+        findings = self.evaluate(production=broken)
+        self.assertTrue(any("KC_DB_PASSWORD" in p for p in findings))
+
+    def test_a_committed_secret_manifest_fails(self):
+        findings = self.evaluate(production=self.manifests["production"] + "---\nkind: Secret\n")
+        self.assertTrue(any("must not contain a Secret manifest" in p for p in findings))
+
+    def test_the_client_secret_placeholder_must_not_be_baked_in(self):
+        findings = self.evaluate(
+            production=self.manifests["production"] + f"# {contract.PLACEHOLDER_SECRET}\n"
+        )
+        self.assertTrue(any("client-secret placeholder" in p for p in findings))
+
+    def test_staging_and_production_must_run_the_same_image(self):
+        findings = self.evaluate(
+            staging=self.manifests["staging"].replace(
+                "quay.io/keycloak/keycloak:26.0.7", "quay.io/keycloak/keycloak:25.0.6"
+            )
+        )
+        self.assertTrue(any("same identity provider image" in p for p in findings))
+
+    def test_the_deployed_image_must_be_the_sandbox_image(self):
+        findings = contract.evaluate_deployment(
+            self.manifests,
+            self.compose.replace("quay.io/keycloak/keycloak:26.0.7", "quay.io/keycloak/keycloak:25.0.6"),
+        )
+        self.assertTrue(any("differs from the sandbox" in p for p in findings))
+
+    def test_the_issuer_host_is_tls_terminated(self):
+        broken = "\n".join(
+            line for line in self.manifests["production"].splitlines() if "- id.msgmate.io" not in line
+        )
+        findings = self.evaluate(production=broken)
+        self.assertTrue(any("over TLS" in p for p in findings))
+
+
+class DeploymentRendererTests(unittest.TestCase):
+    """The checked-in YAML is a rendered artifact, so it must never be hand-edited."""
+
+    def test_the_renderer_reproduces_the_checked_in_manifests(self):
+        sys.path.insert(0, str(ROOT / "development" / "identity-provider"))
+        import render_keycloak_manifests as renderer  # noqa: E402
+
+        for environment in contract.ENVIRONMENTS:
+            path = ROOT / contract.DEPLOYMENT_DIR / f"keycloak-msgmate-io-{environment}.yaml"
+            self.assertEqual(path.read_text(encoding="utf-8"), renderer.render(environment))
+
+    def test_check_mode_passes_and_is_quiet_about_staleness(self):
+        sys.path.insert(0, str(ROOT / "development" / "identity-provider"))
+        import render_keycloak_manifests as renderer  # noqa: E402
+
+        stderr = io.StringIO()
+        with redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            self.assertEqual(renderer.main([]), 0)
+        self.assertEqual(stderr.getvalue(), "")
 
 
 if __name__ == "__main__":
