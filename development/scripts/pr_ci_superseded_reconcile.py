@@ -21,11 +21,14 @@ ci#1069: the `yielded` arm used to always reject, which is what dyed the gate
 red for the exact 3-4-run burst this module exists for (a `labeled`/`unlabeled`
 burst cancels the in-flight run for the identical commit, the starved
 replacement behind our concurrency group is then yielded to, and *nobody*
-accepted). A yield is now accepted when a newer same-SHA, non-cancelled run
-that actually contains the gate job exists: that run posts the commit's newest
-`PR Test Merge Requirement` check, so it owns the verdict and this run's red
-gate is a stale duplicate. Hand-cancel, re-run and shutdown still fail closed
-(they leave no such run behind), and a missing replacement keeps exit 5.
+accepted). A yield is now accepted when a newer same-SHA, non-cancelled run owns
+the commit's verdict: that run posts the commit's newest `PR Test Merge
+Requirement` check, so this run's red gate is a stale duplicate. Ownership is
+judged on what the replacement has *not given up* rather than on the gate job
+being visible, because GitHub materialises a `needs`-gated job lazily - see the
+ci#1069 note on `yielded_gate_carrier`. Hand-cancel, re-run and shutdown still
+fail closed (they leave no such run behind), and a missing replacement keeps
+exit 5.
 
 Exit 3 is a *budget* expiry, not a replacement verdict: no replacement run ever
 got to testify before the wait budget ran out. Its summary starts with the
@@ -506,10 +509,9 @@ def reconcile(args, token, out=None):
                 return code, summary
             record(carrier)
             return 0, (
-                "accepted: %s Replacement run %s (status %s) for %s contains the "
-                "'%s' job, so its own check is the newer, authoritative verdict for "
-                "this commit; this yielded run defers to it instead of dyeing the "
-                "gate red."
+                "accepted: %s Replacement run %s (status %s) for %s owns the "
+                "authoritative '%s' verdict for this commit, so this yielded run "
+                "defers to it instead of dyeing the gate red."
                 % (summary, carrier.get("id"), carrier.get("status"), args.head_sha[:12], GATE_JOB_NAME)
             )
         # ci#1033: waiting is only meaningful when something can still produce a
