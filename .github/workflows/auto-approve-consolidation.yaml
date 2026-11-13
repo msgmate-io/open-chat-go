@@ -51,6 +51,22 @@ name: Auto-approve consolidation PRs
 #     PR that is merely `BEHIND` gets its branch updated (which re-triggers CI
 #     and this workflow) instead of failing.
 #
+# ci#1066: on this repository the approval half cannot be produced at all until a
+# write-access approver identity is configured (`CONSOLIDATE_APPROVER_TOKEN`) or
+# the `main` ruleset gains a bypass actor: a `github.token` approval is not "a
+# review from a reviewer with write access", and the promotion PR's author cannot
+# approve its own PR. Choosing approval-vs-bypass is a maintainer security
+# decision, so the step *classifies* the blocker instead of guessing:
+#   * a configured-but-unusable approver token (rejected, or lacking write
+#     access) is an admin bug and still fails the run loudly;
+#   * a missing one lets a `dev` -> `main` promotion PR end in
+#     `::notice::Awaiting maintainer merge` (plus an idempotent PR comment)
+#     rather than a red run, so a failing auto-approve result keeps meaning
+#     "a real regression";
+#   * consolidation PRs (`chore/consolidate-*`) still fail hard: the `dev`
+#     ruleset only requires the check, so an approval block there is a genuine
+#     change in configuration and not the accepted maintainer-merge state.
+#
 # Required admin step (one of, see DEVELOPMENT.md):
 #   * Preferred: create a dedicated reviewer identity (GitHub App or a
 #     fine-grained PAT with `pull_requests: write`) and store its token as the
@@ -236,28 +252,54 @@ jobs:
           set -uo pipefail
           REPO="$REPOSITORY"
 
-          if [ "$HAS_APPROVER_TOKEN" != "true" ] && \
-             [ "$EVENT_NAME" = "workflow_run" ]; then
-            echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured; falling back to github.token. This only works when Actions are allowed to approve PRs or the ruleset has a bypass actor for it."
-          fi
-
           # ci#538: preflight the credentials. Without this, a wrong/expired
           # CONSOLIDATE_APPROVER_TOKEN only surfaces later as a confusing
           # `gh pr view`/review failure (and, historically, as a bogus PR
           # reference), which reads like a workflow bug rather than the admin
           # configuration problem it is.
           #
+          # ci#1066: the preflight now *classifies* the two admin states instead
+          # of lumping them together, because they need different actions and
+          # only one of them is an accepted steady state:
+          #   * token missing   -> no approval can be posted at all; the
+          #                        `dev` -> `main` promotion hop reports
+          #                        "awaiting maintainer merge" below;
+          #   * token rejected  -> the identity is dead (HTTP 401): fatal;
+          #   * token without write access -> its approval cannot satisfy the
+          #                        `main` ruleset ("1 approving review by
+          #                        reviewers with write access"): also fatal.
+          #
           # The fallback path (`github.token`) is allowed to stay unknown: some
           # installation tokens cannot resolve `/user`, and the review call
           # itself is the authoritative check for them.
+          APPROVER_READY="false"
           if ! reviewer="$(gh api user --jq '.login' 2>/dev/null)"; then
             reviewer=""
           fi
-          if [ -z "$reviewer" ] && [ "$HAS_APPROVER_TOKEN" = "true" ]; then
-            echo "::error::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401). Re-issue the reviewer identity token: no approval can be posted until then."
-            exit 1
+          if [ "$HAS_APPROVER_TOKEN" = "true" ]; then
+            if [ -z "$reviewer" ]; then
+              echo "::error::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401). Re-issue the reviewer identity token: no approval can be posted until then."
+              exit 1
+            fi
+            can_write="$(gh api "repos/${REPO}" --jq '.permissions.push // false' 2>/dev/null || true)"
+            case "$can_write" in
+              true)
+                echo "Approver identity '${reviewer}' has write access to ${REPO}."
+                APPROVER_READY="true"
+                ;;
+              '')
+                echo "::warning::Could not verify whether '${reviewer}' has write access to ${REPO}; the review call is the authoritative check."
+                APPROVER_READY="true"
+                ;;
+              *)
+                echo "::error::CONSOLIDATE_APPROVER_TOKEN is accepted as '${reviewer}' but that identity has no write access to ${REPO} (repos.permissions.push=${can_write}), so its approval cannot satisfy the '1 approving review from a reviewer with write access' ruleset. Re-issue the token for a write-access identity (ci#1066)."
+                exit 1
+                ;;
+            esac
+          else
+            echo "No CONSOLIDATE_APPROVER_TOKEN configured; acting as '${reviewer:-unknown}', which cannot post a write-access approval."
           fi
-          echo "Acting as '${reviewer:-unknown}'."
+          echo "Acting as '${reviewer:-unknown}' (write-access approver identity: ${APPROVER_READY})."
 
           failures=0
 
@@ -451,7 +493,39 @@ jobs:
             elif attempt_merge "--admin"; then
               echo "Merged PR #${number} with --admin (ruleset bypass); green checks were verified above."
             else
-              echo "::error::Could not merge PR #${number} (no usable approval and no ruleset bypass for the acting identity)."
+              # ci#1066: classify the block instead of failing every case. The
+              # `main` ruleset demands "1 approving review by reviewers with
+              # write access"; a `github.token` review does not satisfy it, and
+              # the promotion PR's author cannot approve its own PR. Without a
+              # write-access approver identity, a ruleset bypass is the only
+              # other route, so a *missing* identity on the `dev` -> `main` hop
+              # is a known and accepted state: report it as awaiting a
+              # maintainer merge (a notice plus one idempotent PR comment)
+              # instead of a red run, so a failing auto-approve result keeps
+              # meaning "a real regression". A configured-but-unusable token
+              # stays fatal, and so does any block on a consolidation PR (whose
+              # only required gate is the check).
+              if [ "$APPROVER_READY" != "true" ] && \
+                 [ "$base_ref" = "main" ] && [ "$head_ref" = "dev" ]; then
+                echo "::notice::PR #${number} (${head_ref} -> ${base_ref}) is green and verified, but merging it needs an approving review from a write-access identity, which this automation cannot post (no CONSOLIDATE_APPROVER_TOKEN configured and no working ruleset bypass actor for the acting identity). Awaiting maintainer merge (ci#1066)."
+                awaiting_note="Awaiting maintainer merge (ci#1066): every required check on this dev -> main promotion PR is green and was verified via the API, but the main ruleset requires an approving review from a reviewer with write access and this workflow acts without a write-access approver identity (CONSOLIDATE_APPROVER_TOKEN is unset and no ruleset bypass actor is registered for it). A maintainer can merge this PR as-is; configuring the approver token or a bypass actor re-enables the automated promotion hop."
+                existing_note="$(gh pr view "$number" --repo "$REPO" --json comments \
+                  --jq '[.comments[]?.body | select(contains("Awaiting maintainer merge (ci#1066)"))] | length' \
+                  2>/dev/null || echo 0)"
+                if [ "${existing_note:-0}" = "0" ]; then
+                  gh pr comment "$number" --repo "$REPO" --body "$awaiting_note" >/dev/null 2>&1 \
+                    || echo "::warning::Could not post the awaiting-maintainer-merge note on PR #${number}."
+                else
+                  echo "PR #${number} already carries the awaiting-maintainer-merge note; not repeating it."
+                fi
+                echo "::endgroup::"
+                continue
+              fi
+              if [ "$HAS_APPROVER_TOKEN" = "true" ] && [ "$approved" != "true" ]; then
+                echo "::error::CONSOLIDATE_APPROVER_TOKEN is configured but no approving review could be posted on PR #${number} and the ruleset bypass does not work either; check that the token belongs to an identity with write access to this repository (ci#1066)."
+              else
+                echo "::error::Could not merge PR #${number} (no usable approval and no ruleset bypass for the acting identity)."
+              fi
               failures=$((failures + 1))
               echo "::endgroup::"
               continue

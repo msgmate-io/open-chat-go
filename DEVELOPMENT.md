@@ -39,13 +39,13 @@ lightweight PR CI. Release hops from `main` to `production` and the private
 full-build/deployment automation are maintainer-controlled; the public workflow
 files and the application code live here.
 
-### The promotion hop is agent-closable, and verifying it is the price
+### The promotion hop is green-gated, and verifying it is the price
 
 Merging the `[Dev promotion]` pull request is what deploys ci.msgmate.io, so
 while that merge stayed a maintainer click the loop could never close itself:
-tickets piled up as "implemented" but never "live" (ci#1055). The development
-lead may therefore merge the promotion PR on its own once **all required checks
-on it are green** - and must then verify that the deployment actually serves the
+tickets piled up as "implemented" but never "live" (ci#1055). The promotion PR
+may therefore be merged by automation **once all required checks on it are
+green** - and the deployment must then be verified to actually serve the
 promoted code. The two decisions are implemented once, as unit-tested
 predicates, in `development/scripts/promotion_hop.py`:
 
@@ -75,6 +75,29 @@ broken deployment, not a note: report it on the ticket and loop, do not close th
 ticket. A ticket with a behavioural criterion closes only after its feature has
 been observed working on ci.msgmate.io; a green promotion PR and a successful
 rollout are necessary, never sufficient.
+
+**"Green" is not "mergeable" (ci#1066).** The `main` ruleset requires one
+approving review *from a reviewer with write access*, and neither `github.token`
+(a `GITHUB_TOKEN` approval does not count) nor the PR author can supply it - so
+run `43298179797` ended **red** on promotion PR #36 while all 25 checks on it
+were `SUCCESS`. A red run must keep meaning "a real regression", so the
+`Auto-approve consolidation PRs` workflow now classifies the block instead of
+uniformly failing it:
+
+| State | Workflow |
+| --- | --- |
+| `CONSOLIDATE_APPROVER_TOKEN` unset/incomplete, `dev` -> `main` hop otherwise green | `::notice::` + one idempotent PR comment, `Awaiting maintainer merge (ci#1066)`, run stays green - a maintainer merges |
+| `CONSOLIDATE_APPROVER_TOKEN` rejected (`401`) or accepted without `push` on the repo | `::error::`, fatal: no approval can be posted until an admin re-issues it for a write-access identity |
+| any block on a consolidation PR (`chore/consolidate-*` -> `dev`) | `::error::`, fatal: `dev`'s only gate is the check, so a block there is real |
+
+Approval-vs-bypass (issue the approver token, register a ruleset bypass actor for
+the automation app, or leave the hop human-merged) is a security configuration
+choice for a maintainer; the workflow only reports which one is in force. Because
+the promotion branch and PR share one head, any `dev` merge dismisses a standing
+approval, so an approval-based flow must approve *after* the last push. The
+promotion PR body is refreshed in place on every `dev` merge and now names the
+resolved `dev` head rather than the (possibly older) merge commit of the PR that
+triggered the refresh.
 
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
