@@ -60,7 +60,32 @@ cd "$REPO_ROOT"
 # Working purely with absolute forms makes the `cd` below a no-op and keeps the
 # "compile via the monorepo layout" contract independent of the caller's cwd.
 INTEGRATION_SRC="$(cd "$(dirname "${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}")" && pwd)/$(basename "${INTEGRATION_SRC}")"
-WORKSPACE_PATH="$(cd "$REPO_ROOT" && pwd)/$(basename "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
+
+# ci#1075: WORKSPACE_PATH is a *multi-component* monorepo path
+# (`clients/integrations/msgmate_coder_integration`) and every component is part
+# of the compile contract - the module's `replace backend => ../../../backend`
+# only resolves at that depth. Resolving only `$(basename ...)` onto REPO_ROOT
+# silently placed the checkout at the repo root instead, so the relative
+# replacements escaped the checkout and the build failed on every run with the
+# misleading `backend@v0.0.0: replacement directory ../../../backend does not
+# exist` (ci#1075). Keep the whole relative path; still accept an absolute path
+# (callers that stage the workspace outside the checkout, e.g. the self-test).
+WORKSPACE_PATH_RAW="${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}"
+if [ "${WORKSPACE_PATH_RAW#/}" != "$WORKSPACE_PATH_RAW" ]; then
+  # Absolute form: the caller stages the workspace outside the checkout (the
+  # hermetic self-test does this), so use it exactly as given.
+  WORKSPACE_PATH="$WORKSPACE_PATH_RAW"
+else
+  # A `..` component would defeat the layout contract this fix restores (and
+  # would let a typo extract the profile over a sibling checkout) - reject it.
+  case "$WORKSPACE_PATH_RAW" in
+    ..|../*|*/..|*/../*)
+      echo "error: WORKSPACE_PATH=$WORKSPACE_PATH_RAW escapes $REPO_ROOT" >&2
+      exit 1 ;;
+  esac
+  WORKSPACE_PATH="$REPO_ROOT/${WORKSPACE_PATH_RAW#./}"
+  WORKSPACE_PATH="${WORKSPACE_PATH%/}"
+fi
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"

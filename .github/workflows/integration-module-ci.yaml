@@ -21,6 +21,10 @@ on:
       - development/scripts/check_integration_decoupling.py
       - development/scripts/tests/test_integration_decoupling.sh
       - development/scripts/tests/test_integration_module_ci_defaults.sh
+      # ci#1075: the workspace placement (monorepo-relative WORKSPACE_PATH) is
+      # what makes an integration's `replace backend => ../../../backend`
+      # resolve; a flattened path silently breaks every run.
+      - development/scripts/tests/test_integration_module_ci_workspace_path.sh
       # ci#423 step 4: the dependency-surface measurement and its baseline.
       - backend/scripts/integration_dep_surface.py
       # ci#423 step 4: the dependency-surface gate wrapper (baseline validation
@@ -117,6 +121,13 @@ jobs:
       # decoupled path a hard gate; the mapping is pinned hermetically too.
       - name: decoupling defaults self-test
         run: bash development/scripts/tests/test_integration_module_ci_defaults.sh
+
+      # ci#1075: the integration checkout must land at the FULL monorepo path
+      # (clients/integrations/<id>), otherwise its relative `replace` targets
+      # escape the checkout and the build fails with a misleading
+      # "replacement directory ../../../backend does not exist".
+      - name: workspace path self-test
+        run: bash development/scripts/tests/test_integration_module_ci_workspace_path.sh
 
       # ci#423 step 4: the dependency-surface delta (baseline) reporting decides
       # whether an integration regressed, so its outcomes are pinned
