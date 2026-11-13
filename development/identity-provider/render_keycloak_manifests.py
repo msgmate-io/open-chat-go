@@ -82,12 +82,12 @@ metadata:
 
 
 def _service_account_doc() -> str:
-    return """---
+    return f"""---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: keycloak
-  namespace: identity-provider
+  namespace: {NAMESPACE}
 automountServiceAccountToken: false
 """
 
@@ -257,12 +257,12 @@ spec:
 
 
 def _service_doc() -> str:
-    return """---
+    return f"""---
 apiVersion: v1
 kind: Service
 metadata:
   name: keycloak
-  namespace: identity-provider
+  namespace: {NAMESPACE}
   labels:
     app.kubernetes.io/name: keycloak
 spec:
@@ -318,14 +318,14 @@ spec:
 
 
 def _network_policy_doc() -> str:
-    return """---
+    return f"""---
 # The IdP only accepts traffic from the ingress controller, only talks to DNS and
 # its database, and only exposes its health endpoints inside the cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: keycloak
-  namespace: identity-provider
+  namespace: {NAMESPACE}
 spec:
   podSelector:
     matchLabels:
