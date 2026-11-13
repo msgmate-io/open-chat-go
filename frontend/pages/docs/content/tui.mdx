@@ -98,6 +98,25 @@ user config directory (for example
 `0600` permissions on Unix, so the device stays authorized until the token
 expires. Override the location with `OPEN_CHAT_TUI_CONFIG_DIR`.
 
+### Concurrent sessions
+
+Several `open-chat code` / `open-chat tui` sessions may run side by side on one
+device. A session started by a coder integration does not use the shared
+`config.json` above: it gets its own private directory
+`<config dir>/sessions/<session id>/`, resolved by the core helper
+`SessionTUIConfigDir` (`backend/cmd/tui_session.go`) and exposed to the TUI as
+`OPEN_CHAT_TUI_CONFIG_DIR`. The `<config dir>` is `OPEN_CHAT_TUI_CONFIG_DIR` when
+the user set it, otherwise the platform user config directory; the `<session id>`
+is the chat UUID (or the endpoint/folder name) reduced to a single `[a-z0-9-]`
+path element, created with `0700` permissions because it holds bearer tokens.
+
+The consequence is that two shells never write the same file, so neither can
+fail on a lock/atomic replace nor clobber the other's active server and chat
+selection. Because the directories are per session, a plain `open-chat tui`
+(which keeps the shared device file) and a coding session see separate
+server/token lists - log in once per session directory, or point
+`OPEN_CHAT_TUI_CONFIG_DIR` at your own directory to share one.
+
 ```json
 {
   "servers": [
