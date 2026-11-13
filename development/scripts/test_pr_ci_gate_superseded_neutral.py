@@ -406,8 +406,9 @@ class EndToEndTests(ShippedShellTestCase):
         self.write_labels()
         reconciled = self.run_reconcile(
             stub_stdout=(
-                "accepted: yielded: replacement run 424242 (status queued) for aaaaaaaaaaaa "
-                "contains the 'PR Test Merge Requirement' job.\nreplacement_run=424242\naccepted=true"
+                "accepted: yielded: replacement run 424242 (status in_progress) for aaaaaaaaaaaa "
+                "owns the authoritative 'PR Test Merge Requirement' verdict for this commit."
+                "\nreplacement_run=424242\naccepted=true"
             ),
             stub_exit=0,
         )

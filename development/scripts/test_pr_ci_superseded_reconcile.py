@@ -370,9 +370,9 @@ class ReconcileTests(unittest.TestCase):
         Observed shape: a `labeled`/`unlabeled` burst cancels three runs for the
         same SHA while a starved replacement sits queued behind this run's own
         `pr-ci-<pr>-<sha>` concurrency group. Yielding is now accepted when that
-        replacement is a newer, non-cancelled run that actually contains the gate
-        job: its `PR Test Merge Requirement` check is the newer, authoritative
-        verdict for the commit, so this run must not stamp a second, red one.
+        replacement is a newer, non-cancelled run that owns the verdict: its
+        `PR Test Merge Requirement` check is the newer, authoritative verdict for
+        the commit, so this run must not stamp a second, red one.
         """
         api = FakeApi(
             runs=[
@@ -406,7 +406,7 @@ class ReconcileTests(unittest.TestCase):
         )
 
     def test_yield_without_a_gate_carrying_replacement_stays_rejected(self):
-        """ci#1069 fails closed: a yield with no gate-carrying replacement stays 5.
+        """ci#1069 fails closed: a yield with no verdict owner stays 5.
 
         A `closed`-event deployment run of the same SHA never contains the
         `PR Test Merge Requirement` job and a run whose gate job was itself
