@@ -2465,44 +2465,76 @@ jobs:
           # `continue-on-error`, which is how the missing checkout went unnoticed.
           if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
             echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
-            echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            {
+              echo "accepted=false"
+              echo "summary=reconciler missing from the checkout, so no replacement verdict could be adopted"
+            } >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           python3 development/scripts/pr_ci_superseded_reconcile.py \
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}" \
             --head-sha "${{ github.event.pull_request.head.sha }}" \
-            --run-id "${{ github.run_id }}"
+            --run-id "${{ github.run_id }}" > "${RUNNER_TEMP}/superseded-reconcile.log" 2>&1
           reconcile_status=$?
           set -e
-          if [ "${reconcile_status}" -eq 0 ]; then
+          cat "${RUNNER_TEMP}/superseded-reconcile.log"
+          # ci#1069: accept only on exit 0 *and* the reconciler's explicit
+          # `accepted=true` verdict line, so a truncated or crashed run can never
+          # be mistaken for an accepted supersession. The summary quoted by the
+          # gate step below is the newest line that is neither blank nor that
+          # verdict, so a traceback reports its exception message instead of the
+          # bare `Traceback (most recent call last):` header.
+          reconcile_log="${RUNNER_TEMP}/superseded-reconcile.log"
+          reconcile_verdict="$(tail -n 1 "${reconcile_log}")"
+          reconcile_summary="$(grep -v -e '^[[:space:]]*$' -e '^accepted=' "${reconcile_log}" | tail -n 1 | tr '\n' ' ' || true)"
+          if [ "${reconcile_status}" -eq 0 ] && [ "${reconcile_verdict}" = "accepted=true" ]; then
             accepted=true
           else
             accepted=false
           fi
           # Never fail here; the gate step below decides and prints the reason
           # next to the existing label and result checks.
-          echo "accepted=${accepted}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "accepted=${accepted}"
+            echo "summary=${reconcile_summary}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Enforce test label and passing tests
         run: |
           # ci#659: outcome of the superseded-run reconciliation step above
           # (empty when it did not run, i.e. no upstream suite was cancelled).
           superseded_accepted="${{ steps.superseded-reconcile.outputs.accepted }}"
+          # ci#1069: the reconciler's own verdict line, so the notice/error below
+          # names the run whose gate is adopted (or why nothing could be adopted)
+          # instead of leaving the reader to hunt the step log.
+          superseded_summary="${{ steps.superseded-reconcile.outputs.summary }}"
           # A cancelled gate is only acceptable when this run was superseded: the
           # commit no longer needs gating (PR closed, or a newer commit is the live
           # PR head) or a replacement run for the exact same commit reached this same
           # gate job and produced a real verdict, which is adopted here. Everything
           # else keeps the gate red, so an untested tree can never look mergeable.
+          #
+          # ci#1069: `accepted` is only ever `true` when the reconciler exited 0
+          # *and* printed `accepted=true`; a hand-cancel, a re-run, a shutdown, an
+          # API error, an unparseable payload, a yield without a replacement and a
+          # missing reconciler all leave it `false` and keep this gate red.
           accept_superseded() {
             if [ "${superseded_accepted}" = "true" ]; then
-              echo "::notice::$1 were superseded on this commit; adopting the verdict of the replacement run instead of failing the gate."
+              echo "::notice::$1 were superseded on this commit; adopting the replacement run's verdict instead of failing the gate. ${superseded_summary}"
               return 0
             fi
-            echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red."
+            echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red. ${superseded_summary}"
             return 1
           }
           set -euo pipefail
+          # Fail closed and legibly when the label snapshot is absent: `cat` on a
+          # missing file would abort the step with a shell error that reads like an
+          # infrastructure hiccup rather than a missing-gate-input refusal.
+          if [ ! -f "${RUNNER_TEMP}/pr-labels.txt" ]; then
+            echo "::error::${RUNNER_TEMP}/pr-labels.txt is missing, so the required test label cannot be verified; the gate stays red."
+            exit 1
+          fi
           # Production promotion PRs run the full suite without relying on
           # labels (burst label-adds race with the event payload snapshot).
           if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
@@ -2716,6 +2748,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
+
+      # ci#1069: the shell that turns the reconciler's verdict into the gate's
+      # answer is part of the contract too. Pin it end to end - extract both
+      # `run:` blocks from this workflow, replay a stubbed reconciler, and assert
+      # every fail-closed arm (hand-cancel, re-run, shutdown, API error,
+      # unparseable payload, yield without a replacement, missing reconciler,
+      # missing pr-labels.txt) keeps the check red while an accepted supersession
+      # emits the notice naming the adopted run.
+      - name: Superseded gate acceptance unit tests
+        run: |-
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_gate_superseded_neutral.py -v
 
       # ci#1033/ci#1034: the merge-gate verdict is decided by the shared
       # linked-issue parser plus the superseded-attempt rules. Pin both end to

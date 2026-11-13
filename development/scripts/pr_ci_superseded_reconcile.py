@@ -34,6 +34,18 @@ it. Only a replacement that has NOT begun executing is waited for / yielded to:
 that is the ci#835 shape, where the cancelled run's red gate was the commit's
 newest check precisely because no replacement ever started.
 
+A same-SHA *burst* is the ci#1069 shape: opening a PR and adding its label within
+a few seconds creates three or four runs for the same head SHA, concurrency
+cancels all but the newest, and the late ones can be cancelled before a single
+step executed - so their gate job had nothing to decide from and went red for a
+tree the newest run was testing (PR #45 head 7711516c: four runs, replacement
+43313025364 green on every finished job, gate red). GitHub materialises every
+job of a run up front, so the `PR Test Merge Requirement` job of a *live*
+(non-completed) same-SHA attempt proves that attempt will post its own check,
+which is newer than ours and therefore the one branch protection reads. Such an
+attempt is adopted exactly like an `in_progress` replacement; a burst in which
+every sibling is cancelled adopts nothing and stays red.
+
 Waiting for a replacement is futile when the replacement cannot start. The
 workflow concurrency group (`pr-ci-<number>-<head sha>`) is held by THIS run
 until it completes, and the `always()`-gated gate job keeps a cancelled run
@@ -189,8 +201,8 @@ def api_pages(repo, path, token, per_page=PAGE_SIZE, limit=MAX_PAGES):
             return
 
 
-def gate_conclusion(repo, run_id, token):
-    """Verdict of the run's gate job, or None when the run has no gate job.
+def gate_job(repo, run_id, token):
+    """The run's `PR Test Merge Requirement` job, or None when it never had one.
 
     The jobs listing is paginated: a run with more jobs than fit on one page
     would otherwise hide the gate job and be skipped as if it never gated the
@@ -198,8 +210,16 @@ def gate_conclusion(repo, run_id, token):
     """
     for job in api_pages(repo, "/actions/runs/%s/jobs" % run_id, token):
         if job.get("name") == GATE_JOB_NAME:
-            return job.get("conclusion") or job.get("status")
+            return job
     return None
+
+
+def gate_conclusion(repo, run_id, token):
+    """Verdict of the run's gate job, or None when the run has no gate job."""
+    job = gate_job(repo, run_id, token)
+    if job is None:
+        return None
+    return job.get("conclusion") or job.get("status")
 
 
 def replacement_runs(repo, head_sha, current_run_id, token):
@@ -257,6 +277,39 @@ SUPERSEDED_CONCLUSIONS = ("cancelled", "stale")
 
 def is_superseded(conclusion):
     return isinstance(conclusion, str) and conclusion in SUPERSEDED_CONCLUSIONS
+
+
+def live_gate_replacement(runs, repo, token):
+    """Newest same-SHA attempt that will post its own gate verdict, or None.
+
+    ci#1069: opening a PR and adding its label within a few seconds creates three
+    or four `pull_request` runs for the *same* head SHA. Concurrency cancels all
+    but the newest and the late ones can be cancelled before a single step
+    executed, so their gate job had nothing to decide from and went red.
+
+    GitHub materialises every job of a run up front (in `queued`/`waiting` while
+    its `needs` are unresolved), so the presence of the `PR Test Merge
+    Requirement` job in a *not-yet-started* attempt for this exact commit proves
+    that attempt will post its own required check - which is newer than this
+    run's and therefore the one branch protection evaluates. Such an attempt is a
+    real replacement, and this run defers to it instead of yielding the
+    concurrency group and reporting `accepted=false` (a red gate for a tree the
+    replacement is about to test). A not-yet-started attempt without the gate
+    job, a completed one and an in_progress one prove nothing *here*: the first
+    has no required check to post, and the other two are judged by their own
+    branches above.
+    """
+    for run in runs:
+        if run.get("status") in ("completed", "in_progress"):
+            # A completed attempt is judged by `gate_verdict` above (its own real
+            # job conclusion, never a cancelled or missing one) and an in_progress
+            # attempt is handled by its own branch below; neither is a *pending*
+            # replacement as meant here.
+            continue
+        if gate_job(repo, run.get("id"), token) is None:
+            continue
+        return run
+    return None
 
 
 def gate_verdict(runs, repo, token):
@@ -389,6 +442,29 @@ def reconcile(args, token):
         # attempt is waited for below and, if it starves behind this run's
         # concurrency group, the group is handed over instead of stamping a red
         # verdict on a tree nobody is gating.
+        # ci#1069: a burst of runs for the same SHA (open + label events) leaves
+        # several *cancelled* siblings behind and no run able to testify. Worse,
+        # a run can be cancelled while its gate already decided something - the
+        # cancelled rerun then reports red for a tree the live run is testing
+        # (PR #45 head 7711516c: four runs, replacement 43313025364 green on
+        # every finished job, gate red). A live same-SHA attempt that carries the
+        # gate job will post its own `PR Test Merge Requirement` check, which is
+        # newer than ours and therefore the verdict branch protection reads, so
+        # this run defers to it instead of failing the commit.
+        live = live_gate_replacement(candidates, args.repo, token)
+        if live is not None:
+            return 0, (
+                "accepted: replacement run %s for %s is %s and carries the '%s' "
+                "job, so its own check is newer and authoritative for this "
+                "commit; superseded run %s defers to it."
+                % (
+                    live.get("id"),
+                    args.head_sha[:12],
+                    live.get("status"),
+                    GATE_JOB_NAME,
+                    args.run_id,
+                )
+            )
         running = next((r for r in candidates if r.get("status") == "in_progress"), None)
         if running is not None:
             return 0, (

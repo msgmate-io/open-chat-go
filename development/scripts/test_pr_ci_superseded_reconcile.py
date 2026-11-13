@@ -217,6 +217,78 @@ class ReconcileTests(unittest.TestCase):
         self.assertIn(str(NEWER), summary)
         self.assertEqual(self.cancelled, [], "a progressing run must not be cancelled")
 
+    # ci#1069: opening a PR and adding its label within a few seconds creates
+    # three or four `pull_request` runs for the *same* head SHA. Concurrency
+    # cancels all but the newest and the late ones can be cancelled before they
+    # executed a step, so their gate job had nothing to decide from and went red
+    # (PR #45 head 7711516c: four runs, replacement 43313025364 green on every
+    # finished job, gate red). Such a burst must not red the commit while a live
+    # same-SHA attempt that carries the gate job still owns the verdict.
+    def test_same_sha_burst_defers_to_the_live_attempt_with_the_gate_job(self):
+        api = FakeApi(
+            runs=[
+                run(CURRENT, status="completed", conclusion="cancelled"),
+                run(NEWER, status="completed", conclusion="cancelled"),
+                run(NEWER + 1, status="completed", conclusion="cancelled"),
+                run(NEWER + 2, status="queued"),
+            ],
+            jobs={NEWER + 2: [gate(status="queued", conclusion=None)]},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 0, summary)
+        self.assertIn(str(NEWER + 2), summary)
+        self.assertIn("carries the", summary)
+        self.assertEqual(self.cancelled, [], "a live replacement must not be cancelled")
+
+    def test_yield_group_is_bypassed_when_the_queued_replacement_gates(self):
+        # A queued replacement is normally yielded to after the grace window so
+        # it can pick up the concurrency group. When it carries the gate job the
+        # verdict belongs to it outright, so this run accepts instead of exiting 5
+        # (which the workflow maps to `accepted=false`, i.e. a red gate for a tree
+        # the replacement is actively testing).
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="queued", created_at=CREATED_STARVED)],
+            jobs={NEWER: [gate(status="queued", conclusion=None)]},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 0, summary)
+        self.assertIn(str(NEWER), summary)
+
+    def test_burst_without_any_gating_attempt_stays_red(self):
+        # Every sibling is a cancelled run, so nothing can testify about the
+        # commit: accept nothing and keep the gate red (exit 2, "never gated").
+        api = FakeApi(
+            runs=[
+                run(CURRENT, status="completed", conclusion="cancelled"),
+                run(NEWER, status="completed", conclusion="cancelled"),
+                run(NEWER + 1, status="completed", conclusion="cancelled"),
+                run(NEWER + 2, status="completed", conclusion="cancelled"),
+            ],
+            jobs={},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 2, summary)
+        self.assertIn("never gated", summary)
+
+    def test_burst_never_defers_to_a_completed_sibling_without_a_live_gate(self):
+        # A *completed* attempt is judged by its own job conclusion; a cancelled
+        # one carrying a green gate job must not lend that verdict to this run.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="completed", conclusion="cancelled")],
+            jobs={NEWER: [gate()]},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 2, summary)
+
+    def test_live_attempt_without_the_gate_job_is_not_a_replacement(self):
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="queued", created_at=CREATED_FRESH)],
+            jobs={NEWER: [gate(name="Run PR CI Go Tests", status="queued", conclusion=None)]},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 3, summary)
+        self.assertIn("still queued", summary)
+
     # ci#1033: a superseded attempt is not a verdict. The head e846fb8d of a
     # consolidation PR had five runs (four `cancelled`, one live) and the
     # required check stayed `COMPLETED/FAILURE` from attempt 1 while attempt 2
@@ -803,7 +875,14 @@ class WorkflowWiringTests(unittest.TestCase):
         # Exit code 5 (yielded) is non-zero, so the shell maps it to
         # `accepted=false` and the gate job's own run never turns green: the
         # replacement run's gate owns the verdict from then on.
-        self.assertIn("if [ \"${reconcile_status}\" -eq 0 ]; then", self.gate)
+        #
+        # ci#1069: exit 0 alone is no longer enough - the acceptance requires the
+        # reconciler's explicit `accepted=true` line as well, so a truncated or
+        # crashed run (which can also exit 0) cannot read as an acceptance.
+        self.assertIn(
+            'if [ "${reconcile_status}" -eq 0 ] && [ "${reconcile_verdict}" = "accepted=true" ]; then',
+            self.gate,
+        )
         self.assertIn("accepted=false", self.gate)
 
     def test_default_wait_budget_covers_a_whole_replacement_run(self):
