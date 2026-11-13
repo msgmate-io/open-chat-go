@@ -53,6 +53,10 @@ type TurnOutcome struct {
 	// sent (ci#680), so the reader can surface it as `context_budget` metadata
 	// and the `coder_context` tool can answer with the turn's real numbers.
 	Context ContextUsageReport
+	// EmptyFinalStreak is the interaction state of ci#1065: how many turns of
+	// the interaction in a row ended without a final summary, including this
+	// one. AutoContinue reads it to report a streak instead of retrying.
+	EmptyFinalStreak int
 }
 
 // reason returns the recorded reason, or the completed default for a nil outcome.

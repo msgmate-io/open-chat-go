@@ -148,6 +148,13 @@ const (
 	contextRetryMaxMessageChars   = 4000
 )
 
+// emptyFinalNudgeStreakLimit is the number of consecutive empty-final turns of
+// an interaction after which the tool loop stops asking for a summary and
+// settles the turn as TurnEndedEmptyFinalText instead (ci#1065). The first
+// empty final is nudged once; from the second consecutive one the turn is
+// reported and AutoContinue stops retrying it.
+const emptyFinalNudgeStreakLimit = 2
+
 // reasoningChunkPrefix marks an in-band chunk on the single string chunk
 // channel that carries provider reasoning (OpenRouter `delta.reasoning`, or the
 // common `reasoning_content` alias) rather than user-visible assistant content.
@@ -492,6 +499,48 @@ func streamChatCompletion(
 		aiResponseComplete := false
 		emptyContinuationRetried := false
 		malformedInlineToolCallRetried := false
+		// ci#1065: a turn must never settle on an empty final message. A round
+		// that would settle the turn while the turn already ran tool calls and
+		// its assistant content is empty (provider reasoning does not count as
+		// content, it never reaches aiResponse) gets exactly one synthetic
+		// short user message asking for a one-paragraph summary with no
+		// further tool calls. The nudge is capped at one per turn, and it is
+		// suppressed once the interaction already ended empty
+		// emptyFinalNudgeStreakLimit times in a row, because a model that
+		// keeps ending empty must be reported instead of nudged forever.
+		emptyFinalNudged := false
+		emptyFinalStreak := meta.EmptyFinalStreak
+		emptyFinalNotice := "You stopped without a final answer. Reply with a one-paragraph summary of what you did in this turn, in plain text, and do not call any tools."
+		nudgeEmptyFinal := func() bool {
+			if emptyFinalNudged {
+				return false
+			}
+			if emptyFinalStreak >= emptyFinalNudgeStreakLimit {
+				return false
+			}
+			emptyFinalNudged = true
+			emptyFinalStreak++
+			currentMessages = append(currentMessages, map[string]interface{}{
+				"role":    "user",
+				"content": emptyFinalNotice,
+			})
+			logging.Debugf(
+				"Turn would settle on empty final text after %d tool call(s); asking once for a summary (empty-final streak %d)",
+				totalToolCalls, emptyFinalStreak,
+			)
+			return true
+		}
+		// emptyFinalReason settles an empty final round: if the nudge was
+		// already spent (or refused by the streak limit) the turn is reported
+		// as ended without a final summary, so the reader can explain it
+		// instead of finishing on an empty message (ci#1065).
+		emptyFinalReason := func() string {
+			if emptyFinalNudged || emptyFinalStreak >= emptyFinalNudgeStreakLimit {
+				return TurnEndedEmptyFinalText
+			}
+			return TurnEndedCompleted
+		}
+
 		var toolCallResult *toolCallResult
 		var err error
 
@@ -865,6 +914,30 @@ func streamChatCompletion(
 							logging.Debugf("No handler available, would execute interaction_complete tool: %s", actualToolName)
 						}
 					}
+				}
+				// ci#1065: the turn would settle here. If it already ran tool
+				// calls and produced no final assistant text (reasoning-only
+				// output is empty by construction: provider reasoning never
+				// enters aiResponse), ask once for a one-paragraph summary
+				// without tool calls instead of finishing on an empty message.
+				// A round that is still empty after that - or one that is not
+				// nudged because the interaction already ended empty in a row -
+				// settles as TurnEndedEmptyFinalText.
+				if totalToolCalls > 0 && strings.TrimSpace(toolCallResult.aiResponse) == "" {
+					if nudgeEmptyFinal() {
+						aiResponseComplete = false
+						continue
+					}
+					if meta.Outcome != nil {
+						meta.Outcome.EmptyFinalStreak = emptyFinalStreak
+					}
+					recordOutcome(emptyFinalReason())
+					return
+				}
+				if meta.Outcome != nil {
+					// A settle with real assistant text clears the streak: the
+					// interaction is reporting its work again.
+					meta.Outcome.EmptyFinalStreak = 0
 				}
 				recordOutcome(TurnEndedCompleted)
 				return
