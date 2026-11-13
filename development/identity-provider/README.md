@@ -47,6 +47,8 @@ browser ──POST /auth/login──▶ msgmate.io (open-chat backend)          
 | `realm/msgmate-io-main-realm.json` | Keycloak realm `main` - the confidential `open-chat` client, PKCE S256, authorization-code flow only, no self-registration, no seeded users. |
 | `development/helm-identity-provider/ci-1061-identity-provider.patch` | The chart change (`identityProvider:` block, `OCI_IDENTITY_PROVIDER_*` env, `secretKeyRef` wiring) - see that directory's README. |
 | `development/scripts/identity_provider_realm_contract.py` | Pins the realm/chart agreement and the no-secrets rule. |
+| `deploy/keycloak-msgmate-io-production.yaml` / `deploy/keycloak-msgmate-io-staging.yaml` | The rendered IdP deployment: Namespace, Deployment, Service, Ingress and NetworkPolicy for `id.msgmate.io` / `id.stage.msgmate.io`. Generated - never edit by hand. |
+| `render_keycloak_manifests.py` | Renders the two manifests above from the same `ENVIRONMENTS` table the contract checks, so the deployed issuer cannot drift from the chart's issuer. |
 
 `enabled` is `false` in the chart default (`backend/values.yaml`), so a default
 render produces no `OCI_IDENTITY_PROVIDER_*` env; only the
@@ -62,11 +64,35 @@ once per environment and rarely change.
    dedicated namespace, exposed at `id.msgmate.io` (production) /
    `id.stage.msgmate.io` (staging) with TLS, and `KC_HOSTNAME` set to that host so
    the issuer in the discovery document matches the values exactly.
-2. Import the realm template:
+
+   The committed manifests in `deploy/` are exactly that deployment:
+
+   ```bash
+   # Re-render after changing render_keycloak_manifests.py (the checked-in YAML is
+   # a build artifact, CI fails when it is stale):
+   python3 development/identity-provider/render_keycloak_manifests.py --write
+
+   # Prerequisites the operator provides out of band (none of it in git):
+   #   namespace identity-provider
+   #   Secret keycloak-db    : host, port, database, username, password
+   #   Secret keycloak-admin : username, password   (bootstrap admin)
+   #   Secret keycloak-tls   : serving certificate for the id. host, OR let
+   #                           cert-manager issue it for the Ingress
+   #   ConfigMap keycloak-realm : main.json <- realm/msgmate-io-main-realm.json
+   kubectl apply -f development/identity-provider/deploy/keycloak-msgmate-io-staging.yaml
+   ```
+
+   The pod starts with `--import-realm`, so the ConfigMap mount is imported on
+   first boot; the Deployment, Service, Ingress (`affinity: cookie`, because
+   `KC_CACHE` is `local`) and NetworkPolicy (ingress controller in, DNS + Postgres
+   out) are all in that one file. Promote the production file only after staging
+   serves discovery.
+2. Import the realm template (already done by `--import-realm` on first boot; this
+   is the manual path for an already-running IdP):
 
    ```bash
    kubectl -n identity-provider exec deploy/keycloak -- \
-     /opt/keycloak/bin/kc.sh import --file /realm/main.json
+     /opt/keycloak/bin/kc.sh import --file /opt/keycloak/data/import/main.json
    ```
 
    then replace the placeholder client secret with the real one in the Keycloak
@@ -102,7 +128,18 @@ It asserts the realm name, the confidential client, PKCE, "no direct grants, no
 self-registration, no seeded users, placeholder secret only", and for every chart
 values file that enables the integration that the issuer
 (`https://id.<host>/realms/main`), the client id and the **exact** `redirectURL`
-all match the realm's registered redirect URIs.
+all match the realm's registered redirect URIs. It also checks the rendered
+deployments in `deploy/`: `KC_HOSTNAME` is exactly the issuer host the chart
+points at, `--import-realm` is in the container args, the issuer host is on a TLS
+Ingress, no credential is inline (everything goes through `secretKeyRef`), no
+`Secret` manifest is committed, and staging and production run the same image as
+the sandbox compose file.
+
+The checked-in manifests are a render, so CI also re-renders them:
+
+```bash
+python3 development/identity-provider/render_keycloak_manifests.py   # --check is the default
+```
 
 Live, after the rollout:
 
