@@ -364,6 +364,112 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(code, 5)
         self.assertIn("yielded:", summary)
 
+    def test_yield_with_a_gate_carrying_replacement_is_accepted(self):
+        """ci#1069: the 3-4-run burst that dyed the gate red.
+
+        Observed shape: a `labeled`/`unlabeled` burst cancels three runs for the
+        same SHA while a starved replacement sits queued behind this run's own
+        `pr-ci-<pr>-<sha>` concurrency group. Yielding is now accepted when that
+        replacement is a newer, non-cancelled run that actually contains the gate
+        job: its `PR Test Merge Requirement` check is the newer, authoritative
+        verdict for the commit, so this run must not stamp a second, red one.
+        """
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 1, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 2, status="queued", created_at=CREATED_STARVED),
+            ],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [gate(conclusion="cancelled")],
+                NEWER - 2: [gate(status="queued", conclusion=None)],
+            },
+        )
+        out = {}
+        mod._FETCH = api
+        code, summary = mod.reconcile(ns(), "token", out)
+        self.assertEqual(code, 0, summary)
+        self.assertTrue(summary.startswith("accepted:"), summary)
+        self.assertIn("yielded:", summary, "the yield is still reported, then accepted")
+        self.assertIn(str(NEWER - 2), summary)
+        self.assertEqual(
+            out.get("replacement_run"),
+            NEWER - 2,
+            "the newest non-cancelled run that carries the gate job owns the verdict",
+        )
+        self.assertEqual(
+            self.cancelled,
+            [mod.API + "/repos/msgmate-io/open-chat-go/actions/runs/%d/cancel" % CURRENT],
+            "the group is still handed over; acceptance does not replace the yield",
+        )
+
+    def test_yield_without_a_gate_carrying_replacement_stays_rejected(self):
+        """ci#1069 fails closed: a yield with no gate-carrying replacement stays 5.
+
+        A `closed`-event deployment run of the same SHA never contains the
+        `PR Test Merge Requirement` job and a run whose gate job was itself
+        cancelled cannot testify either, so neither may be adopted.
+        """
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, conclusion="cancelled", created_at=CREATED_STARVED),
+                run(NEWER - 1, status="queued", created_at=CREATED_STARVED),
+                run(NEWER - 2, status="queued", created_at=CREATED_STARVED),
+            ],
+            jobs={
+                NEWER - 1: [{"name": "Deploy to CI", "status": "queued", "conclusion": None}],
+                NEWER - 2: [gate(status="completed", conclusion="cancelled")],
+            },
+        )
+        out = {}
+        mod._FETCH = api
+        code, summary = mod.reconcile(ns(), "token", out)
+        self.assertEqual(code, 5, summary)
+        self.assertTrue(summary.startswith("yielded:"), summary)
+        self.assertIsNone(out.get("replacement_run"))
+
+    def test_yielded_gate_carrier_skips_current_older_and_cancelled_runs(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                CURRENT: [gate(status="queued", conclusion=None)],
+                NEWER - 5: [gate(status="queued", conclusion=None)],
+                NEWER - 1: [gate(conclusion="cancelled")],
+                NEWER: [gate(conclusion="cancelled")],
+                CURRENT - 5: [gate(status="queued", conclusion=None)],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, conclusion="cancelled"),
+            run(NEWER - 1, conclusion="cancelled"),
+            run(CURRENT - 5, status="queued"),
+            run(CURRENT, status="queued"),
+        ]
+        self.assertIsNone(mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token"))
+
+    def test_yielded_gate_carrier_picks_the_newest_qualifying_run(self):
+        api = FakeApi(
+            runs=[],
+            jobs={
+                NEWER: [gate(conclusion="cancelled")],
+                NEWER - 1: [gate(status="in_progress", conclusion=None)],
+                NEWER - 2: [gate(status="queued", conclusion=None)],
+            },
+        )
+        mod._FETCH = api
+        candidates = [
+            run(NEWER, conclusion="cancelled"),
+            run(NEWER - 1, status="in_progress"),
+            run(NEWER - 2, status="queued"),
+        ]
+        carrier = mod.yielded_gate_carrier(ns().repo, candidates, CURRENT, "token")
+        self.assertIsNotNone(carrier)
+        self.assertEqual(carrier["id"], NEWER - 1)
+
     def test_failed_cancel_fails_closed(self):
         self.cancel_error = urllib.error.HTTPError(
             "url", 403, "Forbidden", None, io.BytesIO(b"")

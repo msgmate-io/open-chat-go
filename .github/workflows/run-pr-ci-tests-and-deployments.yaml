@@ -2466,29 +2466,45 @@ jobs:
           if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
             echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
             echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            echo "replacement_run=" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          python3 development/scripts/pr_ci_superseded_reconcile.py \
+          # Captured as well as printed so the reconciler's `replacement_run=<id>`
+          # line can be republished as a step output (ci#1069), then echoed so the
+          # log stays byte-identical to before.
+          reconcile_output="$(python3 development/scripts/pr_ci_superseded_reconcile.py \
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}" \
             --head-sha "${{ github.event.pull_request.head.sha }}" \
-            --run-id "${{ github.run_id }}"
+            --run-id "${{ github.run_id }}")"
           reconcile_status=$?
+          printf '%s\n' "${reconcile_output}"
           set -e
+          replacement_run=""
           if [ "${reconcile_status}" -eq 0 ]; then
             accepted=true
+            # The run whose own `PR Test Merge Requirement` check owns this
+            # commit's verdict, so the gate step's notice can name a real run id
+            # instead of a vague "the replacement run".
+            replacement_run="$(printf '%s\n' "${reconcile_output}" | sed -n 's/^replacement_run=//p' | tail -n 1)"
           else
             accepted=false
           fi
           # Never fail here; the gate step below decides and prints the reason
           # next to the existing label and result checks.
           echo "accepted=${accepted}" >> "${GITHUB_OUTPUT}"
+          echo "replacement_run=${replacement_run}" >> "${GITHUB_OUTPUT}"
 
       - name: Enforce test label and passing tests
         run: |
           # ci#659: outcome of the superseded-run reconciliation step above
           # (empty when it did not run, i.e. no upstream suite was cancelled).
           superseded_accepted="${{ steps.superseded-reconcile.outputs.accepted }}"
+          # ci#1069: the run whose own `PR Test Merge Requirement` check owns this
+          # commit's verdict (empty when the acceptance carries no replacement run,
+          # e.g. the PR closed or a newer commit became the live head). It is named
+          # in the notice below so the log says *which* run took over.
+          superseded_replacement="${{ steps.superseded-reconcile.outputs.replacement_run }}"
           # A cancelled gate is only acceptable when this run was superseded: the
           # commit no longer needs gating (PR closed, or a newer commit is the live
           # PR head) or a replacement run for the exact same commit reached this same
@@ -2496,7 +2512,10 @@ jobs:
           # else keeps the gate red, so an untested tree can never look mergeable.
           accept_superseded() {
             if [ "${superseded_accepted}" = "true" ]; then
-              echo "::notice::$1 were superseded on this commit; adopting the verdict of the replacement run instead of failing the gate."
+              # ci#1069: not-red must mean this step exits 0, and the notice must
+              # name the run that now owns the commit's verdict (a yielded run's
+              # acceptance always carries one; a closed/moved PR carries none).
+              echo "::notice::$1 were superseded on this commit; adopting the verdict of replacement run ${superseded_replacement:-a newer run for the same commit} instead of failing the gate. This run reports success in order to defer to it; the replacement run's own 'PR Test Merge Requirement' check is the authoritative verdict for this commit."
               return 0
             fi
             echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red."
@@ -2530,7 +2549,13 @@ jobs:
               exit 1
               ;;
           esac
-          if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
+          # ci#1069: a cancelled suite executed nothing, so `should_test` is empty
+          # by construction and this guard would re-dye the gate red right after a
+          # supersede was adopted above. Keep it for every non-superseded run (an
+          # untested tree must never look mergeable) and skip it only when this run
+          # was accepted as superseded, i.e. a newer same-SHA run carries the gate.
+          if [ "${superseded_accepted}" != "true" ] &&
+             cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."
             exit 1
           fi
@@ -2716,6 +2741,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
+          # ci#1069: pin the *shipped* shells, not just the reconciler exit codes.
+          # An accepted supersede must make the gate step exit 0 (a neutral
+          # conclusion would not satisfy a required status context), while a genuine
+          # suite failure, a reconciler error, a yield without a replacement, a
+          # missing reconciler or a missing labels file all stay red. The module
+          # extracts both step shells from this workflow by anchor and fails loudly
+          # if an anchor moves.
+          python3 -m unittest development/scripts/test_pr_ci_gate_superseded_neutral.py -v
 
       # ci#1033/ci#1034: the merge-gate verdict is decided by the shared
       # linked-issue parser plus the superseded-attempt rules. Pin both end to
