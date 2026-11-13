@@ -158,6 +158,46 @@ const (
 // persisted.
 const reasoningChunkPrefix = "\x00\x01reasoning\x01\x00"
 
+// emptyFinalTextNudgePrompt is the single synthetic user message the turn loop
+// appends when a round would end the turn with tool calls behind it but without
+// any final assistant text (ci#1065). It asks for the missing summary and
+// forbids further tool calls, so the round can only produce prose.
+const emptyFinalTextNudgePrompt = "You used tools in this turn but did not write a final message for me. Reply now with one short paragraph summarising what you did and what the current state is. Do not call any more tools."
+
+// emptyFinalTextDecision is what the turn loop does with a round that would end
+// the turn without any assistant text (ci#1065).
+type emptyFinalTextDecision int
+
+const (
+	// emptyFinalTextNone leaves the normal terminal flow untouched.
+	emptyFinalTextNone emptyFinalTextDecision = iota
+	// emptyFinalTextNudge asks the model once for the missing summary.
+	emptyFinalTextNudge
+	// emptyFinalTextSettle ends the turn as TurnEndedEmptyFinalText.
+	emptyFinalTextSettle
+)
+
+// decideEmptyFinalText classifies the end of one streamed round.
+//
+// The symptom behind ci#1065 is a turn that ran tool calls and then stopped
+// without any assistant text, which the user can only see as "This turn ran N
+// tool call(s) but ended without a final summary". Such a round gets exactly one
+// chance to summarise; when the round after that nudge is empty again the turn
+// settles as TurnEndedEmptyFinalText instead of pretending it completed.
+//
+// Provider reasoning deltas (reasoning_content) never enter aiResponse, so a
+// reasoning-only round is empty by this definition, which is intended: the user
+// still received no text.
+func decideEmptyFinalText(isRoundComplete bool, totalToolCalls int, aiResponse string, alreadyNudged bool) emptyFinalTextDecision {
+	if !isRoundComplete || totalToolCalls <= 0 || strings.TrimSpace(aiResponse) != "" {
+		return emptyFinalTextNone
+	}
+	if alreadyNudged {
+		return emptyFinalTextSettle
+	}
+	return emptyFinalTextNudge
+}
+
 type ToolCallsResult struct {
 	ToolCalls []ToolCall
 }
@@ -492,6 +532,8 @@ func streamChatCompletion(
 		aiResponseComplete := false
 		emptyContinuationRetried := false
 		malformedInlineToolCallRetried := false
+		// ci#1065: at most one "give me the summary" nudge per turn.
+		emptyFinalTextNudged := false
 		var toolCallResult *toolCallResult
 		var err error
 
@@ -780,6 +822,36 @@ func streamChatCompletion(
 				strings.TrimSpace(toolCallResult.aiResponse) == "" && emptyContinuationRetried {
 				recordOutcome(TurnEndedProviderError)
 				errChan <- errLeakedCompactionTranscript
+				return
+			}
+
+			// ci#1065: a round that would end the turn after tool calls but
+			// without any final assistant text leaves the user with the
+			// "This turn ran N tool call(s) but ended without a final summary"
+			// placeholder. Ask the model exactly once for the missing
+			// one-paragraph summary (with no further tool calls allowed); only
+			// when the round after that nudge is empty again does the turn
+			// settle as TurnEndedEmptyFinalText instead of TurnEndedCompleted.
+			// Provider reasoning deltas never enter aiResponse, so a
+			// reasoning-only round counts as empty here.
+			switch decideEmptyFinalText(aiResponseComplete, totalToolCalls, toolCallResult.aiResponse, emptyFinalTextNudged) {
+			case emptyFinalTextNudge:
+				emptyFinalTextNudged = true
+				aiResponseComplete = false
+				currentMessages = append(currentMessages, map[string]interface{}{
+					"role":    "user",
+					"content": emptyFinalTextNudgePrompt,
+				})
+				logging.Debugf(
+					"Turn ended after %d tool call(s) without final text; asking the model once for the summary",
+					totalToolCalls,
+				)
+				continue
+			case emptyFinalTextSettle:
+				logging.Debugf(
+					"The round after the summary nudge produced no text either; settling the turn as an empty final text",
+				)
+				recordOutcome(TurnEndedEmptyFinalText)
 				return
 			}
 

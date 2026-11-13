@@ -20,6 +20,10 @@ func TestTurnEndedIncompleteRetryable(t *testing.T) {
 		turnEndedNoUsableToolCall,
 		"tool_call_cap_reached",
 		"failed_tool_call_cap_reached",
+		// ci#1065: the turn ran its tool calls but produced no final text,
+		// even after it asked the model once for a summary. Nothing was
+		// reported, so the chat continues instead of dead-stopping.
+		turnEndedEmptyFinalText,
 	}
 	for _, reason := range retryable {
 		if !turnEndedIncompleteRetryable(map[string]interface{}{turnEndedMetadataKey: reason}) {
@@ -423,6 +427,76 @@ func TestDecideAutoContinueRetriesCapExhaustedTurn(t *testing.T) {
 	if !cleanDecision.Continue || cleanDecision.Reason != "continuation" || cleanDecision.IncompleteRetries != 0 {
 		t.Fatalf("a clean completion must reset the cap-recovery debt, got %+v", cleanDecision)
 	}
+}
+
+// TestDecideAutoContinueBoundsConsecutiveEmptyFinalTextTurns is the ci#1065
+// streak policy: a *single* turn that ended after its tool calls without any
+// final text is worth one continuation, but consecutive empty finals are a
+// degraded loop (the model keeps working and never reports), so the loop stops
+// with an explicit reason instead of burning the remaining turn budget.
+func TestDecideAutoContinueBoundsConsecutiveEmptyFinalTextTurns(t *testing.T) {
+	config := enabledConfig()
+	message := finishedMessage(`{"finished":true,"turn_ended":"empty_final_text"}`)
+	meta := decodeOrFail(t, message.MetaData)
+
+	// The reason is retryable at all (otherwise the chat dead-stops on the
+	// placeholder message).
+	if !turnEndedIncompleteRetryable(meta) {
+		t.Fatalf("turn_ended=%q must be retryable", turnEndedEmptyFinalText)
+	}
+
+	// First empty final text: one continuation, streak advanced to 1.
+	first := decideAutoContinue(config, autoContinueState{Turns: 1}, message, meta, false)
+	if !first.Continue {
+		t.Fatalf("the first empty final text must schedule a continuation, got stop reason %q", first.StopReason)
+	}
+	if first.Reason != autoContinueEmptyFinalTextRetryReason {
+		t.Fatalf("first continuation reason = %q, want %q", first.Reason, autoContinueEmptyFinalTextRetryReason)
+	}
+	if first.EmptyFinalTextStreak != 1 {
+		t.Fatalf("first empty final text streak = %d, want 1", first.EmptyFinalTextStreak)
+	}
+	if first.Prompt == "" || first.Delay <= 0 {
+		t.Fatalf("the continuation must carry the retry prompt and delay, got %+v", first)
+	}
+
+	// Second consecutive empty final text: the streak is spent, the loop stops
+	// instead of auto-continuing again.
+	second := decideAutoContinue(config, autoContinueState{Turns: 2, EmptyFinalTextStreak: 1}, message, meta, false)
+	if second.Continue {
+		t.Fatalf("a second consecutive empty final text must stop the loop, got reason %q", second.Reason)
+	}
+	if second.StopReason != autoContinueEmptyFinalTextExhaustedReason {
+		t.Fatalf("second empty final text stop reason = %q, want %q", second.StopReason, autoContinueEmptyFinalTextExhaustedReason)
+	}
+	if second.EmptyFinalTextStreak != autoContinueMaxEmptyFinalTextStreak {
+		t.Fatalf("second empty final text streak = %d, want %d", second.EmptyFinalTextStreak, autoContinueMaxEmptyFinalTextStreak)
+	}
+
+	// A turn that does report its work breaks the streak, so a later blip gets
+	// its own fresh continuation rather than inheriting the degraded state.
+	clean := finishedMessage(`{"finished":true}`)
+	cleanDecision := decideAutoContinue(config, autoContinueState{Turns: 3, EmptyFinalTextStreak: 1}, clean, decodeOrFail(t, clean.MetaData), false)
+	if !cleanDecision.Continue || cleanDecision.Reason != "continuation" {
+		t.Fatalf("a clean completion after an empty final text must continue normally, got %+v", cleanDecision)
+	}
+	if cleanDecision.EmptyFinalTextStreak != 0 {
+		t.Fatalf("a clean completion must reset the empty-final-text streak, got %d", cleanDecision.EmptyFinalTextStreak)
+	}
+}
+
+// TestDecideAutoContinueDoesNotLatchOnEmptyFinalTextRetry proves the new retry
+// reason is not mistaken for a terminal stop: it must not latch the loop off,
+// otherwise the single allowed continuation would never be scheduled.
+func TestDecideAutoContinueDoesNotLatchOnEmptyFinalTextRetry(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("recording the empty-final-text retry reason must not panic: %v", r)
+		}
+	}()
+	// recordAutoContinueStop returns before touching the database for a
+	// non-terminal reason; a nil db proves the early return is taken.
+	recordAutoContinueStop(nil, database.Chat{}, autoContinueState{}, autoContinueEmptyFinalTextRetryReason)
 }
 
 // TestIncompletePromptDemandsPartialReportOnInfraFailure pins the ci#747 (RC2)

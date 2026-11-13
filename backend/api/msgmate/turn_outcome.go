@@ -23,6 +23,10 @@ const (
 	TurnEndedCancelled         = "cancelled"
 	TurnEndedNoUsableCall      = "no_usable_tool_call"
 	TurnEndedConfirmablePause  = "confirmable_pause"
+	// TurnEndedEmptyFinalText marks a turn that ran tool calls but ended
+	// without any final assistant text, even after the turn loop asked the
+	// model once for a summary (ci#1065).
+	TurnEndedEmptyFinalText = "empty_final_text"
 )
 
 // TurnOutcome records how a native coder turn ended and what its tool-call
@@ -212,6 +216,8 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 		return "It was stopped before it produced a final answer. The work already done is kept - send another message to continue from here."
 	case TurnEndedConfirmablePause:
 		return "It is waiting for you to confirm an action before it continues."
+	case TurnEndedEmptyFinalText:
+		return "The turn ended after its tool calls without a final summary, even after the model was asked for one. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
 	default:
 		return "The model returned no text for this turn. The work already done is kept - send another message to continue from here."
 	}
