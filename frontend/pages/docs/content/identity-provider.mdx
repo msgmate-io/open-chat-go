@@ -109,6 +109,36 @@ export OCI_IDENTITY_PROVIDER_CLIENT_ID='open-chat-client-id'
 export OCI_IDENTITY_PROVIDER_CLIENT_SECRET='replace-with-the-client-secret'
 ```
 
+## Production deployment (msgmate.io)
+
+`https://msgmate.io` does not run its own identity provider inside the release: the
+backend is a plain OIDC *client* of a Keycloak deployment that lives in its own
+namespace, so neither side is rolled when the other is upgraded.
+
+| Environment | Application | Issuer |
+| --- | --- | --- |
+| production | `https://msgmate.io` | `https://id.msgmate.io/realms/main` |
+| staging | `https://stage.msgmate.io` | `https://id.stage.msgmate.io/realms/main` |
+
+The realm template (`development/identity-provider/realm/msgmate-io-main-realm.json`)
+defines the confidential `open-chat` client with the authorization-code flow, PKCE
+`S256`, direct grants and self-registration disabled, and no seeded users:
+accounts belong to the identity provider, and the backend maps an identity to a
+local user through `OCI_IDENTITY_PROVIDER_BOOTSTRAP_JSON`. The client secret and
+that map live in the `open-chat-identity-provider` Secret of the application
+namespace - never in the chart values or the realm template.
+
+Both the issuer and `OCI_IDENTITY_PROVIDER_REDIRECT_URL` are set explicitly per
+environment (`https://msgmate.io/api/v1/integrations/identity_provider/login/callback`),
+and the identical callback URL is registered in the realm: a mismatch is the usual
+`redirect_uri_mismatch` at the identity provider. The operator runbook, including
+the realm import, the Secret creation, the reachability check and the rollback, is
+`development/identity-provider/README.md`.
+
+`development/scripts/identity_provider_realm_contract.py` pins the agreement
+between the realm and the chart values and fails CI if a credential or a seeded
+user is ever committed there.
+
 ## Bootstrap mapping
 
 `OCI_IDENTITY_PROVIDER_BOOTSTRAP_JSON` maps an identity key (full
