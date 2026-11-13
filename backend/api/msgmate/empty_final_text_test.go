@@ -85,3 +85,26 @@ func TestEmptyFinalText_NudgeOncePerTurn(t *testing.T) {
 		t.Fatal("the guard must refuse a second nudge within the same turn")
 	}
 }
+
+// TestEmptyFinalText_StreakSuppressesNudge covers the interaction-level cap of
+// ci#1065: an interaction that already ended empty emptyFinalNudgeStreakLimit
+// times in a row is not nudged again - the loop reports the empty final
+// immediately, so a model that keeps ending empty cannot be asked forever.
+func TestEmptyFinalText_StreakSuppressesNudge(t *testing.T) {
+	guard := &emptyFinalGuard{streak: emptyFinalNudgeStreakLimit}
+
+	reason, nudges := simulateEmptyFinalSettle(2, []string{"", ""}, guard)
+
+	if nudges != 0 {
+		t.Fatalf("an interaction on an empty-final streak must not be nudged, got %d nudges", nudges)
+	}
+	if reason != TurnEndedEmptyFinalText {
+		t.Fatalf("expected the streaked turn to settle as %q, got %q", TurnEndedEmptyFinalText, reason)
+	}
+	if guard.nudge() {
+		t.Fatal("the guard must refuse a nudge once the empty-final streak limit is reached")
+	}
+	if got := guard.settleReason(); got != TurnEndedEmptyFinalText {
+		t.Fatalf("settle reason = %q, want %q", got, TurnEndedEmptyFinalText)
+	}
+}
