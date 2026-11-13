@@ -76,6 +76,36 @@ ticket. A ticket with a behavioural criterion closes only after its feature has
 been observed working on ci.msgmate.io; a green promotion PR and a successful
 rollout are necessary, never sufficient.
 
+### "Green" is not "mergeable" (ci#1066)
+
+A fully green promotion PR can still be unmergeable, and that is not a
+regression: the `main` ruleset requires **one approving review from a reviewer
+with write access**. A `github.token` review does not count (it is not a
+write-access reviewer) and the promotion PR's author cannot approve its own PR,
+so without a configured approver identity the hop needs a maintainer merge even
+though every check is green.
+
+`auto-approve-consolidation.yaml` therefore *classifies* the block instead of
+failing on it, and a red auto-approve run keeps meaning "something is really
+broken":
+
+| Credential state | Behaviour |
+| --- | --- |
+| `CONSOLIDATE_APPROVER_TOKEN` unset, identity unresolvable | `token_missing`: warning, the review call stays authoritative |
+| token rejected by the API (`401` / no `/user`) | `token_rejected`: noticed, PRs reported as awaiting a maintainer merge, run stays green |
+| token accepted but `repos.permissions.push` is not `true` | `token_unprivileged`: noticed, same awaiting-report, run stays green |
+| token accepted with write access | approval posted; a ruleset refusal afterwards is classified, never retried |
+
+On the `dev` -> `main` hop only, such a block also emits a `::notice::` and
+**one** idempotent PR comment stating that the PR is green and awaiting a
+maintainer merge. Any other merge failure - an unreadable PR, conflicts, a base
+branch modified mid-flight - still fails the run.
+
+To restore the unattended hop, either issue `CONSOLIDATE_APPROVER_TOKEN` for an
+identity with write access to this repository, or register a ruleset bypass actor
+for the automation identity. Both are security configuration decisions and stay
+with the maintainer.
+
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
 section for it); `PR Test Merge Requirement` reads that and nothing else.
