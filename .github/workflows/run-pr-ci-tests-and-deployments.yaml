@@ -2757,6 +2757,20 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_go_toolchain.sh
 
+      # ci#1062 (image half of ci#1038): provisioning at runtime is only half the
+      # story - the *published* coding image shipped go1.25.10 off PATH with no
+      # login-shell shim and no warmed module cache while backend/go.mod required
+      # go 1.26.0, so a fresh sandbox could not build anything. Pin the static
+      # drift gate: the image must derive its Go version from backend/go.mod (via
+      # install_sandbox_go_toolchain.sh) or pin one >= the directive, keep
+      # GOTOOLCHAIN=local, warm $GOMODCACHE at build time, and ship an
+      # /etc/profile.d PATH shim. The behavioural `--image` half must refuse to
+      # report success without a daemon instead of fabricating evidence.
+      - name: Coding sandbox image Go contract unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_coding_image_go.sh
+
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
       # networking design). Pin the in-pod probe script contract (single-line
