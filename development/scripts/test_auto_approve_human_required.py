@@ -138,6 +138,13 @@ if args and args[0] == "api":
             sys.exit(1)
         _emit(login)
         sys.exit(0)
+    if len(args) > 1 and args[1].startswith("repos/"):
+        # ci#1066 write-access probe: `gh api repos/<repo> --jq '.permissions.push'`
+        if cfg.get("permissions_probe_fail"):
+            sys.exit(1)
+        value = cfg.get("permissions_push", "true")
+        _emit("true" if value is True else "false" if value is False else str(value))
+        sys.exit(0)
     sys.exit(0)
 
 if len(args) > 1 and args[0] == "pr":
@@ -150,7 +157,19 @@ if len(args) > 1 and args[0] == "pr":
         if wanted == "state":
             _emit(pr.get("state", "OPEN"))
         elif wanted == "labels":
-            _emit(json.dumps([{"name": name} for name in pr.get("labels", [])]))
+            names = [name for name in pr.get("labels", [])]
+            if "--jq" in args:
+                # The workflow's own jq picks the deployment labels and joins
+                # them; the stub answers that projection directly.
+                _emit(", ".join(n for n in names if n in ("deploy", "sandbox-test")))
+            else:
+                _emit(json.dumps([{"name": name} for name in names]))
+        elif wanted == "comments":
+            bodies = [body for body in pr.get("comments", [])]
+            if "--jq" in args:
+                _emit(str(sum(1 for b in bodies if "Awaiting maintainer merge (ci#1066)" in b)))
+            else:
+                _emit(json.dumps([{"body": body} for body in bodies]))
         else:
             _emit(json.dumps(pr))
         sys.exit(0)
@@ -164,7 +183,7 @@ if len(args) > 1 and args[0] == "pr":
             sys.stderr.write(out + "\\n")
         sys.exit(rc)
     if verb == "comment":
-        sys.exit(0)
+        sys.exit(int(cfg.get("comment_rc", 0)))
 
 sys.exit(0)
 """
@@ -411,6 +430,105 @@ class AutoApproveHumanRequiredTest(unittest.TestCase):
         self.assertIn("is not green", out)
         self.assertFalse([call for call in calls if call.startswith("pr merge")], calls)
         self.assertNotIn("awaiting a maintainer merge", summary)
+
+    def test_an_unprivileged_approver_is_named_and_reported(self) -> None:
+        """ci#1066: a resolvable identity without write access cannot approve."""
+        rc, out, summary, calls, _ = ApproveRun(
+            has_approver_token=True,
+            user_login="msgmate-reviewer",
+            user_fail=False,
+            permissions_push=False,
+        ).run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("write access", out)
+        self.assertIn("::notice::", out)
+        self.assertNotIn("::error::", out)
+        self.assertIn("approver lacks write access", summary)
+        self.assertIn("awaiting a maintainer merge", summary)
+        self.assertIn("PR #36", summary)
+        # The write-access probe must actually be consulted, and no approval is
+        # attempted for an identity the ruleset cannot accept.
+        self.assertTrue(
+            any(call.startswith("api repos/") for call in calls),
+            calls,
+        )
+        self.assertFalse([call for call in calls if call.startswith("pr review")], calls)
+        self.assertFalse([call for call in calls if call.startswith("pr merge")], calls)
+        self.assertNotIn(FAKE_TOKEN, out + summary)
+
+    def test_an_unverifiable_write_access_probe_keeps_going(self) -> None:
+        """A probe failure must not be mistaken for 'no write access'."""
+        rc, out, _, calls, _ = ApproveRun(
+            has_approver_token=True,
+            user_login="msgmate-reviewer",
+            user_fail=False,
+            permissions_probe_fail=True,
+            merge_rc=0,
+        ).run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Could not verify whether", out)
+        self.assertIn("write-access approver identity: true", out)
+        self.assertTrue([call for call in calls if call.startswith("pr review")], calls)
+
+    def test_the_promotion_hop_is_flagged_in_the_pr_exactly_once(self) -> None:
+        """ci#1066: a green blocked dev->main hop states it in the PR, once."""
+        rc, out, summary, calls, _ = ApproveRun(
+            has_approver_token=False,
+            user_fail=True,
+            pr=_pr(reviewDecision="REVIEW_REQUIRED"),
+            merge_rc=1,
+            merge_output=RULE_REFUSAL,
+            admin_merge_rc=1,
+            admin_merge_output=RULE_REFUSAL,
+            review_rc=1,
+        ).run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("::notice::", out)
+        self.assertIn("Awaiting maintainer merge (ci#1066)", out)
+        comments = [call for call in calls if call.startswith("pr comment")]
+        self.assertEqual(len(comments), 1, calls)
+        self.assertIn("ci#1066", summary)
+
+        # Second run: the note already exists, so it is not repeated.
+        rc2, out2, _, calls2, _ = ApproveRun(
+            has_approver_token=False,
+            user_fail=True,
+            pr=_pr(
+                reviewDecision="REVIEW_REQUIRED",
+                comments=["Awaiting maintainer merge (ci#1066): already here."],
+            ),
+            merge_rc=1,
+            merge_output=RULE_REFUSAL,
+            admin_merge_rc=1,
+            admin_merge_output=RULE_REFUSAL,
+            review_rc=1,
+        ).run()
+        self.assertEqual(rc2, 0, out2)
+        self.assertIn("not repeating it", out2)
+        self.assertEqual(
+            [call for call in calls2 if call.startswith("pr comment")], [], calls2
+        )
+
+    def test_a_blocked_consolidation_pr_gets_no_promotion_note(self) -> None:
+        """The waiting comment belongs to the dev->main hop, not to dev PRs."""
+        rc, out, _, calls, _ = ApproveRun(
+            has_approver_token=False,
+            user_fail=True,
+            pr=_pr(
+                baseRefName="dev",
+                headRefName="chore/consolidate-r85",
+                reviewDecision="REVIEW_REQUIRED",
+            ),
+            merge_rc=1,
+            merge_output=RULE_REFUSAL,
+            admin_merge_rc=1,
+            admin_merge_output=RULE_REFUSAL,
+            review_rc=1,
+        ).run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("awaiting a maintainer merge", out.lower())
+        self.assertNotIn("Awaiting maintainer merge (ci#1066)", out)
+        self.assertEqual([call for call in calls if call.startswith("pr comment")], [], calls)
 
     def test_a_failing_merge_for_another_reason_still_fails(self) -> None:
         rc, out, summary, _, sleeps = ApproveRun(

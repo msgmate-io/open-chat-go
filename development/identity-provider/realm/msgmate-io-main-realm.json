@@ -1,0 +1,33 @@
+{
+  "realm": "main",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "clientId": "open-chat",
+      "name": "Open Chat (msgmate.io)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "REPLACE_WITH_CLIENT_SECRET",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "https://msgmate.io/api/v1/integrations/identity_provider/login/callback",
+        "https://stage.msgmate.io/api/v1/integrations/identity_provider/login/callback"
+      ],
+      "webOrigins": ["https://msgmate.io", "https://stage.msgmate.io"],
+      "attributes": { "pkce.code.challenge.method": "S256" }
+    }
+  ],
+  "users": []
+}
