@@ -12,7 +12,20 @@ real verdict, whose conclusion is adopted. Everything else fails closed.
 
 Exit codes: 0 accept, 1 replacement gate not green, 2 missing, 3 timeout/budget
 expiry, 4 usage/API error, 5 yielded (this run released the concurrency group
- for a starved replacement). The last stdout line is `accepted=true|false`.
+ for a starved replacement and no acceptable replacement run exists yet). The
+last stdout line is `accepted=true|false`; the line before it is
+`replacement_run=<id>` (empty when no run owns the commit's verdict), so the
+gate step's notice can name the run that carries the verdict.
+
+ci#1069: the `yielded` arm used to always reject, which is what dyed the gate
+red for the exact 3-4-run burst this module exists for (a `labeled`/`unlabeled`
+burst cancels the in-flight run for the identical commit, the starved
+replacement behind our concurrency group is then yielded to, and *nobody*
+accepted). A yield is now accepted when a newer same-SHA, non-cancelled run
+that actually contains the gate job exists: that run posts the commit's newest
+`PR Test Merge Requirement` check, so it owns the verdict and this run's red
+gate is a stale duplicate. Hand-cancel, re-run and shutdown still fail closed
+(they leave no such run behind), and a missing replacement keeps exit 5.
 
 Exit 3 is a *budget* expiry, not a replacement verdict: no replacement run ever
 got to testify before the wait budget ran out. Its summary starts with the
@@ -293,6 +306,28 @@ def gate_verdict(runs, repo, token):
     return None, None
 
 
+def yielded_gate_carrier(repo, runs, current_run_id, token):
+    """Newest newer, non-cancelled run that actually contains the gate job.
+
+    This is the ci#1069 acceptance test for a *yielded* run: the run this one
+    handed the concurrency group to must be a real gating attempt for the same
+    commit. A queued run already lists its jobs (`status: queued`, no
+    conclusion), so the gate job is visible before it starts - which is what
+    separates a starved PR CI replacement from the `closed`-event deployment
+    runs of the same SHA (no gate job, cannot testify) and from a run whose gate
+    job was itself cancelled (also cannot testify). Anything else fails closed.
+    """
+    newer = [r for r in runs if (r.get("id") or 0) > current_run_id]
+    for run in sorted(newer, key=lambda r: r.get("id") or 0, reverse=True):
+        if is_superseded(run.get("conclusion")):
+            continue
+        conclusion = gate_conclusion(repo, run.get("id"), token)
+        if conclusion is None or is_superseded(conclusion):
+            continue
+        return run
+    return None
+
+
 def parse_epoch(value):
     """Epoch seconds of an ISO-8601 `created_at`, or None when unparseable."""
     if not isinstance(value, str) or not value:
@@ -346,8 +381,19 @@ def yield_group(args, run, token):
     )
 
 
-def reconcile(args, token):
-    """Return (exit_code, summary) for the cancelled run described by `args`."""
+def reconcile(args, token, out=None):
+    """Return (exit_code, summary) for the cancelled run described by `args`.
+
+    `out`, when given, is a dict filled with `replacement_run` - the id of the
+    run whose own `PR Test Merge Requirement` check owns the commit's verdict
+    (None when no run does). `main` prints it so the gate step's notice can name
+    the run it defers to instead of a vague "the replacement run" (ci#1069).
+    """
+
+    def record(run):
+        if out is not None:
+            out["replacement_run"] = (run or {}).get("id")
+
     pull = api(args.repo, "/pulls/%d" % args.pr, token)
     if pull.get("state") != "open":
         return 0, "accepted: PR #%d is %s, the cancelled run no longer gates anything." % (
@@ -368,6 +414,7 @@ def reconcile(args, token):
         candidates = replacement_runs(args.repo, args.head_sha, args.run_id, token)
         run, conclusion = gate_verdict(candidates, args.repo, token)
         if run is not None:
+            record(run)
             if conclusion == "success":
                 return 0, "accepted: replacement run %s gate job concluded success." % run.get("id")
             return 1, "rejected: replacement run %s gate job concluded %s." % (
@@ -391,6 +438,7 @@ def reconcile(args, token):
         # verdict on a tree nobody is gating.
         running = next((r for r in candidates if r.get("status") == "in_progress"), None)
         if running is not None:
+            record(running)
             return 0, (
                 "accepted: newer attempt run %s for %s is in_progress (pending "
                 "verdict, not a failure); its own '%s' check is newer and "
@@ -399,7 +447,29 @@ def reconcile(args, token):
             )
         starved = starved_replacement(candidates, _NOW(), args.yield_seconds)
         if starved is not None:
-            return yield_group(args, starved, token)
+            code, summary = yield_group(args, starved, token)
+            if code != 5:
+                return code, summary
+            # ci#1069: yielding is not a verdict, but it is also not a reason to
+            # dye the gate red for a commit whose real verdict is being produced
+            # by the run we just handed the group to. Accept iff that run is a
+            # newer, non-cancelled, gate-carrying attempt for the same SHA: its
+            # `PR Test Merge Requirement` check is newer than ours and therefore
+            # the one branch protection evaluates, while our red check would be a
+            # stale duplicate for a tree with zero executed steps. A hand-cancel,
+            # a re-run or a shutdown leaves no such run behind (each keeps exit 5
+            # and stays red), and so does a yield with no replacement at all.
+            carrier = yielded_gate_carrier(args.repo, candidates, args.run_id, token)
+            if carrier is None:
+                return code, summary
+            record(carrier)
+            return 0, (
+                "accepted: %s Replacement run %s (status %s) for %s contains the "
+                "'%s' job, so its own check is the newer, authoritative verdict for "
+                "this commit; this yielded run defers to it instead of dyeing the "
+                "gate red."
+                % (summary, carrier.get("id"), carrier.get("status"), args.head_sha[:12], GATE_JOB_NAME)
+            )
         # ci#1033: waiting is only meaningful when something can still produce a
         # verdict. Self-cancellation makes that impossible and is the one shape
         # that used to hang the gate: this PR's own "Cancel superseded workflow
@@ -504,10 +574,13 @@ def main(argv=None):
         return 4
 
     try:
-        code, summary = reconcile(args, token)
+        out = {}
+        code, summary = reconcile(args, token, out)
     except urllib.error.HTTPError as error:
+        out = {}
         code, summary = 4, "error: GitHub API returned HTTP %s for %s." % (error.code, error.url)
     except (urllib.error.URLError, ValueError, KeyError, TypeError) as error:
+        out = {}
         code, summary = 4, "error: %s: %s" % (type(error).__name__, error)
 
     if code == 3:
@@ -524,6 +597,10 @@ def main(argv=None):
         )
 
     print(summary)
+    # ci#1069: name the run whose own gate check owns the commit's verdict, so
+    # the workflow's notice points at a real run id (empty when nothing does).
+    replacement = out.get("replacement_run") if isinstance(out, dict) else None
+    print("replacement_run=%s" % (replacement or ""))
     print("accepted=%s" % ("true" if code == 0 else "false"))
     return code
 
