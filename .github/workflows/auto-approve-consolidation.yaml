@@ -83,6 +83,18 @@ name: Auto-approve consolidation PRs
 # If none is configured, the run warns, approves/merges with whatever permission
 # it has (the `--admin` attempt then fails and the PR stays open), and a human
 # still has to approve and merge.
+#
+# ci#1066 (reframed): the hop currently lands unattended only because
+# `Main (Staging) Merge Protection` is *disabled* (`rules/branches/main` answers
+# `[]`, no bypass actors). An armed `--auto` merge then merges immediately - even
+# before the required check starts - so a green promotion PR proves nothing about
+# the approval path: re-enabling the ruleset restores the original failure. The
+# `Preflight main merge protection (ci#1066)` step therefore classifies the live
+# protection state before anything merges (`review_required_enforced` /
+# `review_required_masked` / `protection_unknown`) and reports it in the job
+# summary; it is reporter-only and never turns the run red. Order of remediation
+# (see DEVELOPMENT.md): approver identity or bypass actor first, ruleset
+# `active` second - never the other way round.
 
 on:
   workflow_run:
@@ -239,6 +251,124 @@ jobs:
           joined="$(IFS=,; echo "${numbers[*]}")"
           echo "prs=${joined}" >> "$GITHUB_OUTPUT"
           echo "Consolidation PRs for ${head_sha}: ${joined}"
+
+      # ci#1066: the `main` review requirement can be *masked* rather than
+      # satisfied. While `Main (Staging) Merge Protection` is disabled the
+      # promotion PR merges unattended, so a green hop proves nothing about the
+      # write-access approval the ruleset demands once it is re-enabled. This
+      # step classifies the live protection state before anything merges and
+      # names which of the three remediation paths (approver token / bypass
+      # actor / re-enable the ruleset) is still missing. Reporting only: it never
+      # fails the run (a red auto-approve run must keep meaning "regression").
+      - name: Preflight main merge protection (ci#1066)
+        id: protection
+        if: ${{ steps.prs.outputs.prs != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          HAS_APPROVER_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN != '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          : > "$tmpdir/rulesets.jsonl"
+          : > "$tmpdir/details.jsonl"
+
+          # The rules actually enforced on `refs/heads/main` right now. An empty
+          # array means the review requirement is not enforced at all, which is
+          # exactly the ci#1066 masking state - not a fix.
+          rules_state="ok"
+          rules_json=""
+          if raw="$(gh api "repos/${REPO}/rules/branches/main" 2>/dev/null)"; then
+            if ! rules_json="$(printf '%s' "$raw" |
+                 jq -ce 'if type == "array" then . else empty end' 2>/dev/null)"; then
+              rules_state="unreadable"
+              rules_json=""
+            fi
+          else
+            rules_state="unreadable"
+            rules_json=""
+          fi
+
+          # Enforcement + bypass actors live on the ruleset resource, not in the
+          # effective-rules answer, so resolve the branch-targeted rulesets.
+          if raw="$(gh api "repos/${REPO}/rulesets" 2>/dev/null)"; then
+            printf '%s' "$raw" |
+              jq -c '.[]? | select((.target // "branch") == "branch") | {id: .id}' \
+                >> "$tmpdir/rulesets.jsonl" 2>/dev/null || true
+          fi
+          for id in $(jq -r '.id' < "$tmpdir/rulesets.jsonl" 2>/dev/null); do
+            case "$id" in ''|*[!0-9]*) continue ;; esac
+            if detail="$(gh api "repos/${REPO}/rulesets/${id}" 2>/dev/null)"; then
+              printf '%s' "$detail" | jq -c --argjson id "$id" '{
+                id: $id,
+                name: (.name // ""),
+                enforcement: (.enforcement // "unknown"),
+                bypass_actors: ((.bypass_actors // []) | length),
+                review_count: ([ (.rules // [])[]?
+                  | select(.type == "pull_request")
+                  | (.parameters.required_approving_review_count // 0) ] | max // 0),
+                covers_main: ([ (.conditions.ref_name.include // [])[]? | tostring ]
+                  | any(test("refs/heads/(main|~DEFAULT_BRANCH)$")))
+              }' >> "$tmpdir/details.jsonl" 2>/dev/null || true
+            fi
+          done
+
+          details_json="$(jq -cs '.' "$tmpdir/details.jsonl" 2>/dev/null || echo '[]')"
+          [ -n "$details_json" ] || details_json='[]'
+          review_count="$(printf '%s' "$rules_json" |
+            jq -r '[ .[]? | select(.type == "pull_request")
+                     | (.parameters.required_approving_review_count // 0) ]
+                   | max // 0' 2>/dev/null || echo 0)"
+          case "$review_count" in ''|*[!0-9]*) review_count=0 ;; esac
+          bypass_total="$(printf '%s' "$details_json" |
+            jq -r '[ .[]? | select(.covers_main == true) | (.bypass_actors // 0) ]
+                   | add // 0' 2>/dev/null || echo 0)"
+          protection_line="$(printf '%s' "$details_json" |
+            jq -r '[ .[]? | select(.covers_main == true)
+                     | select((.name // "") | test("Main \\(Staging\\) Merge Protection")) ]
+                   | if length > 0 then
+                       (.[0] | .name + " (ruleset " + (.id | tostring) + ", enforcement "
+                              + .enforcement + ", bypass actors "
+                              + (.bypass_actors | tostring) + ")")
+                     else "no active branch ruleset for refs/heads/main" end' \
+            2>/dev/null || echo "unknown")"
+
+          if [ "$rules_state" != "ok" ]; then
+            protection_state="protection_unknown"
+            echo "::warning::Could not read the merge protection for \`main\` (rules API); the live review requirement is unknown in this run (ci#1066)."
+          elif [ "$review_count" -ge 1 ]; then
+            protection_state="review_required_enforced"
+            echo "::notice::\`main\` enforces ${review_count} approving review(s): the promotion hop needs a write-access approver identity (CONSOLIDATE_APPROVER_TOKEN) or a ruleset bypass actor, otherwise it awaits a maintainer merge (ci#1066)."
+          else
+            protection_state="review_required_masked"
+            echo "::warning::\`main\` enforces no approving review - the 'Main (Staging) Merge Protection' ruleset is not active. A green promotion PR therefore merges unattended *because the gate is off*, which masks ci#1066 instead of satisfying it. Re-enable the ruleset only after issuing CONSOLIDATE_APPROVER_TOKEN for a write-access identity or registering a bypass actor for the automation identity."
+          fi
+
+          {
+            echo ""
+            echo "### Main merge protection (ci#1066)"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| State | \`${protection_state}\` |"
+            echo "| Required approving reviews on \`main\` | ${review_count} |"
+            echo "| Governing ruleset | ${protection_line} |"
+            echo "| Bypass actors on the \`main\` ruleset(s) | ${bypass_total} |"
+            echo "| \`CONSOLIDATE_APPROVER_TOKEN\` configured | ${HAS_APPROVER_TOKEN:-false} |"
+            echo ""
+            if [ "$protection_state" = "review_required_masked" ]; then
+              echo "The unattended hop works only because the review requirement is **not enforced**. With the ruleset re-enabled, the hop needs one of: an approver token for a write-access identity, a bypass actor for the automation identity, or a maintainer merge."
+              echo ""
+            fi
+          } >> "$summary" 2>/dev/null || true
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            echo "state=${protection_state}" >> "$GITHUB_OUTPUT"
+            echo "review_count=${review_count}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Main merge protection: ${protection_state} (required approving reviews: ${review_count}; ${protection_line})."
+          exit 0
 
       - name: Approve and merge
         if: ${{ steps.prs.outputs.prs != '' }}
