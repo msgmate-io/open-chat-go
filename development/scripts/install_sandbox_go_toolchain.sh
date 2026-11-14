@@ -179,6 +179,19 @@ why_not_ready() {
     note "MISS no warmed module cache at ${modcache:-<unset>}/cache/download; an offline build"
     note "     will fail on network fetches. Re-run this script without --check."
   fi
+  # ci#1038: the toolchain can be installed, in GOTOOLCHAIN=local and still be
+  # unreachable, because ~/.bashrc and /etc/profile.d are read by interactive and
+  # login shells only while coder_bash runs a non-login shell. Probe the default
+  # PATH, not this shell's PATH, or the gap stays invisible until an implementer
+  # reports `which: no go` from inside an actual dispatch.
+  default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+  if [ -n "$(env -i PATH="$default_path" sh -c 'command -v go' 2>/dev/null)" ]; then
+    note "ok   go is on the default PATH (non-login shells can invoke it)"
+  else
+    add_gap not_on_default_path
+    note "MISS go is on no default-PATH directory; coder_bash reports missing_cli: go even"
+    note "     though the toolchain exists. Re-run without --check to write the PATH shim."
+  fi
   return 0
 }
 
@@ -267,12 +280,38 @@ export GONOSUMDB="${GONOSUMDB:-github.com/msgmate-io/*}"
 # is still the authoritative full-suite gate.
 if [ -d "$root/backend" ]; then
   note "     warming the module cache (go mod download)"
+  # Measure, do not promise. `-mod=readonly` looks like it protects go.sum, but it
+  # only freezes go.mod: `go mod download` still writes the hashes it resolved, so
+  # the earlier "readonly first, therefore go.sum untouched" reasoning was wrong.
+  # What is true instead (evidence, ci#1038): the committed backend/go.sum is
+  # incomplete for the integration-only modules (github.com/go-openapi/spec ->
+  # go-openapi/jsonpointer -> mailru/easyjson has no go.mod hash), so a plain warm-up
+  # ADDS lines. PR CI and backend/full_build.sh run the same plain `go mod download`
+  # before building and get the same completion, which is why nobody noticed. So:
+  # warm it, then report factually whether go.sum moved and what to do about it.
+  gosum_snapshot=""
+  if [ -f "$root/backend/go.sum" ]; then
+    gosum_snapshot="$(mktemp "${TMPDIR:-/tmp}/openchat-go-sum.XXXXXX")" &&
+      cp "$root/backend/go.sum" "$gosum_snapshot" 2>/dev/null
+  fi
   if ( cd "$root/backend" && GOTOOLCHAIN=local go mod download >/dev/null 2>&1 ); then
     note "ok   module cache warmed ($(go env GOMODCACHE))"
+    if [ -f "$root/backend/go.sum" ] &&
+       { [ -z "$gosum_snapshot" ] || ! cmp -s "$gosum_snapshot" "$root/backend/go.sum"; }; then
+      note "     note: backend/go.sum gained the entries this checkout was missing, so"
+      note "     'go build ./...' now runs offline. Those lines are SANDBOX WARM-UP STATE,"
+      note "     not part of your change (CI gets the same completion from its own"
+      note "     'go mod download'): drop them before committing with"
+      note "     'git checkout -- backend/go.sum', and never report them as a fix."
+    else
+      note "ok   backend/go.sum untouched"
+    fi
   else
     note "WARN 'go mod download' failed (private modules and/or offline sandbox); later builds"
-    note "     may need development/scripts/build_tools.sh prepare --profile full-ci first."
+    note "     may need the go.work profile workspace first (the readiness probe below says"
+    note "     whether backend/go.work is present)."
   fi
+  [ -n "$gosum_snapshot" ] && rm -f "$gosum_snapshot"
 fi
 
 # Persist the environment: the provisioning shell and the agent's later shells are
@@ -351,6 +390,98 @@ if [ -d "$profile_d" ] && [ -w "$profile_d" ]; then
   fi
 else
   note "note $profile_d is not writable here; relying on ~/.bashrc for later shells."
+fi
+
+# --- default-PATH shim (ci#1038) --------------------------------------------
+# ~/.bashrc covers interactive shells and /etc/profile.d covers `bash -l`, but
+# the coding agent's coder_bash tool runs a **non-login, non-interactive**
+# shell. That shell reads neither, which is exactly how a sandbox ended up
+# saying `which go` -> "no go in (/usr/local/sbin:/usr/local/bin:...)" while the
+# toolchain sat in /usr/local/go/bin the whole time. A symlink in a default-PATH
+# directory is the only form of provisioning that a non-login shell honours, so
+# write it when we can and report it when we cannot.
+if [ -n "$go_bin" ]; then
+  goroot="$("$go_bin" env GOROOT 2>/dev/null)"
+  bin_dir="${OPENCHAT_SANDBOX_GO_BIN_DIR:-/usr/local/bin}"
+  if [ -n "$goroot" ] && [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
+    for tool in go gofmt; do
+      if [ -x "$goroot/bin/$tool" ]; then
+        if ln -sfn "$goroot/bin/$tool" "$bin_dir/$tool" 2>/dev/null; then
+          note "ok   $bin_dir/$tool -> $goroot/bin/$tool (visible to non-login shells)"
+        else
+          note "WARN could not link $bin_dir/$tool; non-login shells may not see go."
+          status=1
+        fi
+      fi
+    done
+  else
+    note "note $bin_dir is not writable here; a non-login shell (coder_bash) may not see go."
+  fi
+  # Prove it in a shell that inherits nothing: this is the leg the ticket's
+  # acceptance line actually measures.
+  default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+  seen="$(env -i PATH="$default_path" sh -c 'command -v go' 2>/dev/null)"
+  if [ -n "$seen" ]; then
+    note "ok   default PATH resolves go -> $seen"
+  else
+    note "MISS go is not on the default PATH; coder_bash would report missing_cli: go"
+    note "     persist it with: development/scripts/install_sandbox_go_toolchain.sh"
+    status=1
+  fi
+fi
+
+# --- shell-independent go env (ci#1038) -------------------------------------
+# The PATH shim fixes *resolution*, but two more settings decide whether an
+# offline build actually holds, and both were persisted to ~/.bashrc only - the
+# one file a non-login coder_bash shell never reads:
+#   * GOTOOLCHAIN=auto makes `go` try to *download* a toolchain the moment
+#     backend/go.mod asks for a newer one: the opposite of offline.
+#   * GOPRIVATE unset makes the private integration modules resolve through the
+#     public proxy (and fail) instead of being treated as private.
+# `go env -w` writes $GOENV (~/.config/go/env), which every `go` process reads
+# regardless of shell or login state, so the settings survive into coder_bash.
+if [ -n "$go_bin" ]; then
+  goenv_file="$("$go_bin" env GOENV 2>/dev/null)"
+  if [ -z "$goenv_file" ]; then
+    note "WARN '$go_bin env GOENV' is empty; cannot persist GOTOOLCHAIN=local shell-independently."
+  else
+    if grep -qx 'GOTOOLCHAIN=local' "$goenv_file" 2>/dev/null; then
+      note "ok   GOTOOLCHAIN=local (persisted in $goenv_file, so every shell gets it)"
+    elif "$go_bin" env -w GOTOOLCHAIN=local >/dev/null 2>&1; then
+      # Note: this also fixes the case where GOTOOLCHAIN=auto is merely *exported*
+      # by an rc file - the export dies with the login shell, $GOENV does not.
+      note "ok   GOTOOLCHAIN=local persisted in $goenv_file (read by non-login shells)"
+    else
+      note "MISS could not write GOTOOLCHAIN=local to $goenv_file; an offline build may try to"
+      note "     download a toolchain. Re-run so the sandbox user can write $goenv_file."
+      status=1
+    fi
+    # GOPRIVATE/GONOSUMDB: never overwrite a value the developer/image already
+    # set - a stale sandbox default silently redirected real module fetches.
+    for kv in 'GOPRIVATE=github.com/msgmate-io/*' 'GONOSUMDB=github.com/msgmate-io/*'; do
+      key="${kv%%=*}"; val="${kv#*=}"
+      have="$("$go_bin" env "$key" 2>/dev/null)"
+      if [ -n "$have" ]; then
+        note "ok   $key=$have (already set)"
+      elif "$go_bin" env -w "$kv" >/dev/null 2>&1; then
+        note "ok   $key=$val persisted in $goenv_file (private modules resolve non-interactively)"
+      else
+        note "WARN could not persist $key in $goenv_file; private integration modules may not"
+        note "     resolve in a non-login shell."
+      fi
+    done
+    # Prove the whole leg where it matters: a shell that inherits nothing - the
+    # class coder_bash runs in - must still see go *and* GOTOOLCHAIN=local.
+    default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+    persisted="$(env -i PATH="$default_path" GOENV="$goenv_file" HOME="${HOME:-/root}" \
+      sh -c 'go env GOTOOLCHAIN' 2>/dev/null)"
+    case "$persisted" in
+      local) note "ok   a stripped shell (default PATH, GOENV only) reports GOTOOLCHAIN=local" ;;
+      *) note "MISS a stripped shell reports GOTOOLCHAIN='${persisted:-<none>}', not local; an"
+         note "     offline build there may attempt a toolchain download."
+         status=1 ;;
+    esac
+  fi
 fi
 
 # Final self-check: provision, then prove it. The probe is the single source of
