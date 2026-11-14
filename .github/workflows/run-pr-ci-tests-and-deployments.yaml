@@ -94,6 +94,20 @@ on:
       - labeled
       - unlabeled
       - closed
+  # ci#1080: the `dev` -> `main` hop used to be driven only by the
+  # `pull_request: closed` event of the pull request merged into `dev`. That
+  # made the hop depend on *who* merged: GitHub raises no workflow run for
+  # events caused by the default `GITHUB_TOKEN` (`app/github-actions`), so
+  # open-chat-go#71 merging into `dev` (5257a1aa, 2026-11-14T15:09:08Z) raised
+  # no run at all and left `dev` 14 commits ahead of `main` with no
+  # `[Dev promotion]` pull request and nothing scheduled to create one. The hop
+  # is now driven by the *state* of `dev`: every push to `dev` schedules it as
+  # well, so a missed hop self-heals on the next push (the existing promotion
+  # pull request is refreshed in place, never deleted or recreated - closing it
+  # would cancel its labelled CI run).
+  push:
+    branches:
+      - dev
 
 concurrency:
   # Key pull-request runs by PR number *and* head SHA. A run that is parked
@@ -111,9 +125,14 @@ concurrency:
   # by the merge commit lets a fresh merge start immediately;
   # `cancel-superseded-merged-deployment` then cancels the stale run and the
   # per-environment dispatch job concurrency serialises the actual deploys.
+  # ci#1080: a `push` run carries no `pull_request` payload, so it needs its own
+  # group key; without this arm every push to `dev` would collapse into the
+  # shape-invalid `pr-ci--` group and cancel the run that implements the hop.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
+        || github.event_name == 'push'
+        && format('dev-push-{0}', github.event.after)
         || github.event.action == 'closed'
         && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
         || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
@@ -2974,7 +2993,8 @@ jobs:
       # runs the shipped shell against stubbed `curl`/`gh` and asserts that the
       # captured PATCH carries the live dev sha and real ticket links, that an
       # unresolvable head falls back with a `::warning::` instead of publishing
-      # an empty body, and that the ci#1077 auto-merge arming is untouched.
+      # an empty body, and that the ci#1066 policy - no unattended `--auto`
+      # arming of the promotion hop - holds.
       - name: Dev promotion PR refresh unit tests
         run: |
           set -euo pipefail
@@ -4053,7 +4073,17 @@ jobs:
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    # ci#1080: resolved from the merge event *and* from a push to `dev`, so the
+    # `dev` -> `main` hop is driven by the state of `dev` instead of by who
+    # performed the merge. A branch-deletion push is not a hop trigger.
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'closed' &&
+       github.event.pull_request.merged == true &&
+       (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')) ||
+      (github.event_name == 'push' &&
+       github.ref_name == 'dev' &&
+       github.event.deleted != true)
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -4070,6 +4100,16 @@ jobs:
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.ref }}"
           TARGET_REF="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "null" ]; then
+            # ci#1080: a `push` run to `dev` carries no pull_request payload. The
+            # integration trunk is then the pushed ref itself, so the merge
+            # target - and with it the promotion hop - is derived from `dev`
+            # rather than from the merge event that never reached us.
+            BASE_REF="${{ github.ref_name }}"
+          fi
+          if [ -z "$TARGET_REF" ] || [ "$TARGET_REF" = "null" ]; then
+            TARGET_REF="${{ github.event.after }}"
+          fi
           if [ -z "$TARGET_REF" ] || [ "$TARGET_REF" = "null" ]; then
             TARGET_REF="$BASE_REF"
           fi
@@ -4244,7 +4284,11 @@ jobs:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
           MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
-          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          # ci#1080: the hop is also triggered by a push to `dev`, whose payload
+          # carries no merged pull request. The pushed commit is the dev head
+          # then, so the refresh below is rendered from live API data either way.
+          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha || github.event.after || github.sha }}
+          TRIGGER_SHA: ${{ github.event.after || github.sha }}
         run: |
           set -euo pipefail
           api="${GITHUB_API_URL:-https://api.github.com}"
@@ -4277,6 +4321,10 @@ jobs:
             # Fallback: the newest commit of the comparison fetched above.
             dev_head="$(jq -r '[.commits[]? | .sha] | last // empty' <<< "$compare_json" 2>/dev/null || true)"
           fi
+          if [ -z "$dev_head" ]; then
+            # ci#1080: last resort - the commit whose push triggered this run.
+            dev_head="${TRIGGER_SHA:-}"
+          fi
 
           # The `ci#<n>` tickets referenced by the commits being promoted, up to
           # 20 links; anything beyond that is summarised as a count.
@@ -4301,6 +4349,17 @@ jobs:
             commit_lines="- (the commit list could not be resolved)"
           fi
 
+          # ci#1080: a push-triggered refresh has no merged pull request in its
+          # payload, so the trigger rows are built from whatever the trigger
+          # actually provides - never as empty table cells.
+          if [ -n "${MERGED_PR_NUMBER:-}" ]; then
+            trigger_lines="$(printf '| Latest dev merge | [#%s](%s) - %s |\n| Latest dev merge commit | `%s` |' \
+              "$MERGED_PR_NUMBER" "$MERGED_PR_URL" "$MERGED_PR_TITLE" "${DEV_HEAD_SHA:-}")"
+          else
+            trigger_lines="$(printf '| Latest push to `dev` | `%s` (added by the push trigger of ci#1080) |' \
+              "${TRIGGER_SHA:-}")"
+          fi
+
           title="[Dev promotion] Promote dev -> main - merging deploys ci.msgmate.io (ci#833)"
           body=""
           if [ -n "$dev_head" ]; then
@@ -4319,8 +4378,7 @@ jobs:
           | Base | \`main\` |
           | Dev head commit | \`${dev_head}\` |
           | Commits ahead of \`main\` | ${ahead_by} |
-          | Latest dev merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) - ${MERGED_PR_TITLE} |
-          | Latest dev merge commit | \`${DEV_HEAD_SHA}\` |
+          ${trigger_lines}
           | Labels (automated, never toggled) | \`test\`, \`e2e\`, \`deploy\`, \`sandbox-test\` |
 
           ### Consolidated tickets
@@ -4368,13 +4426,19 @@ jobs:
               "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
               -d "$labels_payload" >/dev/null
             echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
-            # ci#1077: arm auto-merge on the refresh path too, so the promotion
-            # lands by itself as soon as the labelled CI run is green.
-            if GH_TOKEN="$PR_TOKEN" gh pr merge "$existing_pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
-              echo "Auto-merge armed on promotion PR #${existing_pr_number}."
-            else
-              echo "::warning::Could not arm auto-merge on promotion PR #${existing_pr_number}; merge it manually once green."
-            fi
+            # ci#1066: the promotion hop is deliberately NOT armed unattended.
+            # Arming `--auto` here is unsound in *both* protection states: with
+            # the `main` ruleset `active` the armed merge can never land (the
+            # ruleset demands one approving review from a reviewer with write
+            # access, which no automation identity can post without a write-
+            # access approver token or a registered bypass actor), and with the
+            # ruleset *masked* (`rules/branches/main` = `[]`) the armed merge
+            # lands immediately - before the required check even starts - so a
+            # green promotion PR would prove nothing about the approval path.
+            # Merging stays with `auto-approve-consolidation.yaml`, the only job
+            # that owns the approver identity and classifies the block.
+            echo "::notice::Promotion PR #${existing_pr_number} was refreshed but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+            echo "Promotion PR #${existing_pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
             exit 0
           fi
 
@@ -4395,13 +4459,91 @@ jobs:
             "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d "$labels_payload" >/dev/null
           echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
-          # ci#1077: arm auto-merge right after creation so `dev` -> `main`
-          # needs no human click once every required check is green.
-          if GH_TOKEN="$PR_TOKEN" gh pr merge "$pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
-            echo "Auto-merge armed on promotion PR #${pr_number}."
-          else
-            echo "::warning::Could not arm auto-merge on promotion PR #${pr_number}; merge it manually once green."
+          # ci#1066: never arm `--auto` on the promotion hop - see the refresh
+          # path above for why it is unsound both before and after the `main`
+          # ruleset is re-enabled. `auto-approve-consolidation.yaml` owns the
+          # approval and the merge attempt for this PR.
+          echo "::notice::Promotion PR #${pr_number} was opened but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+          echo "Promotion PR #${pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
+
+  # ci#1080: the `dev` -> `main` hop died silently. A merge into `dev`
+  # performed with the default `GITHUB_TOKEN` (`app/github-actions`) raised no
+  # `pull_request: closed` run at all, so no `[Dev promotion]` PR was ever
+  # opened, `dev` sat 14 commits ahead of `main` and nothing reported it. This
+  # job is the tripwire: whenever the hop is supposed to happen (a merge into
+  # `dev`, or a push to `dev` - which is now also a trigger), it asserts that a
+  # divergence actually has an open, correctly-labelled promotion PR behind it.
+  # It is deliberately scoped to the hop: `merge_target == 'dev'` can only be
+  # set by a `dev` merge or a `dev` push, so a feature PR never runs (and never
+  # blocks on) this check.
+  dev-promotion-divergence-guard:
+    name: Dev Promotion Divergence Guard
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment, open-dev-to-main-promotion-pr]
+    if: |
+      always() &&
+      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Assert a dev/main divergence has an open promotion PR
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          auth=(-H "Authorization: Bearer ${PR_TOKEN}"
+                -H "Accept: application/vnd.github+json"
+                -H "X-GitHub-Api-Version: 2022-11-28")
+
+          compare_json="$(curl -fsSL "${auth[@]}" "${api}/repos/${REPOSITORY}/compare/main...dev")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          dev_head="$(jq -r '.commits[-1].sha // ""' <<< "$compare_json")"
+
+          if [ "$ahead_by" = "0" ]; then
+            echo "dev is not ahead of main; there is no hop to promote."
+            exit 0
           fi
+
+          pr_json="$(curl -fsSL "${auth[@]}" \
+            "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1")"
+          pr_number="$(jq -r '.[0].number // ""' <<< "$pr_json")"
+
+          promotion_job_result="${{ needs.open-dev-to-main-promotion-pr.result }}"
+
+          if [ -z "$pr_number" ]; then
+            echo "::error::Dead dev -> main hop: dev is ${ahead_by} commit(s) ahead of main (dev head ${dev_head:-unknown}) but no open [Dev promotion] PR exists. The promotion job finished as '${promotion_job_result}'. The hop must be re-opened by a push to dev - do not open the promotion PR by hand."
+            exit 1
+          fi
+
+          pr_title="$(jq -r '.[0].title // ""' <<< "$pr_json")"
+          pr_head="$(jq -r '.[0].head.sha // ""' <<< "$pr_json")"
+          pr_labels="$(jq -r '[.[0].labels[]?.name] | sort | join(",")' <<< "$pr_json")"
+
+          case "$pr_title" in
+            "[Dev promotion]"*) ;;
+            *)
+              echo "::error::The dev -> main promotion PR #${pr_number} is titled '${pr_title}', which is not a [Dev promotion] PR (ci#833)."
+              exit 1
+              ;;
+          esac
+
+          missing=()
+          for label in deploy sandbox-test; do
+            if ! jq -e --arg l "$label" '.[0].labels[]?.name | select(. == $l)' >/dev/null <<< "$pr_json"; then
+              missing+=("$label")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The [Dev promotion] PR #${pr_number} is missing the automated label(s) ${missing[*]} (labels now: ${pr_labels:-none}); only this PR may carry deploy/sandbox-test (ci#833)."
+            exit 1
+          fi
+
+          if [ -n "$dev_head" ] && [ -n "$pr_head" ] && [ "$pr_head" != "$dev_head" ]; then
+            echo "::warning::The [Dev promotion] PR #${pr_number} still advertises dev head ${pr_head} while dev is at ${dev_head}; the next push to dev refreshes it in place (ci#1067)."
+          fi
+
+          echo "Dev -> main hop is alive: dev is ${ahead_by} commit(s) ahead of main and promotion PR #${pr_number} is open with labels ${pr_labels}."
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link

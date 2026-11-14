@@ -22,7 +22,13 @@ The refresh now re-renders title **and** body from live API data on every run:
   overflow summarised) and the newest 10 commits;
 * an unresolvable head warns (`::warning::`) and does a title-only PATCH instead
   of publishing an empty/stale body;
-* the ci#1077 auto-merge arming on the refresh path is untouched.
+* ci#1066: the hop is never armed with `gh pr merge --auto`. Arming it is unsound
+  in both protection states - with the `main` ruleset `active` the armed merge
+  can never land (it demands an approving review from a reviewer with write
+  access, which the automation cannot post), and with the ruleset masked the
+  merge lands before the required check starts. The step reports
+  "awaiting a maintainer merge" instead; `auto-approve-consolidation.yaml` owns
+  the approval and the merge attempt.
 
 This guard extracts the step's shell **verbatim** from the workflow and runs it
 against stubbed `curl`/`gh` in a temp `bin/` on `PATH`, in the style of
@@ -318,11 +324,38 @@ class DevPromotionRefreshTest(unittest.TestCase):
         # The stale promotion must not survive the refresh.
         self.assertNotIn(STALE_SHA, body)
         self.assertNotIn(STALE_TICKET, body)
-        # ci#1077 auto-merge arming is untouched.
-        self.assertTrue(
-            any("--auto" in call for call in gh_calls), gh_calls
-        )
         self.assertNotIn(FAKE_TOKEN, out)
+        # ci#1066: the refresh path must not arm the hop for auto-merge.
+        self.assertFalse(
+            any("--auto" in call for call in gh_calls),
+            f"the promotion hop must not be auto-armed (ci#1066): {gh_calls}",
+        )
+
+    def test_the_refresh_reports_awaiting_a_maintainer_merge(self) -> None:
+        rc, out, _, gh_calls = PromotionRun(
+            head_body=json.dumps({"object": {"sha": LIVE_DEV_HEAD}})
+        ).run()
+        self.assertEqual(rc, 0, out)
+        # The step must state why it does not merge instead of failing or arming.
+        self.assertIn("awaiting a maintainer merge", out)
+        self.assertIn("ci#1066", out)
+        self.assertFalse(any("--auto" in call for call in gh_calls), gh_calls)
+        self.assertNotIn("::warning::Could not arm auto-merge", out)
+        self.assertNotIn(FAKE_TOKEN, out)
+
+    def test_the_promotion_step_never_arms_auto_merge(self) -> None:
+        # Only live shell lines count: the explanatory comments legitimately
+        # mention the flag that must not be used.
+        live = [
+            line for line in _step_shell().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        arming = [line for line in live if "pr merge" in line and "--auto" in line]
+        self.assertEqual(arming, [], f"the hop must stay unarmed (ci#1066): {arming}")
+        self.assertIn("ci#1066", _step_shell())
+        self.assertTrue(
+            any("awaiting a maintainer merge" in line for line in live), live
+        )
 
     def test_unresolvable_head_warns_and_never_patches_an_empty_body(self) -> None:
         rc, out, requests, _ = PromotionRun(head_status=404, compare={"ahead_by": 3, "commits": []}).run()
