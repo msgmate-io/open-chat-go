@@ -132,10 +132,25 @@ development/scripts/install_sandbox_go_toolchain.sh \
 It provisions first, then prints the command output verbatim and exits with the
 command's status (`verified (exit 0)` / `FAILED (exit N)`); with no usable
 toolchain it prints `go: MISSING`, skips the command and fails, so a missing
-toolchain can never be rounded up to a passing report. `--plan` is the triage
+toolchain can never be rounded up to a passing report. Provisioning finishes by
+writing the toolchain into a **default-PATH** directory (`/usr/local/bin/go` ->
+`$GOROOT/bin/go`) and proving it from a stripped `env -i` shell: `~/.bashrc` and
+`/etc/profile.d` are read by interactive/login shells only, so without that shim
+`coder_bash go test ...` reported `missing_cli: go` while `bash -lc 'go version'`
+worked in a login shell. `--plan` is the triage
 variant: it reports every gap at once as `reasons=<csv>` (`no_go`,
-`go_too_old`, `gotoolchain_set`, `no_module_cache`) instead of stopping at the
-first one.
+`go_too_old`, `gotoolchain_set`, `no_module_cache`, `not_on_default_path`)
+instead of stopping at the first one.
+
+The same shell-independence problem applies to `go env`: `GOTOOLCHAIN`,
+`GOPRIVATE` and `GONOSUMDB` exported from `~/.bashrc` never reach `coder_bash`
+either, and a leftover `GOTOOLCHAIN=auto` turns an "offline" build into a
+toolchain download. Provisioning therefore persists them with `go env -w`, which
+writes `$GOENV` (`~/.config/go/env`) — read by every `go` process regardless of
+shell — and proves `GOTOOLCHAIN=local` from the same stripped `env -i` shell. It
+never overwrites a value the image already persisted. `check_coder_sandbox_readiness.sh`
+accepts either an exported `GOPRIVATE` or a persisted one, so a configured
+sandbox is not reported as a gap.
 
 The ticket's acceptance line ("in a fresh `repo:open-chat-go` sandbox,
 `go version && go build ./...` succeeds offline after checkout") has its own

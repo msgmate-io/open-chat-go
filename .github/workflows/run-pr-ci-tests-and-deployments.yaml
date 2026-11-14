@@ -2809,6 +2809,23 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_go_toolchain.sh
 
+      # ci#1038 (default-PATH leg): the toolchain can be installed, in
+      # GOTOOLCHAIN=local, with a warmed module cache - and still be unreachable,
+      # because ~/.bashrc and /etc/profile.d are read by login/interactive shells
+      # only while the agent's `coder_bash` runs a non-login, non-interactive
+      # shell. That is how a sandbox reported `which: no go in (/usr/local/sbin:
+      # /usr/local/bin:...)` with the toolchain sitting in /usr/local/go/bin, and
+      # how three implementer turns passed without a single local `go test`. Pin
+      # the fix: provisioning symlinks the toolchain into a default-PATH
+      # directory, proves it from a stripped `env -i` shell, and reports
+      # `MISS go is not on the default PATH` plus a non-zero exit when the shim
+      # cannot be written, so a missing toolchain can never be rounded up into a
+      # passing report. Hermetic via a stub `go`.
+      - name: Coder sandbox default-PATH Go shim unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_default_path.sh
+
       # ci#1062 (image half of ci#1038): provisioning at runtime is only half the
       # story - the *published* coding image shipped go1.25.10 off PATH with no
       # login-shell shim and no warmed module cache while backend/go.mod required

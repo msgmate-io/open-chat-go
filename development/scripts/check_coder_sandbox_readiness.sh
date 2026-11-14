@@ -110,12 +110,23 @@ else
   status=1
 fi
 
-if [ -n "${GOPRIVATE:-}" ]; then
+if [ -z "$bare_go" ]; then
+  :
+elif [ -n "${GOPRIVATE:-}" ]; then
   note "ok   GOPRIVATE=$GOPRIVATE"
 else
-  note "MISS GOPRIVATE is unset; private integration modules will not resolve non-interactively."
-  note "     export GOPRIVATE='github.com/msgmate-io/*' GONOSUMDB='github.com/msgmate-io/*'"
-  status=1
+  # ci#1038: the environment variable is only one of the two ways this can be
+  # set. `go env GOPRIVATE` (from $GOENV) is what a non-login coder_bash shell
+  # actually gets, and provisioning now persists it with `go env -w`, so probing
+  # the variable alone reported a gap for a sandbox that was in fact configured.
+  persisted_private=$(env -i PATH="$default_path" sh -c 'go env GOPRIVATE' 2>/dev/null)
+  if [ -n "$persisted_private" ]; then
+    note "ok   GOPRIVATE=$persisted_private (persisted in \$GOENV, so non-login shells get it)"
+  else
+    note "MISS GOPRIVATE is unset; private integration modules will not resolve non-interactively."
+    note "     persist it: go env -w GOPRIVATE='github.com/msgmate-io/*' GONOSUMDB='github.com/msgmate-io/*'"
+    status=1
+  fi
 fi
 
 if [ -f "$root/backend/go.work" ]; then
