@@ -59,8 +59,19 @@ cd "$REPO_ROOT"
 # WORKSPACE_PATH (repo-relative) and the integration checkout at INTEGRATION_SRC.
 # Working purely with absolute forms makes the `cd` below a no-op and keeps the
 # "compile via the monorepo layout" contract independent of the caller's cwd.
+#
+# ci#1075: the repo-relative WORKSPACE_PATH must keep its *directory structure*.
+# Resolving it as "$REPO_ROOT/$(basename ...)" placed the module one directory
+# below the repo root instead of `clients/integrations/<name>`, i.e. three levels
+# too high for its own `replace backend => ../../../backend` (and its
+# `../<other>_integration` siblings) to resolve - every standalone integration
+# build then failed with "replacement directory ../../../backend does not exist".
+# The resolution lives in a sourced helper so it can be pinned hermetically
+# (development/scripts/tests/test_integration_workspace_path.sh).
+# shellcheck source=development/scripts/integration_workspace_path.sh disable=SC1091
+. "$REPO_ROOT/development/scripts/integration_workspace_path.sh"
 INTEGRATION_SRC="$(cd "$(dirname "${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}")" && pwd)/$(basename "${INTEGRATION_SRC}")"
-WORKSPACE_PATH="$(cd "$REPO_ROOT" && pwd)/$(basename "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
+WORKSPACE_PATH="$(integration_workspace_path "$REPO_ROOT" "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"

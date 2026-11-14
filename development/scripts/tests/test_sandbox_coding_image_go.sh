@@ -237,26 +237,32 @@ fi
 grep -q 'install_sandbox_go_toolchain\.sh' "$SCRIPT" ||
   fail "the gate must recognise install_sandbox_go_toolchain.sh as a valid version source"
 
-# The real, published image repo is not vendored here, but if the coding
-# Dockerfile is checked out (monorepo client submodule) it must be green. This is
-# the check that would have caught ci#1062 at PR time.
-coding_df=""
-for candidate in \
-  "$ROOT/clients/integrations/docker_sandbox_integration/sandboxes/coding/Dockerfile" \
-  "$ROOT/sandboxes/coding/Dockerfile"; do
-  [ -f "$candidate" ] && { coding_df="$candidate"; break; }
-done
-if [ -n "$coding_df" ]; then
-  out="$(run_gate --dockerfile "$coding_df" "$ROOT")"
-  if [ $? -ne 0 ]; then
-    fail "the checked-out coding Dockerfile must satisfy the ci#1062 Go contract"
-    printf '%s\n' "$out" | sed 's/^/    /' >&2
+# The real, published image repo is not vendored here, but if a sandbox
+# Dockerfile that ships `go` is checked out (monorepo client submodule) it must
+# be green. This is the check that would have caught ci#1062 at PR time - and,
+# for `minimal`, ci#1038: the publish gate was scoped to `coding` only, so the
+# variant agent sandboxes actually run kept shipping go1.25.10 off PATH long
+# after `coding` was fixed. Both gated variants are asserted here so a future
+# edit that leaves `minimal` behind fails in PR CI, not only at publish time.
+for variant in coding minimal; do
+  variant_df=""
+  for candidate in \
+    "$ROOT/clients/integrations/docker_sandbox_integration/sandboxes/$variant/Dockerfile" \
+    "$ROOT/sandboxes/$variant/Dockerfile"; do
+    [ -f "$candidate" ] && { variant_df="$candidate"; break; }
+  done
+  if [ -n "$variant_df" ]; then
+    out="$(run_gate --dockerfile "$variant_df" "$ROOT")"
+    if [ $? -ne 0 ]; then
+      fail "the checked-out $variant Dockerfile must satisfy the ci#1062 Go contract"
+      printf '%s\n' "$out" | sed 's/^/    /' >&2
+    else
+      pass "the checked-out $variant Dockerfile satisfies the contract"
+    fi
   else
-    pass "the checked-out coding Dockerfile satisfies the contract"
+    printf 'ok: %s Dockerfile not checked out here; static gate covered by fixtures\n' "$variant"
   fi
-else
-  printf 'ok: coding Dockerfile not checked out here; static gate covered by fixtures\n'
-fi
+done
 
 # --- 4. --image mode produces no fabricated evidence -------------------------
 # Without a docker daemon the behavioural half must say MISS and exit non-zero.
