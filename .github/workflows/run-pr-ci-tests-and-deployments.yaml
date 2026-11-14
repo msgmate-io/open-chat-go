@@ -2936,6 +2936,22 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_auto_approve_human_required.py -v
 
+      # ci#1066: the `dev` -> `main` hop looked healthy for a while *because the
+      # gate was off*. `Main (Staging) Merge Protection` was disabled
+      # (`rules/branches/main` returned `[]`), so an armed `--auto` merge landed
+      # unattended and a green promotion PR proved nothing about the
+      # write-access approval the ruleset demands once it is re-enabled. The
+      # auto-approve job now classifies the live protection state before
+      # anything merges (`review_required_enforced` / `review_required_masked` /
+      # `protection_unknown`) and reports it in the job summary. The guard runs
+      # the shipped shell against a stubbed `gh` and asserts the three states,
+      # that the reporting is never an `::error::`, and that a rules API failure
+      # cannot turn the auto-approve run red.
+      - name: Auto-approve merge protection preflight unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_auto_approve_merge_protection_preflight.py -v
+
       # ci#1067: the promotion PR refresh PATCHed only the title, so
       # `open-chat-go#36` kept advertising an older promotion (a stale dev head
       # and a stale consolidated-ticket list) long after `dev` had moved on.
