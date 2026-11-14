@@ -2804,6 +2804,21 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_coding_image_go.sh
 
+      # ci#1038 (acceptance line): "in a fresh `repo:open-chat-go` sandbox,
+      # `go version && go build ./...` succeeds offline after checkout". The
+      # ticket's real damage was not just a missing toolchain but an agent that
+      # could not tell "the build ran" from "I believe it would". Pin the
+      # pre-push script an implementer actually runs: no toolchain =>
+      # `missing_cli: go` + `go: MISSING` and the build is never attempted; an
+      # unmaterialised profile workspace => `go_work: MISSING` guidance (a
+      # provisioning gap, not a go.mod/go.sum hand-edit); and the build itself
+      # always runs offline (GOPROXY=off, -mod=readonly, GOTOOLCHAIN=local) in
+      # backend/ with its real status as the exit code. Hermetic via a stub `go`.
+      - name: Coder sandbox offline Go build acceptance unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_offline_build.sh
+
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
       # networking design). Pin the in-pod probe script contract (single-line

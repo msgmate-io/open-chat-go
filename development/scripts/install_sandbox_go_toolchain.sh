@@ -13,6 +13,8 @@
 # Usage:
 #   development/scripts/install_sandbox_go_toolchain.sh [repo_root]
 #   development/scripts/install_sandbox_go_toolchain.sh --check [repo_root]
+#   development/scripts/install_sandbox_go_toolchain.sh --plan [repo_root]
+#   development/scripts/install_sandbox_go_toolchain.sh [--verify=<cmd>] [repo_root]
 #
 # Contract (ci#1038):
 #   * the toolchain version comes from the `go` directive of backend/go.mod, so
@@ -34,22 +36,53 @@
 # pre-push self-check and the unit test in
 # development/scripts/tests/test_sandbox_go_toolchain.sh drive.
 #
-# Exit codes: 0 ready / provisioned, 1 not ready, 2 usage error.
+# `--plan` is the same probe, but it prints the *reasons* as `reasons=<csv>` and
+# keeps going after the first gap, so a caller can triage several at once
+# (`ci#1038`): a too-old toolchain and an unwarmed module cache are one repair
+# away, while "nothing installed and no egress" is not.
+#
+# `--verify=<cmd>` exists so a report can carry COMMAND OUTPUT instead of a
+# narrative (`ci#1038`): it provisions, runs `<cmd>` with the provisioned
+# environment (GOTOOLCHAIN=local, the sandbox PATH), prints its output verbatim
+# and exits with its status. A failing or absent toolchain makes the whole run
+# say `go: MISSING` / `missing_cli: go`; it can never print a green verdict for a
+# command that did not run. Example:
+#
+#   development/scripts/install_sandbox_go_toolchain.sh \
+#     --verify='go build ./... && go test ./nativecoder/...' . 
+#
+# Exit codes: 0 ready / provisioned / verify command green, 1 not ready or verify
+# command red, 2 usage error.
 set -uo pipefail
 
 root=""
 check_only=0
-for arg in "$@"; do
-  case "$arg" in
-    --check) check_only=1 ;;
+plan_only=0
+verify_cmd=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check) check_only=1; shift ;;
+    --plan) plan_only=1; shift ;;
+    --verify=*) verify_cmd="${1#*=}"; shift ;;
+    --verify)
+      [ "$#" -ge 2 ] || { echo "--verify requires a command argument" >&2; exit 2; }
+      verify_cmd="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    -*) echo "unknown option: $arg" >&2; exit 2 ;;
-    *) root="$arg" ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) root="$1"; shift ;;
   esac
 done
+if [ "$check_only" -eq 1 ] && [ "$plan_only" -eq 1 ]; then
+  echo "--check and --plan are mutually exclusive" >&2
+  exit 2
+fi
+if [ -n "$verify_cmd" ] && { [ "$check_only" -eq 1 ] || [ "$plan_only" -eq 1 ]; }; then
+  echo "--verify cannot be combined with --check/--plan" >&2
+  exit 2
+fi
 [ -n "$root" ] || root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ -d "$root" ] || { echo "repo root '$root' does not exist" >&2; exit 2; }
 
@@ -96,38 +129,71 @@ note "== coding sandbox Go toolchain (ci#1038) =="
 note "     required (backend/go.mod): go ${required:-<unknown>}"
 note "     present:                   ${have_version:-<none>}"
 
-# --- report-only mode -------------------------------------------------------
-if [ "$check_only" -eq 1 ]; then
+# --- gap probes -------------------------------------------------------------
+# ci#1038: `--check` exits at the first gap (a pre-push gate wants one answer),
+# `--plan` walks every gap and prints them as `reasons=<csv>` so an implementer
+# can triage. Both read the same probes, so they can never disagree about what
+# "ready" means.
+
+# why_not_ready - fill `gaps` with reason tokens, print the human MISS lines.
+# Always exits 0; the caller decides. Reasons, in probe order:
+#   no_go             no toolchain anywhere (missing_cli: go)
+#   go_too_old        present but older than the backend/go.mod directive
+#   no_gomod_directive  backend/go.mod carries no `go` directive (cannot pin)
+#   gotoolchain_set   GOTOOLCHAIN != local, so a build may fetch a toolchain
+#   no_module_cache   $GOMODCACHE/cache/download is absent (offline build fails)
+gaps=""
+add_gap() { gaps="${gaps:+$gaps,}$1"; }
+
+why_not_ready() {
   if [ -z "$go_bin" ]; then
+    add_gap no_go
     note "missing_cli: go"
     note "go: MISSING"
     note "     no Go toolchain in this sandbox, so NO local build or test run is possible."
     note "     Do not substitute narrative for a test run: say 'go: MISSING' and let PR CI"
-    note "     be the only gate. To provision, re-run this script without --check."
-    exit 1
+    note "     be the only gate. To provision, re-run this script without --check/--plan,"
+    note "     or run it with --verify='<command>' so the report carries real output."
+    return 0
   fi
-  if [ "$satisfies" -eq 0 ]; then
+  if [ -z "$required" ]; then
+    add_gap no_gomod_directive
+    note "MISS backend/go.mod has no 'go' directive; cannot pin a toolchain version."
+  elif [ "$satisfies" -eq 0 ]; then
+    add_gap go_too_old
     note "MISS go $have_version is older than the backend/go.mod directive (go $required)."
     note "     Re-run this script without --check to install the pinned toolchain."
-    exit 1
   fi
   if [ "$("$go_bin" env GOTOOLCHAIN 2>/dev/null)" = "local" ]; then
     note "ok   GOTOOLCHAIN=local (no implicit toolchain download)"
   else
+    add_gap gotoolchain_set
     note "MISS GOTOOLCHAIN=$("$go_bin" env GOTOOLCHAIN 2>/dev/null); an offline build may try to"
     note "     download a toolchain. Re-run this script without --check to pin it."
-    exit 1
   fi
   modcache="$("$go_bin" env GOMODCACHE 2>/dev/null)"
   if [ -n "$modcache" ] && [ -d "$modcache/cache/download" ]; then
     note "ok   warmed module cache ($modcache/cache/download)"
   else
+    add_gap no_module_cache
     note "MISS no warmed module cache at ${modcache:-<unset>}/cache/download; an offline build"
     note "     will fail on network fetches. Re-run this script without --check."
-    exit 1
   fi
-  note "== ready: go $have_version can build offline =="
-  exit 0
+  return 0
+}
+
+# --- report-only modes ------------------------------------------------------
+if [ "$check_only" -eq 1 ] || [ "$plan_only" -eq 1 ]; then
+  why_not_ready
+  if [ -z "$gaps" ]; then
+    note "== ready: go $have_version can build offline =="
+    [ "$plan_only" -eq 1 ] && note "reasons="
+    exit 0
+  fi
+  # The gaps are the machine-readable answer: no narrative can turn them green.
+  note "reasons=$gaps"
+  note "== NOT ready: $gaps =="
+  exit 1
 fi
 
 # --- provisioning mode ------------------------------------------------------
@@ -156,8 +222,11 @@ else
   # Default install prefix mirrors dev.dockerfile (/usr/local/go). It is
   # overridable so the unit test can exercise the install path without root.
   install_root="${OPENCHAT_SANDBOX_GO_INSTALL_ROOT:-/usr/local}"
+  # ci#1038: the download base is overridable so the hermetic suite can prove the
+  # "download failed, therefore no verification ran" path without the network.
+  dl_base="${OPENCHAT_SANDBOX_GO_DL_BASE:-https://go.dev/dl}"
   note "     downloading go${required} (linux-${goarch}) -> $install_root/go"
-  if ! curl -fsSL -o "$tarball" "https://go.dev/dl/go${required}.linux-${goarch}.tar.gz"; then
+  if ! curl -fsSL -o "$tarball" "${dl_base%/}/go${required}.linux-${goarch}.tar.gz"; then
     note "missing_cli: go"
     note "go: MISSING"
     note "MISS the Go toolchain download failed (offline sandbox?). Do not claim tests ran:"
@@ -173,6 +242,14 @@ else
   export PATH
   go_bin="$install_root/go/bin/go"
   have_version="$("$go_bin" env GOVERSION 2>/dev/null | sed 's/^go//')"
+  # The pre-install probe said "too old"; the freshly installed toolchain is the
+  # new answer, so re-derive it here. Without this, a caller that provisions *and*
+  # verifies in one run (`--verify=...`) would still report the stale gap.
+  if [ -n "$have_version" ] && [ -n "$required" ] && go_version_ge "$have_version" "$required"; then
+    satisfies=1
+  else
+    satisfies=0
+  fi
   note "ok   installed go $have_version at $go_bin"
 fi
 
@@ -290,4 +367,41 @@ if [ "$status" -eq 0 ]; then
 else
   note "== provisioned with gaps: see the WARN/MISS lines above =="
 fi
+
+# --- verify mode ------------------------------------------------------------
+# ci#1038: a report must carry COMMAND OUTPUT, not a narrative. The command runs
+# with the environment the installer just provisioned (PATH + GOTOOLCHAIN=local +
+# the warmed module cache), so `go test ./<pkg>/...` is measured in the same
+# sandbox a later coder_bash call sees. When the toolchain is not usable the
+# command is NOT run: printing a green-looking verdict for a command that could
+# never have executed is exactly the fabrication this mode exists to prevent.
+if [ -n "$verify_cmd" ]; then
+  note "== verify: $verify_cmd =="
+  # Only a *missing or too-old toolchain* blocks the run: an unwarmed module cache
+  # or a non-local GOTOOLCHAIN is reported as a WARN, because the command itself is
+  # the measurement and a sandbox with egress can still fetch what it needs.
+  if [ -z "$go_bin" ] || [ "$satisfies" -eq 0 ]; then
+    gaps=""
+    why_not_ready >/dev/null 2>&1
+    note "go: MISSING"
+    note "missing_cli: go"
+    note "NOT run: the command above was skipped because no usable Go $required toolchain is"
+    note "     installed here (reasons=${gaps:-no_go}). Do not report it as passing: say"
+    note "     'go: MISSING' and let PR CI be the gate."
+    exit 1
+  fi
+  gaps=""
+  why_not_ready >/dev/null 2>&1
+  if [ -n "$gaps" ]; then
+    note "WARN toolchain usable but not fully offline-clean (reasons=$gaps); running anyway."
+  fi
+  ( cd "$root" && eval "$verify_cmd" ); verify_status=$?
+  if [ "$verify_status" -eq 0 ]; then
+    note "== verified (exit 0): $verify_cmd =="
+  else
+    note "== FAILED (exit $verify_status): $verify_cmd =="
+  fi
+  exit "$verify_status"
+fi
+
 exit "$status"

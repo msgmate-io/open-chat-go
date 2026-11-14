@@ -97,6 +97,19 @@ if ! command -v gh >/dev/null 2>&1; then
   esac
 fi
 
+# 5. ci#1038: the probe is what an implementer reads before writing the report, so
+#    it must point at the offline-build gate whose verdicts are quotable
+#    (`go: MISSING` / `go_work: MISSING` / `go_build: OK|FAILED`) instead of
+#    leaving the reader to invent a verification story.
+case "$out" in
+  *"check_sandbox_go_offline_build.sh"*) : ;;
+  *) fail "probe must name the offline Go build gate (ci#1038)" ;;
+esac
+case "$out" in
+  *"go_work: MISSING"*) : ;;
+  *) fail "probe must name the go_work: MISSING verdict an implementer has to quote" ;;
+esac
+
 if [ "$failures" -ne 0 ]; then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
