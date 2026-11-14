@@ -179,6 +179,19 @@ why_not_ready() {
     note "MISS no warmed module cache at ${modcache:-<unset>}/cache/download; an offline build"
     note "     will fail on network fetches. Re-run this script without --check."
   fi
+  # ci#1038: the toolchain can be installed, in GOTOOLCHAIN=local and still be
+  # unreachable, because ~/.bashrc and /etc/profile.d are read by interactive and
+  # login shells only while coder_bash runs a non-login shell. Probe the default
+  # PATH, not this shell's PATH, or the gap stays invisible until an implementer
+  # reports `which: no go` from inside an actual dispatch.
+  default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+  if [ -n "$(env -i PATH="$default_path" sh -c 'command -v go' 2>/dev/null)" ]; then
+    note "ok   go is on the default PATH (non-login shells can invoke it)"
+  else
+    add_gap not_on_default_path
+    note "MISS go is on no default-PATH directory; coder_bash reports missing_cli: go even"
+    note "     though the toolchain exists. Re-run without --check to write the PATH shim."
+  fi
   return 0
 }
 
@@ -267,7 +280,12 @@ export GONOSUMDB="${GONOSUMDB:-github.com/msgmate-io/*}"
 # is still the authoritative full-suite gate.
 if [ -d "$root/backend" ]; then
   note "     warming the module cache (go mod download)"
-  if ( cd "$root/backend" && GOTOOLCHAIN=local go mod download >/dev/null 2>&1 ); then
+  # -mod=readonly: warming must not mutate tracked files. A plain
+  # `go mod download` happily appends missing go.sum lines, which left the
+  # implementer's worktree dirty with `M backend/go.sum` before the first edit and
+  # made every later `git diff` review noisy. Downloading with readonly either
+  # works or fails loudly; it never rewrites go.sum.
+  if ( cd "$root/backend" && GOTOOLCHAIN=local GOFLAGS=-mod=readonly go mod download >/dev/null 2>&1 ); then
     note "ok   module cache warmed ($(go env GOMODCACHE))"
   else
     note "WARN 'go mod download' failed (private modules and/or offline sandbox); later builds"
@@ -351,6 +369,44 @@ if [ -d "$profile_d" ] && [ -w "$profile_d" ]; then
   fi
 else
   note "note $profile_d is not writable here; relying on ~/.bashrc for later shells."
+fi
+
+# --- default-PATH shim (ci#1038) --------------------------------------------
+# ~/.bashrc covers interactive shells and /etc/profile.d covers `bash -l`, but
+# the coding agent's coder_bash tool runs a **non-login, non-interactive**
+# shell. That shell reads neither, which is exactly how a sandbox ended up
+# saying `which go` -> "no go in (/usr/local/sbin:/usr/local/bin:...)" while the
+# toolchain sat in /usr/local/go/bin the whole time. A symlink in a default-PATH
+# directory is the only form of provisioning that a non-login shell honours, so
+# write it when we can and report it when we cannot.
+if [ -n "$go_bin" ]; then
+  goroot="$("$go_bin" env GOROOT 2>/dev/null)"
+  bin_dir="${OPENCHAT_SANDBOX_GO_BIN_DIR:-/usr/local/bin}"
+  if [ -n "$goroot" ] && [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
+    for tool in go gofmt; do
+      if [ -x "$goroot/bin/$tool" ]; then
+        if ln -sfn "$goroot/bin/$tool" "$bin_dir/$tool" 2>/dev/null; then
+          note "ok   $bin_dir/$tool -> $goroot/bin/$tool (visible to non-login shells)"
+        else
+          note "WARN could not link $bin_dir/$tool; non-login shells may not see go."
+          status=1
+        fi
+      fi
+    done
+  else
+    note "note $bin_dir is not writable here; a non-login shell (coder_bash) may not see go."
+  fi
+  # Prove it in a shell that inherits nothing: this is the leg the ticket's
+  # acceptance line actually measures.
+  default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+  seen="$(env -i PATH="$default_path" sh -c 'command -v go' 2>/dev/null)"
+  if [ -n "$seen" ]; then
+    note "ok   default PATH resolves go -> $seen"
+  else
+    note "MISS go is not on the default PATH; coder_bash would report missing_cli: go"
+    note "     persist it with: development/scripts/install_sandbox_go_toolchain.sh"
+    status=1
+  fi
 fi
 
 # Final self-check: provision, then prove it. The probe is the single source of
