@@ -168,14 +168,22 @@ jobs:
       # GOTOOLCHAIN must be local, $GOMODCACHE/cache/download must be populated,
       # and the toolchain must be >= backend/go.mod. The evidence is posted to the
       # job summary so it can be quoted on the ticket.
-      - name: Verify coding image Go contract
-        if: matrix.variant == 'coding' && inputs.dry_run == false
+      #
+      # `minimal` is in the gate, not just `coding`: it is the variant the per-chat
+      # coder agent sandboxes actually run (a fresh agent sandbox has gh/node/go
+      # but no docker/nix/opencode, i.e. minimal), and scoping this step to
+      # `coding` alone is exactly why minimal kept shipping the drifted
+      # go1.25.10-off-PATH toolchain after #46 fixed coding (ci#1038). Any future
+      # variant that ships `go` must be added here too.
+      - name: Verify sandbox image Go contract
+        if: (matrix.variant == 'coding' || matrix.variant == 'minimal') && inputs.dry_run == false
         env:
           IMAGE_URL: ${{ steps.image.outputs.image_url }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           {
-            echo "### Coding sandbox image Go contract (ci#1062)"
+            echo "### ${VARIANT} sandbox image Go contract (ci#1062)"
             echo '```'
             bash development/scripts/check_sandbox_coding_image_go.sh \
               --image "${IMAGE_URL}" "${GITHUB_WORKSPACE}" || rc=$?

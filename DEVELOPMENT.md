@@ -106,6 +106,30 @@ identity with write access to this repository, or register a ruleset bypass acto
 for the automation identity. Both are security configuration decisions and stay
 with the maintainer.
 
+**A green hop is not proof the approval path works.** While
+`Main (Staging) Merge Protection` (rulesets `26947244` / `26947249`) has
+`enforcement` other than `active` - i.e. no branch ruleset matches
+`refs/heads/main`, `rules/branches/main` answers `[]` - the review requirement is
+**not enforced**, so an armed `--auto` merge lands immediately and even before the
+required check has started. That state *masks* the defect above instead of fixing
+it: re-enabling the ruleset brings the original failure straight back. Never
+enable the ruleset first and then hope the approval works; the order is approver
+identity (or bypass actor) first, ruleset `active` second.
+
+`auto-approve-consolidation.yaml` therefore runs a read-only
+`Preflight main merge protection (ci#1066)` step before anything merges and
+reports the live protection state in the job summary:
+
+| State | Meaning |
+| --- | --- |
+| `review_required_enforced` | the `main` ruleset requires *N* approving reviews: the hop needs the approver identity / bypass actor, otherwise it awaits a maintainer merge |
+| `review_required_masked` | no approving review is enforced: the unattended hop works only because the gate is off - warning, and the ruleset must not be re-enabled before the approver is fixed |
+| `protection_unknown` | the rules API could not be read; warning, never a failure |
+
+The preflight is reporting only: it never sets an error, so a red auto-approve
+run still means a real regression. Its guard is
+`development/scripts/test_auto_approve_merge_protection_preflight.py`.
+
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
 section for it); `PR Test Merge Requirement` reads that and nothing else.
