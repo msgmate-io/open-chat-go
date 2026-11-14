@@ -26,8 +26,8 @@ TMP="$(mktemp -d)"
 REL_WS="clients/integrations/ci1075_tmp_$$"
 cleanup() {
   rm -rf "$TMP"
-  rm -rf "$REPO_ROOT/$REL_WS"
-  rm -rf "$REPO_ROOT/$(basename "$REL_WS")"
+  rm -rf "${REPO_ROOT:?}/$REL_WS"
+  rm -rf "${REPO_ROOT:?}/$(basename "$REL_WS")"
 }
 trap cleanup EXIT
 
