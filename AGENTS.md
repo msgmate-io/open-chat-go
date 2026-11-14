@@ -142,6 +142,16 @@ variant: it reports every gap at once as `reasons=<csv>` (`no_go`,
 `go_too_old`, `gotoolchain_set`, `no_module_cache`, `not_on_default_path`)
 instead of stopping at the first one.
 
+The same shell-independence problem applies to `go env`: `GOTOOLCHAIN`,
+`GOPRIVATE` and `GONOSUMDB` exported from `~/.bashrc` never reach `coder_bash`
+either, and a leftover `GOTOOLCHAIN=auto` turns an "offline" build into a
+toolchain download. Provisioning therefore persists them with `go env -w`, which
+writes `$GOENV` (`~/.config/go/env`) — read by every `go` process regardless of
+shell — and proves `GOTOOLCHAIN=local` from the same stripped `env -i` shell. It
+never overwrites a value the image already persisted. `check_coder_sandbox_readiness.sh`
+accepts either an exported `GOPRIVATE` or a persisted one, so a configured
+sandbox is not reported as a gap.
+
 The ticket's acceptance line ("in a fresh `repo:open-chat-go` sandbox,
 `go version && go build ./...` succeeds offline after checkout") has its own
 pre-push gate, because a toolchain that exists but builds against the network is
