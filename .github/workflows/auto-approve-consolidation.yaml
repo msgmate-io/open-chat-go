@@ -83,6 +83,18 @@ name: Auto-approve consolidation PRs
 # If none is configured, the run warns, approves/merges with whatever permission
 # it has (the `--admin` attempt then fails and the PR stays open), and a human
 # still has to approve and merge.
+#
+# ci#1066 (reframed): the hop currently lands unattended only because
+# `Main (Staging) Merge Protection` is *disabled* (`rules/branches/main` answers
+# `[]`, no bypass actors). An armed `--auto` merge then merges immediately - even
+# before the required check starts - so a green promotion PR proves nothing about
+# the approval path: re-enabling the ruleset restores the original failure. The
+# `Preflight main merge protection (ci#1066)` step therefore classifies the live
+# protection state before anything merges (`review_required_enforced` /
+# `review_required_masked` / `protection_unknown`) and reports it in the job
+# summary; it is reporter-only and never turns the run red. Order of remediation
+# (see DEVELOPMENT.md): approver identity or bypass actor first, ruleset
+# `active` second - never the other way round.
 
 on:
   workflow_run:
