@@ -257,3 +257,26 @@ Read the answer instead of assuming success:
 After a successful update the pull request is re-read and the answer carries
 `mergeable`, `merge_state_status` and `head_sha`; use those values instead of a
 second ad-hoc lookup.
+
+## A red `PR Test Merge Requirement` caused by a cancelled sibling run (ci#1078)
+
+The gate refuses to accept a **cancelled** run as superseded, so when two
+`pull_request` events land on the same head commit the concurrency group
+cancels one of them and that dying run paints
+
+```
+##[error] PR CI were cancelled and this run was not accepted as superseded
+```
+
+on a live SHA whose verdict actually belongs to the replacement run. The diff is
+not the problem and the gate's superseded logic is not yours to change in a
+feature or consolidation PR:
+
+- do **not** re-run it and do **not** push repeatedly: every extra push is a new
+  event and races the concurrency group against itself, which is how the first
+  cancellation was produced;
+- push **exactly one** new commit (a real change, or `--allow-empty` when there
+  is nothing to say) so the head has a single fresh run, and let that run's own
+  `PR Test Merge Requirement` decide;
+- the authoritative verdict for a commit is its **newest** run per check name,
+  the same collapse `development/scripts/promotion_hop.sh merge` performs.
