@@ -409,6 +409,58 @@ if [ -n "$go_bin" ]; then
   fi
 fi
 
+# --- shell-independent go env (ci#1038) -------------------------------------
+# The PATH shim fixes *resolution*, but two more settings decide whether an
+# offline build actually holds, and both were persisted to ~/.bashrc only - the
+# one file a non-login coder_bash shell never reads:
+#   * GOTOOLCHAIN=auto makes `go` try to *download* a toolchain the moment
+#     backend/go.mod asks for a newer one: the opposite of offline.
+#   * GOPRIVATE unset makes the private integration modules resolve through the
+#     public proxy (and fail) instead of being treated as private.
+# `go env -w` writes $GOENV (~/.config/go/env), which every `go` process reads
+# regardless of shell or login state, so the settings survive into coder_bash.
+if [ -n "$go_bin" ]; then
+  goenv_file="$("$go_bin" env GOENV 2>/dev/null)"
+  if [ -z "$goenv_file" ]; then
+    note "WARN '$go_bin env GOENV' is empty; cannot persist GOTOOLCHAIN=local shell-independently."
+  else
+    if [ "$("$go_bin" env GOTOOLCHAIN 2>/dev/null)" = "local" ]; then
+      note "ok   GOTOOLCHAIN=local (in effect for every shell)"
+    elif "$go_bin" env -w GOTOOLCHAIN=local >/dev/null 2>&1; then
+      note "ok   GOTOOLCHAIN=local persisted in $goenv_file (read by non-login shells)"
+    else
+      note "MISS could not write GOTOOLCHAIN=local to $goenv_file; an offline build may try to"
+      note "     download a toolchain. Re-run so the sandbox user can write $goenv_file."
+      status=1
+    fi
+    # GOPRIVATE/GONOSUMDB: never overwrite a value the developer/image already
+    # set - a stale sandbox default silently redirected real module fetches.
+    for kv in 'GOPRIVATE=github.com/msgmate-io/*' 'GONOSUMDB=github.com/msgmate-io/*'; do
+      key="${kv%%=*}"; val="${kv#*=}"
+      have="$("$go_bin" env "$key" 2>/dev/null)"
+      if [ -n "$have" ]; then
+        note "ok   $key=$have (already set)"
+      elif "$go_bin" env -w "$kv" >/dev/null 2>&1; then
+        note "ok   $key=$val persisted in $goenv_file (private modules resolve non-interactively)"
+      else
+        note "WARN could not persist $key in $goenv_file; private integration modules may not"
+        note "     resolve in a non-login shell."
+      fi
+    done
+    # Prove the whole leg where it matters: a shell that inherits nothing - the
+    # class coder_bash runs in - must still see go *and* GOTOOLCHAIN=local.
+    default_path="${OPENCHAT_SANDBOX_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+    persisted="$(env -i PATH="$default_path" GOENV="$goenv_file" HOME="${HOME:-/root}" \
+      sh -c 'go env GOTOOLCHAIN' 2>/dev/null)"
+    case "$persisted" in
+      local) note "ok   a stripped shell (default PATH, GOENV only) reports GOTOOLCHAIN=local" ;;
+      *) note "MISS a stripped shell reports GOTOOLCHAIN='${persisted:-<none>}', not local; an"
+         note "     offline build there may attempt a toolchain download."
+         status=1 ;;
+    esac
+  fi
+fi
+
 # Final self-check: provision, then prove it. The probe is the single source of
 # truth for "can this sandbox run local Go checks", so the installer delegates
 # instead of re-implementing it.
