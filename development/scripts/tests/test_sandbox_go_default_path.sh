@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# ci#1038: hermetic coverage for the *default-PATH* leg of
-# development/scripts/install_sandbox_go_toolchain.sh.
+# ci#1038: hermetic coverage for the *shell-independence* legs of
+# development/scripts/install_sandbox_go_toolchain.sh:
+#
+#   1. default PATH  - a symlink in a default-PATH directory, so a non-login,
+#                      non-interactive shell (what `coder_bash` runs) can
+#                      resolve `go` at all;
+#   2. $GOENV        - `go env -w GOTOOLCHAIN=local` / GOPRIVATE, because the
+#                      same non-login shell never reads ~/.bashrc or
+#                      /etc/profile.d, so an exported GOTOOLCHAIN=auto silently
+#                      turns an "offline" build into a toolchain download.
 #
 # Why this test exists: the installer already persisted the toolchain to
 # ~/.bashrc and /etc/profile.d, yet a fresh sandbox still answered
@@ -8,13 +16,12 @@
 #   $ which go
 #   which: no go in (/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
 #
-# because both of those are read by *login/interactive* shells only, while the
-# agent's coder_bash tool runs a non-login, non-interactive shell. The sandbox
+# because both of those are read by *login/interactive* shells only. The sandbox
 # therefore "had" a toolchain that no implementer could invoke, which is how
-# three agent turns passed without a single local `go test`. The fix is a
-# symlink in a default-PATH directory; this test pins that behaviour.
+# three agent turns passed without a single local `go test`.
 #
-# No network, no real toolchain: a stub `go` answers `env GOROOT`/`env GOVERSION`.
+# No network, no real toolchain: a stub `go` answers env queries and records
+# `go env -w` writes in a state file, exactly like $GOENV does.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,14 +38,28 @@ mkdir -p "$root/backend"
 printf 'module example.test/openchat\n\ngo 1.26.0\n' > "$root/backend/go.mod"
 
 # A stub toolchain in a *non-default* location (mirrors /usr/local/go/bin).
+# `env -w` appends to a state file that stands in for $GOENV, so the default
+# `GOTOOLCHAIN` really is `auto` until provisioning persists `local`.
 goroot="$tmp/goroot"
 bin="$tmp/bin"
+state="$goroot/goenv"
 mkdir -p "$goroot/bin" "$bin"
 cat > "$goroot/bin/go" <<STUB
 #!/usr/bin/env bash
+state="$state"
+get() { sed -n "s/^\$1=//p" "\$state" 2>/dev/null | tail -1; }
 case "\$1 \$2" in
   "env GOROOT") echo "$goroot" ;;
   "env GOVERSION") echo "go1.26.0" ;;
+  "env GOENV") echo "\$state" ;;
+  "env -w")
+    shift 2
+    for kv in "\$@"; do printf '%s\n' "\$kv" >> "\$state"; done
+    ;;
+  "env GOTOOLCHAIN") v="\$(get GOTOOLCHAIN)"; echo "\${v:-auto}" ;;
+  "env GOPRIVATE") get GOPRIVATE ;;
+  "env GONOSUMDB") get GONOSUMDB ;;
+  "env GOMODCACHE") echo "\${GOMODCACHE:-\$HOME/go/pkg/mod}" ;;
   *) exit 0 ;;
 esac
 STUB
@@ -48,13 +69,18 @@ exit 0
 STUB
 chmod +x "$goroot/bin/go" "$goroot/bin/gofmt"
 
+run_installer() {
+  # $1 = shim directory, $2 = default PATH; everything else is isolated.
+  PATH="$goroot/bin:/usr/bin:/bin" \
+    OPENCHAT_SANDBOX_GO_HINT_DIR="$goroot/bin" \
+    OPENCHAT_SANDBOX_GO_BIN_DIR="$1" \
+    OPENCHAT_SANDBOX_DEFAULT_PATH="$2" \
+    HOME="$tmp" \
+    bash "$installer" "$root" 2>&1
+}
+
 # --- 1. the shim is written and proven from a stripped default PATH -----------
-out="$(PATH="$goroot/bin:/usr/bin:/bin" \
-       OPENCHAT_SANDBOX_GO_HINT_DIR="$goroot/bin" \
-       OPENCHAT_SANDBOX_GO_BIN_DIR="$bin" \
-       OPENCHAT_SANDBOX_DEFAULT_PATH="$bin:/usr/bin:/bin" \
-       HOME="$tmp" \
-       bash "$installer" "$root" 2>&1)"
+out="$(run_installer "$bin" "$bin:/usr/bin:/bin")"
 st=$?
 if [ ! -L "$bin/go" ]; then
   echo "FAIL expected symlink $bin/go (the default-PATH shim); out:" >&2
@@ -69,13 +95,29 @@ if [ "$st" -ne 0 ]; then
   rc=1
 fi
 
-# --- 2. an unreachable toolchain is reported, never silently ignored ---------
-out2="$(PATH="$goroot/bin:/usr/bin:/bin" \
-        OPENCHAT_SANDBOX_GO_HINT_DIR="$goroot/bin" \
-        OPENCHAT_SANDBOX_GO_BIN_DIR="$tmp/nobin" \
-        OPENCHAT_SANDBOX_DEFAULT_PATH="/usr/bin:/bin" \
-        HOME="$tmp" \
-        bash "$installer" "$root" 2>&1)"
+# --- 2. GOTOOLCHAIN=local survives into a shell that inherits nothing --------
+# ~/.bashrc is not written by this fixture's non-login shell, so only $GOENV can
+# carry the setting: if provisioning skipped `go env -w` the stub would still say
+# `auto` and an offline build would try to download a toolchain.
+printf '%s\n' "$out" | grep -q 'GOTOOLCHAIN=local persisted' || {
+  echo "FAIL installer did not persist GOTOOLCHAIN=local via 'go env -w'" >&2; rc=1; }
+printf '%s\n' "$out" | grep -q 'stripped shell (default PATH, GOENV only) reports GOTOOLCHAIN=local' || {
+  echo "FAIL installer did not prove GOTOOLCHAIN=local from a stripped shell" >&2; rc=1; }
+grep -qx 'GOTOOLCHAIN=local' "$state" 2>/dev/null || {
+  echo "FAIL GOTOOLCHAIN=local is not in the GOENV state file ($state)" >&2; rc=1; }
+
+# --- 3. provisioning never overwrites a value the image already persisted -----
+out3="$(run_installer "$bin" "$bin:/usr/bin:/bin")"
+if [ "$(grep -c '^GOTOOLCHAIN=' "$state")" -ne 1 ]; then
+  echo "FAIL re-running the installer duplicated GOTOOLCHAIN in GOENV:" >&2
+  grep '^GOTOOLCHAIN=' "$state" >&2
+  rc=1
+fi
+printf '%s\n' "$out3" | grep -q 'GOPRIVATE=github.com/msgmate-io/\* (already set)' || {
+  echo "FAIL an already-persisted GOPRIVATE must not be rewritten" >&2; rc=1; }
+
+# --- 4. an unreachable toolchain is reported, never silently ignored ---------
+out2="$(run_installer "$tmp/nobin" "/usr/bin:/bin")"
 st2=$?
 printf '%s\n' "$out2" | grep -q 'MISS go is not on the default PATH' || {
   echo "FAIL expected an explicit MISS for an unreachable default PATH" >&2; rc=1; }
