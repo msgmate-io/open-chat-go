@@ -121,6 +121,21 @@ pull request body and push only behind the CI gate.
 `development/scripts/install_sandbox_go_toolchain.sh --check` is the self-check and
 `go: MISSING` is the only acceptable report when it fails; repair with the same
 script (never a manual `export PATH`) and re-run it before claiming anything.
+For the evidence itself, run the same script in verify mode instead of describing
+what you believe happened:
+
+```bash
+development/scripts/install_sandbox_go_toolchain.sh \
+  --verify='go build ./... && go test ./<pkg>/...' .
+```
+
+It provisions first, then prints the command output verbatim and exits with the
+command's status (`verified (exit 0)` / `FAILED (exit N)`); with no usable
+toolchain it prints `go: MISSING`, skips the command and fails, so a missing
+toolchain can never be rounded up to a passing report. `--plan` is the triage
+variant: it reports every gap at once as `reasons=<csv>` (`no_go`,
+`go_too_old`, `gotoolchain_set`, `no_module_cache`) instead of stopping at the
+first one.
 Whoever changes the coding image itself (ci#1062) has a second gate:
 `development/scripts/check_sandbox_coding_image_go.sh --dockerfile <coding
 Dockerfile>` is the static drift check (`GOTOOLCHAIN=local`, an `/etc/profile.d`
