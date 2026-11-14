@@ -18,6 +18,10 @@ on:
       - .github/workflows/reusable-integration-module-ci.yaml
       - .github/workflows/integration-module-ci.yaml
       - development/scripts/integration_module_ci.sh
+      # ci#1075: the workspace-path resolution (structure-preserving, so the
+      # module's relative `replace` depth matches the monorepo layout).
+      - development/scripts/integration_workspace_path.sh
+      - development/scripts/tests/test_integration_workspace_path.sh
       - development/scripts/check_integration_decoupling.py
       - development/scripts/tests/test_integration_decoupling.sh
       - development/scripts/tests/test_integration_module_ci_defaults.sh
@@ -81,7 +85,11 @@ jobs:
           submodules: true
 
       - name: bash syntax
-        run: bash -n development/scripts/integration_module_ci.sh
+        run: |
+          bash -n development/scripts/integration_module_ci.sh
+          # ci#1075: the structure-preserving workspace-path resolver (+ its test).
+          bash -n development/scripts/integration_workspace_path.sh
+          bash -n development/scripts/tests/test_integration_workspace_path.sh
 
       - name: shellcheck
         run: |
@@ -90,6 +98,8 @@ jobs:
             sudo apt-get install -y -qq shellcheck
           fi
           shellcheck development/scripts/integration_module_ci.sh
+          shellcheck development/scripts/integration_workspace_path.sh
+          shellcheck development/scripts/tests/test_integration_workspace_path.sh
 
       - name: workflow yaml parses
         run: |
@@ -117,6 +127,14 @@ jobs:
       # decoupled path a hard gate; the mapping is pinned hermetically too.
       - name: decoupling defaults self-test
         run: bash development/scripts/tests/test_integration_module_ci_defaults.sh
+
+      # ci#1075: the module is built at its full workspace path, not at the
+      # basename - the depth is what makes its relative `replace backend =>
+      # ../../../backend` resolve, so a lost directory structure broke every
+      # standalone integration build ("replacement directory ... does not
+      # exist"). Pinned hermetically (no Go toolchain, no materialization).
+      - name: workspace path self-test (ci#1075)
+        run: bash development/scripts/tests/test_integration_workspace_path.sh
 
       # ci#423 step 4: the dependency-surface delta (baseline) reporting decides
       # whether an integration regressed, so its outcomes are pinned
