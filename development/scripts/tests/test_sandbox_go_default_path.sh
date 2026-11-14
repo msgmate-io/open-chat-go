@@ -150,8 +150,31 @@ printf '%s\n' "$out5" | grep -q 'backend/go.sum untouched' || {
   echo "FAIL a repeated warm-up must report go.sum as untouched (no endless churn)" >&2; rc=1; }
 
 # --- 6. an unreachable toolchain is reported, never silently ignored ---------
-out2="$(run_installer "$tmp/nobin" "/usr/bin:/bin")"
+# The "unreachable" PATH has to be hermetic, not the literal `/usr/bin:/bin`: a
+# hosted runner is free to ship a real `go` there (the ubuntu-24.04 image does),
+# and then this leg stops measuring the installer and starts asserting a
+# property of the host. That is exactly how it failed in the Pin Freshness Gate
+# ("FAIL expected an explicit MISS for an unreachable default PATH" +
+# "FAIL an unreachable default PATH must not exit 0") while the same fixture
+# passed on a bare machine. Build a directory that provably resolves no `go` but
+# still resolves `sh`, because the installer probes the default PATH with
+# `env -i PATH=<default> sh -c 'command -v go'` and `env` finds `sh` through
+# that same PATH.
+nopath="$tmp/nopath"
+mkdir -p "$nopath"
+ln -sfn "$(command -v sh)" "$nopath/sh"
+if [ -n "$(env -i PATH="$nopath" sh -c 'command -v go' 2>/dev/null)" ]; then
+  echo "FAIL the hermetic no-go PATH unexpectedly resolves go ($nopath)" >&2
+  rc=1
+fi
+out2="$(run_installer "$tmp/nobin" "$nopath")"
 st2=$?
+# The shim directory does not exist, so nothing may be linked into it either: a
+# shim written elsewhere would make the MISS below a lie.
+if [ -e "$tmp/nobin/go" ] || [ -e "$tmp/nobin/gofmt" ]; then
+  echo "FAIL the shim was written into a non-existent bin dir ($tmp/nobin)" >&2
+  rc=1
+fi
 printf '%s\n' "$out2" | grep -q 'MISS go is not on the default PATH' || {
   echo "FAIL expected an explicit MISS for an unreachable default PATH" >&2; rc=1; }
 if [ "$st2" -eq 0 ]; then
