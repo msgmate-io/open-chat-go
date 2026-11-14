@@ -136,6 +136,25 @@ toolchain can never be rounded up to a passing report. `--plan` is the triage
 variant: it reports every gap at once as `reasons=<csv>` (`no_go`,
 `go_too_old`, `gotoolchain_set`, `no_module_cache`) instead of stopping at the
 first one.
+
+The ticket's acceptance line ("in a fresh `repo:open-chat-go` sandbox,
+`go version && go build ./...` succeeds offline after checkout") has its own
+pre-push gate, because a toolchain that exists but builds against the network is
+still not evidence:
+
+```bash
+development/scripts/check_sandbox_go_offline_build.sh .
+```
+
+It runs `go build ./...` in `backend/` with `GOPROXY=off`,
+`GOFLAGS=-mod=readonly` and `GOTOOLCHAIN=local`, and prints exactly one verdict
+per leg: `go: MISSING` (nothing was attempted - quote this and rely on PR CI),
+`go_work: MISSING` (the gitignored `backend/go.work` profile workspace was never
+materialised, so unresolved `msgmate-io/*` packages are a provisioning gap, not
+a reason to hand-edit `go.mod`/`go.sum`), or `go_build: OK` / `go_build: FAILED`
+with the compiler output quoted and the build's real status as the exit code.
+`--strict-work` promotes `go_work: MISSING` to a failure for callers that need a
+fully materialised workspace.
 Whoever changes the coding image itself (ci#1062) has a second gate:
 `development/scripts/check_sandbox_coding_image_go.sh --dockerfile <coding
 Dockerfile>` is the static drift check (`GOTOOLCHAIN=local`, an `/etc/profile.d`
