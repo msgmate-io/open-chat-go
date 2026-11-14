@@ -34,7 +34,7 @@ trap cleanup EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 # --- part 1: the helper keeps the structure ---------------------------------
-# shellcheck source=development/scripts/integration_workspace_path.sh
+# shellcheck source=development/scripts/integration_workspace_path.sh disable=SC1091
 . "$LIB"
 
 want="$REPO_ROOT/clients/integrations/msgmate_coder_integration"
