@@ -421,6 +421,154 @@ if [ -e "$profile_dir/openchat-sandbox-go.sh" ]; then
   fail "--check must not write the profile.d shim (non-mutating contract)"
 fi
 
+# ---------------- ci#1038: verification must carry command output --------------
+# The complaint behind ci#1038 is that "verified" could be a narrative: a report
+# had no command output because the toolchain was absent and nothing refused a
+# green-sounding summary. `--plan` and `--verify` close that hole, so the suite has
+# to prove three things: every gap is named at once, a command is actually run and
+# its exit status is propagated, and a command is NOT run (and never reads green)
+# when no usable toolchain exists.
+
+# 13. --plan lists *every* gap in one pass, machine-readably. A stale toolchain and
+#     a cold cache are separate repairs and must be distinguishable.
+echo "== ci#1038 i: --plan reports every gap as reasons=<csv> =="
+mkdir -p "$tmp/cold-cache-plan"
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$sandbox_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  STUB_GO_VERSION=1.20.0 \
+  STUB_GO_GOTOOLCHAIN=auto \
+  STUB_GO_GOMODCACHE="$tmp/cold-cache-plan" \
+  bash "$SCRIPT" --plan "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -eq 1 ] || fail "--plan must exit 1 when gaps exist (got $rc); got: $out"
+case "$out" in
+  *"reasons=go_too_old,gotoolchain_set,no_module_cache"*) : ;;
+  *) fail "--plan must name all three gaps as a csv of reasons; got: $out" ;;
+esac
+
+# 14. --plan on a ready sandbox says so and prints an empty reasons= line, so a
+#     caller can branch on the token instead of parsing prose.
+echo "== ci#1038 ii: --plan on a ready sandbox -> reasons= (empty) + exit 0 =="
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$sandbox_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  STUB_GO_VERSION=1.24.13 \
+  bash "$SCRIPT" --plan "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -eq 0 ] || fail "--plan must exit 0 on a ready sandbox (got $rc); got: $out"
+case "$out" in
+  *"reasons="*) : ;;
+  *) fail "--plan must always print a reasons= line; got: $out" ;;
+esac
+case "$out" in
+  *"ready: go 1.24.13"*) : ;;
+  *) fail "--plan must report readiness; got: $out" ;;
+esac
+
+# 15. --verify runs the command and forwards its exit status. The marker files prove
+#     the command really executed (in the repo root) instead of being described.
+echo "== ci#1038 iii: --verify runs the command and forwards exit 0 =="
+marker="$tmp/verify-ran"
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$sandbox_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  STUB_GO_VERSION=1.24.13 \
+  bash "$SCRIPT" --verify="touch verify-ran && echo VERIFY-OUTPUT" "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -eq 0 ] || fail "--verify must exit 0 when the command passes (got $rc); got: $out"
+case "$out" in
+  *"VERIFY-OUTPUT"*) : ;;
+  *) fail "--verify must print the command output verbatim; got: $out" ;;
+esac
+case "$out" in
+  *"verified (exit 0)"*) : ;;
+  *) fail "--verify must state the verdict with the exit code; got: $out" ;;
+esac
+[ -f "$fixture_root/repair/verify-ran" ] || fail "--verify must run the command in the repo root"
+rm -f "$fixture_root/repair/verify-ran"
+
+# 16. A failing command must report FAILED and keep its non-zero status - a red
+#     local check must be impossible to round up to "verified".
+echo "== ci#1038 iv: --verify forwards a non-zero status =="
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$sandbox_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  STUB_GO_VERSION=1.24.13 \
+  bash "$SCRIPT" --verify="exit 7" "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -eq 7 ] || fail "--verify must propagate the command's exit status (want 7, got $rc); got: $out"
+case "$out" in
+  *"FAILED (exit 7)"*) : ;;
+  *) fail "--verify must report FAILED with the exit code; got: $out" ;;
+esac
+case "$out" in
+  *"verified (exit 0)"*) fail "--verify must never print a green verdict for a red command" ;;
+  *) : ;;
+esac
+
+# 17. With no toolchain (and no reachable download), --verify must NOT run the
+#     command: it says 'go: MISSING' and fails, so an absent toolchain cannot be
+#     turned into a passing test report.
+echo "== ci#1038 v: no toolchain -> --verify refuses to run and says go: MISSING =="
+marker="$tmp/must-not-exist"
+out="$(env -i \
+  PATH="$hermetic_bin" \
+  HOME="$sandbox_home" \
+  GOPATH="$sandbox_gopath" \
+  GOMODCACHE="$sandbox_modcache" \
+  TMPDIR="$tmp" \
+  OPENCHAT_SANDBOX_GO_INSTALL_ROOT="$tmp/install-root" \
+  OPENCHAT_SANDBOX_GO_DL_BASE="file://$tmp/no-such-dl" \
+  OPENCHAT_SANDBOX_GO_HINT_DIR="$tmp/no-such-toolchain" \
+  bash "$SCRIPT" --verify="touch must-not-exist && echo SHOULD-NOT-RUN" "$fixture_root/repair" 2>&1)"
+rc=$?
+[ "$rc" -ne 0 ] || fail "--verify must fail when no toolchain can be provisioned (got $rc); got: $out"
+case "$out" in
+  *"go: MISSING"*) : ;;
+  *) fail "--verify must emit 'go: MISSING' when the toolchain is absent; got: $out" ;;
+esac
+case "$out" in
+  *"SHOULD-NOT-RUN"*) fail "--verify must not run the command without a toolchain" ;;
+  *) : ;;
+esac
+[ -f "$fixture_root/repair/must-not-exist" ] && fail "--verify must not execute the command without a toolchain"
+rm -f "$fixture_root/repair/must-not-exist"
+
+# 18. The flag combinations are usage errors, not silent surprises.
+echo "== ci#1038 vi: --check/--plan/--verify cannot be combined =="
+env -i PATH="$hermetic_bin" HOME="$sandbox_home" bash "$SCRIPT" --check --plan "$fixture_root/repair" >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] || fail "--check with --plan must exit 2 (got $rc)"
+env -i PATH="$hermetic_bin" HOME="$sandbox_home" bash "$SCRIPT" --check --verify=true "$fixture_root/repair" >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] || fail "--check with --verify must exit 2 (got $rc)"
+env -i PATH="$hermetic_bin" HOME="$sandbox_home" bash "$SCRIPT" --verify >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] || fail "--verify without a command must exit 2 (got $rc)"
+
+# 19. The readiness probe must advertise the evidence command, otherwise an agent
+#     learns the rule ("do not claim tests passed") without the way to obey it.
+if ! grep -q -- '--verify=' "$PROBE"; then
+  fail "the readiness probe must advertise --verify=<cmd> as the evidence command (ci#1038)"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
