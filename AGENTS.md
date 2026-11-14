@@ -121,6 +121,40 @@ pull request body and push only behind the CI gate.
 `development/scripts/install_sandbox_go_toolchain.sh --check` is the self-check and
 `go: MISSING` is the only acceptable report when it fails; repair with the same
 script (never a manual `export PATH`) and re-run it before claiming anything.
+For the evidence itself, run the same script in verify mode instead of describing
+what you believe happened:
+
+```bash
+development/scripts/install_sandbox_go_toolchain.sh \
+  --verify='go build ./... && go test ./<pkg>/...' .
+```
+
+It provisions first, then prints the command output verbatim and exits with the
+command's status (`verified (exit 0)` / `FAILED (exit N)`); with no usable
+toolchain it prints `go: MISSING`, skips the command and fails, so a missing
+toolchain can never be rounded up to a passing report. `--plan` is the triage
+variant: it reports every gap at once as `reasons=<csv>` (`no_go`,
+`go_too_old`, `gotoolchain_set`, `no_module_cache`) instead of stopping at the
+first one.
+
+The ticket's acceptance line ("in a fresh `repo:open-chat-go` sandbox,
+`go version && go build ./...` succeeds offline after checkout") has its own
+pre-push gate, because a toolchain that exists but builds against the network is
+still not evidence:
+
+```bash
+development/scripts/check_sandbox_go_offline_build.sh .
+```
+
+It runs `go build ./...` in `backend/` with `GOPROXY=off`,
+`GOFLAGS=-mod=readonly` and `GOTOOLCHAIN=local`, and prints exactly one verdict
+per leg: `go: MISSING` (nothing was attempted - quote this and rely on PR CI),
+`go_work: MISSING` (the gitignored `backend/go.work` profile workspace was never
+materialised, so unresolved `msgmate-io/*` packages are a provisioning gap, not
+a reason to hand-edit `go.mod`/`go.sum`), or `go_build: OK` / `go_build: FAILED`
+with the compiler output quoted and the build's real status as the exit code.
+`--strict-work` promotes `go_work: MISSING` to a failure for callers that need a
+fully materialised workspace.
 Whoever changes the coding image itself (ci#1062) has a second gate:
 `development/scripts/check_sandbox_coding_image_go.sh --dockerfile <coding
 Dockerfile>` is the static drift check (`GOTOOLCHAIN=local`, an `/etc/profile.d`
@@ -223,3 +257,26 @@ Read the answer instead of assuming success:
 After a successful update the pull request is re-read and the answer carries
 `mergeable`, `merge_state_status` and `head_sha`; use those values instead of a
 second ad-hoc lookup.
+
+## A red `PR Test Merge Requirement` caused by a cancelled sibling run (ci#1078)
+
+The gate refuses to accept a **cancelled** run as superseded, so when two
+`pull_request` events land on the same head commit the concurrency group
+cancels one of them and that dying run paints
+
+```
+##[error] PR CI were cancelled and this run was not accepted as superseded
+```
+
+on a live SHA whose verdict actually belongs to the replacement run. The diff is
+not the problem and the gate's superseded logic is not yours to change in a
+feature or consolidation PR:
+
+- do **not** re-run it and do **not** push repeatedly: every extra push is a new
+  event and races the concurrency group against itself, which is how the first
+  cancellation was produced;
+- push **exactly one** new commit (a real change, or `--allow-empty` when there
+  is nothing to say) so the head has a single fresh run, and let that run's own
+  `PR Test Merge Requirement` decide;
+- the authoritative verdict for a commit is its **newest** run per check name,
+  the same collapse `development/scripts/promotion_hop.sh merge` performs.

@@ -88,6 +88,28 @@ else
   status=1
 fi
 
+# ci#1038: `command -v go` above answers for *this* shell. coder_bash spawns a
+# non-interactive, non-login shell that sources neither ~/.bashrc nor
+# /etc/profile.d, so a sandbox could pass this probe and still answer
+# `which: no go in (.../usr/local/bin:...)` to the implementer. Probe the bare
+# image PATH explicitly; a default-PATH shim (written by
+# install_sandbox_go_toolchain.sh) is what makes that leg pass without sourcing.
+note "== default-PATH resolution (non-login coder_bash shell, ci#1038) =="
+# The PATH below is the image's default; it is overridable so the hermetic test
+# suite can prove both verdicts without reading the runner's environment.
+default_path="${OPENCHAT_SANDBOX_GO_DEFAULT_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+bare_go=$(env -i PATH="$default_path" sh -c 'command -v go' 2>/dev/null)
+if [ -n "$bare_go" ]; then
+  note "ok   go resolves on the default image PATH ($bare_go)"
+else
+  note "missing_cli: go"
+  note "MISS a non-login shell cannot resolve go, so 'coder_bash go test ...' fails even"
+  note "     though an interactive shell works. Write the default-PATH shim:"
+  note "     development/scripts/install_sandbox_go_toolchain.sh (it symlinks"
+  note "     /usr/local/bin/go -> /usr/local/go/bin/go)."
+  status=1
+fi
+
 if [ -n "${GOPRIVATE:-}" ]; then
   note "ok   GOPRIVATE=$GOPRIVATE"
 else
@@ -175,6 +197,21 @@ else
   note "WARN gh is not installed in this sandbox; use the typed GitHub tools"
   note "     (github_pr_create, github_issue_comment, ...) instead of shelling out to gh."
 fi
+
+# ci#1038: a report is only trustworthy if it carries command output instead of a
+# narrative. This states the one command that produces verifiable evidence, with
+# the environment the installer provisions, so an implementer never has to guess
+# (and a lead never has to re-derive a red test from CI logs).
+note "== verifiable local check (ci#1038) =="
+note "   development/scripts/install_sandbox_go_toolchain.sh \\"
+note "     --verify='go build ./... && go test ./<pkg>/...' ."
+note "   prints the command output and exits with its status; when the toolchain is"
+note "   missing it prints 'go: MISSING' and refuses to run, so it cannot be mistaken"
+note "   for a passing run. Quote that output (or 'go: MISSING') in the report."
+note "   For the ticket's acceptance line specifically (offline build after checkout):"
+note "     development/scripts/check_sandbox_go_offline_build.sh ."
+note "   it runs 'go build ./...' with GOPROXY=off / -mod=readonly / GOTOOLCHAIN=local"
+note "   and prints 'go: MISSING', 'go_work: MISSING' or 'go_build: OK|FAILED'."
 
 if [ "$status" -eq 0 ]; then
   note "== ready: local targeted Go checks can run =="
