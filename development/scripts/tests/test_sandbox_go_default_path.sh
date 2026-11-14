@@ -47,6 +47,7 @@ mkdir -p "$goroot/bin" "$bin"
 cat > "$goroot/bin/go" <<STUB
 #!/usr/bin/env bash
 state="$state"
+root="$root"
 get() { sed -n "s/^\$1=//p" "\$state" 2>/dev/null | tail -1; }
 case "\$1 \$2" in
   "env GOROOT") echo "$goroot" ;;
@@ -60,6 +61,13 @@ case "\$1 \$2" in
   "env GOPRIVATE") get GOPRIVATE ;;
   "env GONOSUMDB") get GONOSUMDB ;;
   "env GOMODCACHE") echo "\${GOMODCACHE:-\$HOME/go/pkg/mod}" ;;
+  "mod download")
+    # Mirrors the real repo: the committed go.sum is missing hashes for the
+    # integration-only modules, so the warm-up appends them. Idempotent, so a
+    # second run must leave go.sum alone (both branches are asserted below).
+    grep -q 'mailru/easyjson' "\$root/backend/go.sum" 2>/dev/null ||
+      printf 'github.com/mailru/easyjson v1.0.0 h1:stub=\n' >> "\$root/backend/go.sum"
+    ;;
   *) exit 0 ;;
 esac
 STUB
@@ -116,7 +124,32 @@ fi
 printf '%s\n' "$out3" | grep -q 'GOPRIVATE=github.com/msgmate-io/\* (already set)' || {
   echo "FAIL an already-persisted GOPRIVATE must not be rewritten" >&2; rc=1; }
 
-# --- 4. an unreachable toolchain is reported, never silently ignored ---------
+# --- 4. the warm-up completes an incomplete go.sum and says so ----------------
+# Regression for the acceptance line: the committed backend/go.sum is missing the
+# hashes for the integration-only modules, so without the warm-up's completion
+# `go build ./...` refuses to run offline ("missing go.sum entry") and the
+# ticket's acceptance line silently stays unmet. Provisioning must (a) actually
+# complete it and (b) disclose it, because the resulting `M backend/go.sum` is
+# otherwise indistinguishable from an implementer's edit.
+rm -f "$root/backend/go.sum"
+out4="$(run_installer "$bin" "$bin:/usr/bin:/bin")"
+st4=$?
+grep -q 'mailru/easyjson' "$root/backend/go.sum" 2>/dev/null || {
+  echo "FAIL the warm-up did not complete backend/go.sum" >&2; rc=1; }
+printf '%s\n' "$out4" | grep -q 'backend/go.sum gained the entries' || {
+  echo "FAIL installer did not disclose that it completed backend/go.sum" >&2; rc=1; }
+printf '%s\n' "$out4" | grep -q "git checkout -- backend/go.sum" || {
+  echo "FAIL installer did not tell the implementer how to drop the go.sum churn" >&2; rc=1; }
+if [ "$st4" -ne 0 ]; then
+  echo "FAIL installer exited $st4 although the warm-up succeeded" >&2; rc=1
+fi
+
+# --- 5. the disclosed go.sum churn is one-shot, not a new dirty tree per run ---
+out5="$(run_installer "$bin" "$bin:/usr/bin:/bin")"
+printf '%s\n' "$out5" | grep -q 'backend/go.sum untouched' || {
+  echo "FAIL a repeated warm-up must report go.sum as untouched (no endless churn)" >&2; rc=1; }
+
+# --- 6. an unreachable toolchain is reported, never silently ignored ---------
 out2="$(run_installer "$tmp/nobin" "/usr/bin:/bin")"
 st2=$?
 printf '%s\n' "$out2" | grep -q 'MISS go is not on the default PATH' || {
