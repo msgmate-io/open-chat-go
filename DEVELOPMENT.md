@@ -116,6 +116,16 @@ it: re-enabling the ruleset brings the original failure straight back. Never
 enable the ruleset first and then hope the approval works; the order is approver
 identity (or bypass actor) first, ruleset `active` second.
 
+Because both states are wrong for it, the `dev` -> `main` promotion step in
+`run-pr-ci-tests-and-deployments.yaml` **never arms the hop** with
+`gh pr merge --auto` (ci#1066). It refreshes the PR, then reports
+"awaiting a maintainer merge" and stops: an armed merge either can never land
+(ruleset `active`, no approver) or lands before the required check has run
+(ruleset masked), which turns a green promotion PR into a false proof that the
+approval path works. Merging is owned by `auto-approve-consolidation.yaml`, the
+only place that knows the approver identity - and, while the hop is human-merged,
+a red promotion is *not* the signal for a broken CI; a red auto-approve run is.
+
 `auto-approve-consolidation.yaml` therefore runs a read-only
 `Preflight main merge protection (ci#1066)` step before anything merges and
 reports the live protection state in the job summary:

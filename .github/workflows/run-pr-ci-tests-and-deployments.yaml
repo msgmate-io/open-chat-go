@@ -2974,7 +2974,8 @@ jobs:
       # runs the shipped shell against stubbed `curl`/`gh` and asserts that the
       # captured PATCH carries the live dev sha and real ticket links, that an
       # unresolvable head falls back with a `::warning::` instead of publishing
-      # an empty body, and that the ci#1077 auto-merge arming is untouched.
+      # an empty body, and that the ci#1066 policy - no unattended `--auto`
+      # arming of the promotion hop - holds.
       - name: Dev promotion PR refresh unit tests
         run: |
           set -euo pipefail
@@ -4368,13 +4369,19 @@ jobs:
               "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
               -d "$labels_payload" >/dev/null
             echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
-            # ci#1077: arm auto-merge on the refresh path too, so the promotion
-            # lands by itself as soon as the labelled CI run is green.
-            if GH_TOKEN="$PR_TOKEN" gh pr merge "$existing_pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
-              echo "Auto-merge armed on promotion PR #${existing_pr_number}."
-            else
-              echo "::warning::Could not arm auto-merge on promotion PR #${existing_pr_number}; merge it manually once green."
-            fi
+            # ci#1066: the promotion hop is deliberately NOT armed unattended.
+            # Arming `--auto` here is unsound in *both* protection states: with
+            # the `main` ruleset `active` the armed merge can never land (the
+            # ruleset demands one approving review from a reviewer with write
+            # access, which no automation identity can post without a write-
+            # access approver token or a registered bypass actor), and with the
+            # ruleset *masked* (`rules/branches/main` = `[]`) the armed merge
+            # lands immediately - before the required check even starts - so a
+            # green promotion PR would prove nothing about the approval path.
+            # Merging stays with `auto-approve-consolidation.yaml`, the only job
+            # that owns the approver identity and classifies the block.
+            echo "::notice::Promotion PR #${existing_pr_number} was refreshed but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+            echo "Promotion PR #${existing_pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
             exit 0
           fi
 
@@ -4395,13 +4402,12 @@ jobs:
             "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d "$labels_payload" >/dev/null
           echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
-          # ci#1077: arm auto-merge right after creation so `dev` -> `main`
-          # needs no human click once every required check is green.
-          if GH_TOKEN="$PR_TOKEN" gh pr merge "$pr_number" --repo "$REPOSITORY" --merge --auto 2>/dev/null; then
-            echo "Auto-merge armed on promotion PR #${pr_number}."
-          else
-            echo "::warning::Could not arm auto-merge on promotion PR #${pr_number}; merge it manually once green."
-          fi
+          # ci#1066: never arm `--auto` on the promotion hop - see the refresh
+          # path above for why it is unsound both before and after the `main`
+          # ruleset is re-enabled. `auto-approve-consolidation.yaml` owns the
+          # approval and the merge attempt for this PR.
+          echo "::notice::Promotion PR #${pr_number} was opened but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+          echo "Promotion PR #${pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
