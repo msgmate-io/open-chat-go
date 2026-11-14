@@ -22,6 +22,10 @@ on:
       # module's relative `replace` depth matches the monorepo layout).
       - development/scripts/integration_workspace_path.sh
       - development/scripts/tests/test_integration_workspace_path.sh
+      # ci#1075 follow-up: the layout guard that restates a missed relative
+      # `replace` target as the depth problem it is.
+      - development/scripts/integration_module_path_guard.sh
+      - development/scripts/tests/test_integration_module_path_guard.sh
       - development/scripts/check_integration_decoupling.py
       - development/scripts/tests/test_integration_decoupling.sh
       - development/scripts/tests/test_integration_module_ci_defaults.sh
@@ -135,6 +139,14 @@ jobs:
       # exist"). Pinned hermetically (no Go toolchain, no materialization).
       - name: workspace path self-test (ci#1075)
         run: bash development/scripts/tests/test_integration_workspace_path.sh
+
+      # ci#1075: a relative `replace` that misses its target is reported by Go
+      # only as "replacement directory ... does not exist", which reads like a
+      # go.mod bug rather than a build-depth bug. The layout guard names the
+      # unresolved targets and the required path; pinned hermetically (no Go
+      # toolchain, no materialization).
+      - name: module layout guard self-test (ci#1075)
+        run: bash development/scripts/tests/test_integration_module_path_guard.sh
 
       # ci#423 step 4: the dependency-surface delta (baseline) reporting decides
       # whether an integration regressed, so its outcomes are pinned
