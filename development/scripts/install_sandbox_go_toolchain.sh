@@ -280,17 +280,38 @@ export GONOSUMDB="${GONOSUMDB:-github.com/msgmate-io/*}"
 # is still the authoritative full-suite gate.
 if [ -d "$root/backend" ]; then
   note "     warming the module cache (go mod download)"
-  # -mod=readonly: warming must not mutate tracked files. A plain
-  # `go mod download` happily appends missing go.sum lines, which left the
-  # implementer's worktree dirty with `M backend/go.sum` before the first edit and
-  # made every later `git diff` review noisy. Downloading with readonly either
-  # works or fails loudly; it never rewrites go.sum.
-  if ( cd "$root/backend" && GOTOOLCHAIN=local GOFLAGS=-mod=readonly go mod download >/dev/null 2>&1 ); then
+  # Measure, do not promise. `-mod=readonly` looks like it protects go.sum, but it
+  # only freezes go.mod: `go mod download` still writes the hashes it resolved, so
+  # the earlier "readonly first, therefore go.sum untouched" reasoning was wrong.
+  # What is true instead (evidence, ci#1038): the committed backend/go.sum is
+  # incomplete for the integration-only modules (github.com/go-openapi/spec ->
+  # go-openapi/jsonpointer -> mailru/easyjson has no go.mod hash), so a plain warm-up
+  # ADDS lines. PR CI and backend/full_build.sh run the same plain `go mod download`
+  # before building and get the same completion, which is why nobody noticed. So:
+  # warm it, then report factually whether go.sum moved and what to do about it.
+  gosum_snapshot=""
+  if [ -f "$root/backend/go.sum" ]; then
+    gosum_snapshot="$(mktemp "${TMPDIR:-/tmp}/openchat-go-sum.XXXXXX")" &&
+      cp "$root/backend/go.sum" "$gosum_snapshot" 2>/dev/null
+  fi
+  if ( cd "$root/backend" && GOTOOLCHAIN=local go mod download >/dev/null 2>&1 ); then
     note "ok   module cache warmed ($(go env GOMODCACHE))"
+    if [ -f "$root/backend/go.sum" ] &&
+       { [ -z "$gosum_snapshot" ] || ! cmp -s "$gosum_snapshot" "$root/backend/go.sum"; }; then
+      note "     note: backend/go.sum gained the entries this checkout was missing, so"
+      note "     'go build ./...' now runs offline. Those lines are SANDBOX WARM-UP STATE,"
+      note "     not part of your change (CI gets the same completion from its own"
+      note "     'go mod download'): drop them before committing with"
+      note "     'git checkout -- backend/go.sum', and never report them as a fix."
+    else
+      note "ok   backend/go.sum untouched"
+    fi
   else
     note "WARN 'go mod download' failed (private modules and/or offline sandbox); later builds"
-    note "     may need development/scripts/build_tools.sh prepare --profile full-ci first."
+    note "     may need the go.work profile workspace first (the readiness probe below says"
+    note "     whether backend/go.work is present)."
   fi
+  [ -n "$gosum_snapshot" ] && rm -f "$gosum_snapshot"
 fi
 
 # Persist the environment: the provisioning shell and the agent's later shells are
@@ -424,9 +445,11 @@ if [ -n "$go_bin" ]; then
   if [ -z "$goenv_file" ]; then
     note "WARN '$go_bin env GOENV' is empty; cannot persist GOTOOLCHAIN=local shell-independently."
   else
-    if [ "$("$go_bin" env GOTOOLCHAIN 2>/dev/null)" = "local" ]; then
-      note "ok   GOTOOLCHAIN=local (in effect for every shell)"
+    if grep -qx 'GOTOOLCHAIN=local' "$goenv_file" 2>/dev/null; then
+      note "ok   GOTOOLCHAIN=local (persisted in $goenv_file, so every shell gets it)"
     elif "$go_bin" env -w GOTOOLCHAIN=local >/dev/null 2>&1; then
+      # Note: this also fixes the case where GOTOOLCHAIN=auto is merely *exported*
+      # by an rc file - the export dies with the login shell, $GOENV does not.
       note "ok   GOTOOLCHAIN=local persisted in $goenv_file (read by non-login shells)"
     else
       note "MISS could not write GOTOOLCHAIN=local to $goenv_file; an offline build may try to"
