@@ -176,6 +176,17 @@ else
   note "     (github_pr_create, github_issue_comment, ...) instead of shelling out to gh."
 fi
 
+# ci#1038: a report is only trustworthy if it carries command output instead of a
+# narrative. This states the one command that produces verifiable evidence, with
+# the environment the installer provisions, so an implementer never has to guess
+# (and a lead never has to re-derive a red test from CI logs).
+note "== verifiable local check (ci#1038) =="
+note "   development/scripts/install_sandbox_go_toolchain.sh \\"
+note "     --verify='go build ./... && go test ./<pkg>/...' ."
+note "   prints the command output and exits with its status; when the toolchain is"
+note "   missing it prints 'go: MISSING' and refuses to run, so it cannot be mistaken"
+note "   for a passing run. Quote that output (or 'go: MISSING') in the report."
+
 if [ "$status" -eq 0 ]; then
   note "== ready: local targeted Go checks can run =="
 else
