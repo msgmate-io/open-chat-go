@@ -68,7 +68,7 @@ cd "$REPO_ROOT"
 # build then failed with "replacement directory ../../../backend does not exist".
 # The resolution lives in a sourced helper so it can be pinned hermetically
 # (development/scripts/tests/test_integration_workspace_path.sh).
-# shellcheck source=development/scripts/integration_workspace_path.sh
+# shellcheck source=development/scripts/integration_workspace_path.sh disable=SC1091
 . "$REPO_ROOT/development/scripts/integration_workspace_path.sh"
 INTEGRATION_SRC="$(cd "$(dirname "${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}")" && pwd)/$(basename "${INTEGRATION_SRC}")"
 WORKSPACE_PATH="$(integration_workspace_path "$REPO_ROOT" "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
