@@ -89,3 +89,5 @@ development/ci/
 development/helm/
 clients/gomobile/
 clients/llm_coding_agents/
+
+new-key.txt
