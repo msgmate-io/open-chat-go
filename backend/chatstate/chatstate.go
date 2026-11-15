@@ -120,6 +120,57 @@ func LookupBackendInterruptHandler(backend string) (BackendInterruptFunc, bool) 
 	return fn, ok
 }
 
+// ContextUsageSnapshot is the neutral, dependency-free view of how much of a
+// chat's context window its newest outgoing request consumed (ci#1086). It is
+// phrased in generic terms so the chat status API and integration modules can
+// render the same percentage indicator for cloud workflows and for local/TUI
+// coding sessions without importing the AI handler.
+type ContextUsageSnapshot struct {
+	// UsedPercent is UsedChars/BudgetChars in percent.
+	UsedPercent int
+	// UsedChars is what the outgoing request carried, BudgetChars the resolved
+	// character budget of the conversation.
+	UsedChars   int
+	BudgetChars int
+	// EstimatedTokens puts the usage in model terms.
+	EstimatedTokens int
+	// Compacted reports that the newest request had to evict or drop content to
+	// fit the budget, ie compaction actually ran for this chat.
+	Compacted bool
+	// UpdatedAt is when the usage was recorded (RFC3339, empty when unknown).
+	UpdatedAt string
+}
+
+// ContextUsageFunc reports the newest context-window usage of a chat. ok is
+// false when the chat has no recorded usage (no turn served yet in this
+// process, or it was recorded by another worker).
+type ContextUsageFunc func(chatUUID string) (ContextUsageSnapshot, bool)
+
+var (
+	contextUsageMu       sync.RWMutex
+	contextUsageProvider ContextUsageFunc
+)
+
+// RegisterContextUsageProvider installs the process-wide context usage
+// provider. The AI handler registers it at init, so status surfaces can read a
+// chat's usage without importing the handler. Registering nil clears it, which
+// is how tests keep the provider from leaking between cases.
+func RegisterContextUsageProvider(fn ContextUsageFunc) {
+	contextUsageMu.Lock()
+	defer contextUsageMu.Unlock()
+	contextUsageProvider = fn
+}
+
+// LookupContextUsageProvider returns the installed context usage provider.
+func LookupContextUsageProvider() (ContextUsageFunc, bool) {
+	contextUsageMu.RLock()
+	defer contextUsageMu.RUnlock()
+	if contextUsageProvider == nil {
+		return nil, false
+	}
+	return contextUsageProvider, true
+}
+
 // Supersession markers (ci#642): when a newer message arrives for a chat that
 // already has a live bot reply, the in-flight turn is cancelled. That
 // cancellation must NOT render as a user pause ("I paused this response") - the
