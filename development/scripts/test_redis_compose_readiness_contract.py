@@ -69,7 +69,7 @@ BEFORE_FINDINGS = (
     contract.CPU_FINDING,
 )
 
-#: The compose equivalent of `development/redis-readiness/ci-722-redis-probes.patch.json`.
+#: The compose equivalent of `development/ci/redis-readiness/ci-722-redis-probes.patch.json`.
 AFTER_HEALTHCHECK = """
 services:
   backend:

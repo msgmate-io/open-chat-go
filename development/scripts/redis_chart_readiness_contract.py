@@ -28,13 +28,13 @@ This script checks the chart template itself against the same contract as
 
 The chart repository grants the automation identity no write access, so the
 durable record of the chart change is carried in
-``development/redis-readiness/ci-722-chart.patch`` together with the rendered
+``development/ci/redis-readiness/ci-722-chart.patch`` together with the rendered
 before/after fixtures this checker is pinned against
 (``development/scripts/test_redis_chart_readiness_contract.py``).
 
 Usage:
   development/scripts/redis_chart_readiness_contract.py \\
-      --chart-file development/redis-readiness/chart-redis-template.after.yaml
+      --chart-file development/ci/redis-readiness/chart-redis-template.after.yaml
   development/scripts/redis_chart_readiness_contract.py --chart-dir /path/to/open-chat-go-helm-chart
   development/scripts/redis_chart_readiness_contract.py --print-rendered --chart-file ...
 
@@ -336,7 +336,7 @@ def main(argv=None):
     if findings:
         print(
             "::error::the Helm chart redis template still renders the ci#638/ci#722 "
-            "findings; apply development/redis-readiness/ci-722-chart.patch at the chart root"
+            "findings; apply development/ci/redis-readiness/ci-722-chart.patch at the chart root"
         )
         return 1
     return 0
