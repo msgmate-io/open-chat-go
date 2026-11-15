@@ -525,6 +525,35 @@ func renameReservedAdminUsernameConflicts(DB *gorm.DB, excludeUserID uint) error
 	return nil
 }
 
+// bootstrapPasswordHash turns a resolved bootstrap password into the value
+// stored in users.password_hash: a pre-hashed bcrypt secret (`hashed_<bcrypt>`)
+// is used verbatim, everything else is bcrypt-hashed here.
+func bootstrapPasswordHash(password string) (string, error) {
+	if strings.HasPrefix(password, "hashed_") {
+		return strings.TrimPrefix(password, "hashed_"), nil
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
+}
+
+// unusablePasswordHash reports whether a stored hash can never satisfy a
+// bcrypt password check, i.e. the account has no local password at all. Only
+// such rows are re-seeded from the bootstrap credentials; a real hash is left
+// untouched so an operator's own password is never silently replaced.
+func unusablePasswordHash(hash string) bool {
+	trimmed := strings.TrimSpace(hash)
+	if trimmed == "" {
+		return true
+	}
+	if _, err := bcrypt.Cost([]byte(trimmed)); err != nil {
+		return true
+	}
+	return false
+}
+
 func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*database.User, error) {
 	if err := renameReservedAdminUsernameConflicts(DB, 0); err != nil {
 		return nil, err
@@ -546,6 +575,21 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 		if isAutomated && !admin.IsAutomated {
 			updates["is_automated"] = true
 		}
+		// The singleton admin may have been provisioned without a local
+		// password (an identity-provider / bridge login creates the row with an
+		// empty hash, see integrationhost.usersAdapter.Create). Such an account
+		// can never satisfy a password confirmation, which locks the configured
+		// master password out of every re-authenticated admin action (for
+		// example unlocking the raw config view). Restore the bootstrap password
+		// in that case only: a real password is never overwritten here.
+		if unusablePasswordHash(admin.PasswordHash) {
+			restoredHash, hashErr := bootstrapPasswordHash(password)
+			if hashErr != nil {
+				return nil, hashErr
+			}
+			updates["password_hash"] = restoredHash
+			fmt.Printf("Restored the bootstrap password for admin %q (stored hash was not a usable password)\n", admin.Username)
+		}
 		if len(updates) > 0 {
 			if err := DB.Model(&admin).Updates(updates).Error; err != nil {
 				return nil, err
@@ -560,15 +604,9 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 		return nil, err
 	}
 
-	var passwordHash string
-	if strings.HasPrefix(password, "hashed_") {
-		passwordHash = strings.TrimPrefix(password, "hashed_")
-	} else {
-		hashedPassword, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if hashErr != nil {
-			return nil, hashErr
-		}
-		passwordHash = string(hashedPassword)
+	passwordHash, hashErr := bootstrapPasswordHash(password)
+	if hashErr != nil {
+		return nil, hashErr
 	}
 
 	adminEmail, emailErr := nextAvailableEmail(DB, "admin")
