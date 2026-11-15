@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
+	"gorm.io/gorm"
 )
 
 func setupBotConfigTestDB(t *testing.T) *database.DBConfig {
@@ -858,4 +859,83 @@ func TestApplyBotBootstrapConfigFilesReusesRuntimeForExistingBotUser(t *testing.
 	if shared["model"] != "new-model" {
 		t.Fatalf("expected overwrite to reach the existing runtime, got model %v", shared["model"])
 	}
+}
+
+func TestApplyBotBootstrapConfigFilesTransfersPrimaryOwner(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupTestDatabase(t, *config)
+
+	if err, _ := util.CreateUser(DB, "old_owner", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create old owner: %v", err)
+	}
+	if err, _ := util.CreateUser(DB, "new_owner", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create new owner: %v", err)
+	}
+	oldOwner, err := findUserByUsername(DB, "old_owner")
+	if err != nil {
+		t.Fatalf("failed to resolve old owner: %v", err)
+	}
+	newOwner, err := findUserByUsername(DB, "new_owner")
+	if err != nil {
+		t.Fatalf("failed to resolve new owner: %v", err)
+	}
+
+	initialPath := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner": "old_owner",
+		"bot": map[string]interface{}{
+			"username": "transfer_bot",
+			"password": "BotPass1!",
+			"name":     "transfer_bot",
+		},
+		"default_shared_config": map[string]interface{}{"model": "old-model"},
+	})
+	if err := applyBotBootstrapConfigFiles(DB, []string{initialPath}, false); err != nil {
+		t.Fatalf("initial apply failed: %v", err)
+	}
+
+	transferPath := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner": "new_owner",
+		"bot": map[string]interface{}{
+			"username": "transfer_bot",
+			"password": "BotPass1!",
+			"name":     "transfer_bot",
+		},
+		"default_shared_config": map[string]interface{}{"model": "new-model"},
+		"overwrite_if_exists":   true,
+	})
+	if err := applyBotBootstrapConfigFiles(DB, []string{transferPath}, false); err != nil {
+		t.Fatalf("transfer apply failed: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("bot_user_id = ?", mustBotUserID(t, DB, "transfer_bot")).First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load runtime: %v", err)
+	}
+	if runtime.OwnerUserId != newOwner.ID {
+		t.Fatalf("expected owner_user_id=%d after transfer, got %d", newOwner.ID, runtime.OwnerUserId)
+	}
+
+	var oldGrant int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, oldOwner.ID).Count(&oldGrant).Error; err != nil {
+		t.Fatalf("failed to count old owner grant: %v", err)
+	}
+	if oldGrant != 0 {
+		t.Fatalf("expected old primary owner grant to be removed, got %d rows", oldGrant)
+	}
+	var newGrant int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, newOwner.ID).Count(&newGrant).Error; err != nil {
+		t.Fatalf("failed to count new owner grant: %v", err)
+	}
+	if newGrant != 1 {
+		t.Fatalf("expected new primary owner grant, got %d rows", newGrant)
+	}
+}
+
+func mustBotUserID(t *testing.T, DB *gorm.DB, username string) uint {
+	t.Helper()
+	botUser, err := findUserByUsername(DB, username)
+	if err != nil {
+		t.Fatalf("failed to resolve bot user %q: %v", username, err)
+	}
+	return botUser.ID
 }
