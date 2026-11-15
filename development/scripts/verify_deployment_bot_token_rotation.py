@@ -59,7 +59,7 @@ CACHE_MISS = "bot token cannot read"
 ANNOTATION = ("::error::", "::warning::", "##[error]", "##[warning]")
 
 # `msgmate-io/open-chat-go` is the deploy target the vault item must be able to
-# read (see development/deployment-bot-token-capabilities.md).
+# read (see development/operator/deployment-bot-token-capabilities.md).
 DEPLOY_TARGET = "msgmate-io/open-chat-go"
 
 # The vault items a rotation has to touch. Both profiles read the same credential
