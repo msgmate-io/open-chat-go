@@ -171,6 +171,11 @@ spec:
               value: "true"
             - name: KC_METRICS_ENABLED
               value: "true"
+            # Keycloak's build step ("Changes detected in configuration. Updating
+            # the server image") runs a separate JVM and is OOMKilled at 1Gi, so
+            # the ceiling is 2Gi with the heap pinned well below it.
+            - name: JAVA_OPTS_APPEND
+              value: "-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=40"
             # Sticky sessions on the Ingress keep one login flow on one pod; the
             # local cache is what Keycloak supports without an Infinispan cluster.
             - name: KC_CACHE
@@ -235,10 +240,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 512Mi
+              memory: 768Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              memory: 2Gi
           volumeMounts:
             # The realm template from development/identity-provider/realm/, as a
             # ConfigMap the operator creates out of band.
