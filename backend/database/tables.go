@@ -267,6 +267,7 @@ var Tabels []interface{} = []interface{}{
 	&ProductLandingPageConfig{},
 	&WorkspaceLease{},
 	&EventClaim{},
+	&UserIdentity{},
 }
 
 var Migrations []Migration = []Migration{
@@ -298,6 +299,9 @@ var Migrations []Migration = []Migration{
 	SeedProductLandingPageConfigsMigration{},
 	TableMigration{&WorkspaceLease{}},
 	TableMigration{&EventClaim{}},
+	// UserIdentity is the durable OIDC issuer+subject -> user link (ci#1111).
+	// Additive table only: no existing column changes, safe on a live instance.
+	TableMigration{&UserIdentity{}},
 	GrantDefaultPermissionsMigration{},
 	// IndexMigration runs last so every table it indexes exists, and is
 	// idempotent (CREATE INDEX IF NOT EXISTS) for repeated boots (ci#850).
