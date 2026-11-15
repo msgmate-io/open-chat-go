@@ -450,8 +450,10 @@ type ContextUsageReport struct {
 	TotalToolResultChars   int    `json:"total_tool_result_chars"`
 	LargestToolResultChars int    `json:"largest_tool_result_chars"`
 	LargestToolResult      string `json:"largest_tool_result,omitempty"`
-	// TruncatedToolResults is how many results this turn's per-tool budget cut,
-	// and the Evicted*/Dropped* counters what the budget guard had to squeeze.
+	// TruncatedToolResults is how many results were cut: this turn's per-tool
+	// output budget plus the newest-round truncations of the compaction pass
+	// (ci#910), which shorten a result without leaving an eviction marker. The
+	// Evicted*/Dropped* counters are what the guard had to evict or drop.
 	TruncatedToolResults int `json:"truncated_tool_results"`
 	EvictedToolResults   int `json:"evicted_tool_results"`
 	EvictedNarration     int `json:"evicted_narration"`
@@ -503,13 +505,17 @@ func (r ContextUsageReport) Metadata() map[string]interface{} {
 // guards did to it.
 func BuildContextUsageReport(messages []map[string]interface{}, budgetChars int, stats ContextCompactionStats, limits ToolResultLimits, truncatedToolResults int) ContextUsageReport {
 	used := messagesCharCount(messages)
+	// ci#910: the per-tool budget of this turn and the compaction guard's own
+	// newest-round truncations both cut the outgoing request, so the report (and
+	// the self-throttling notice rendered from it) counts them together instead
+	// of claiming nothing was cut.
 	report := ContextUsageReport{
 		BudgetChars:          budgetChars,
 		UsedChars:            used,
 		EstimatedTokens:      EstimateTokensForChars(used),
 		AssumedWindowTokens:  DefaultModelContextWindowTokens,
 		Messages:             len(messages),
-		TruncatedToolResults: truncatedToolResults,
+		TruncatedToolResults: truncatedToolResults + stats.TruncatedToolResults,
 		EvictedToolResults:   stats.EvictedToolResults,
 		EvictedNarration:     stats.EvictedNarration,
 		EvictedUserMessages:  stats.EvictedUserMessages,
@@ -518,7 +524,7 @@ func BuildContextUsageReport(messages []map[string]interface{}, budgetChars int,
 		UpdatedAt:            time.Now().UTC().Format(time.RFC3339),
 	}
 	if budgetChars > 0 {
-		report.UsedPercent = used * 100 / budgetChars
+		report.UsedPercent = int(contextUsagePercent(used, budgetChars))
 	}
 	names := toolNamesByCallID(messages)
 	for _, message := range messages {
@@ -563,6 +569,35 @@ func RecordContextUsage(chatUUID string, report ContextUsageReport) {
 	contextUsageRegistry.mu.Lock()
 	defer contextUsageRegistry.mu.Unlock()
 	contextUsageRegistry.byChat[chatUUID] = report
+}
+
+// ContextUsagePercent returns the context usage of a chat as a percentage
+// (0..100) of its character budget, and whether the chat has produced a report
+// yet (ci#1086).
+//
+// It is the read-only accessor a status line polls: the tool loop records the
+// report of every outgoing request (see CompactAndReportContext), so the value
+// moves round by round without the caller having to re-measure the
+// conversation. It is derived from the very same fields as the recorded
+// report's UsedPercent, so a rendered status line and the self-throttling
+// notice can never disagree.
+func ContextUsagePercent(chatUUID string) (float64, bool) {
+	report, ok := ContextUsageFor(chatUUID)
+	if !ok {
+		return 0, false
+	}
+	return contextUsagePercent(report.UsedChars, report.BudgetChars), true
+}
+
+// contextUsagePercent is the single source of truth of "how full is the context
+// window of this chat", in percent of the character budget. The recorded report
+// (integer UsedPercent, because it is rendered in metadata and notices) and
+// ContextUsagePercent both derive from it (ci#1086).
+func contextUsagePercent(usedChars, budgetChars int) float64 {
+	if usedChars <= 0 || budgetChars <= 0 {
+		return 0
+	}
+	return float64(usedChars) * 100 / float64(budgetChars)
 }
 
 // ContextUsageFor returns the last recorded usage report of a chat.
@@ -1143,6 +1178,89 @@ func positiveIntFromValue(raw interface{}) (int, bool) {
 // result it knows is huge). It reports whether the result was cut.
 func TruncateToolResultForTool(result, toolName string, limits ToolResultLimits) (string, bool) {
 	return truncateToolResultForTool(result, toolName, limits)
+}
+
+// CompactAndReportContext runs the whole conversation-budget guard for one
+// outgoing request and records the resulting usage report (ci#1086).
+//
+// It performs, in the order the native tool loop needs: resolve the
+// self-throttling notice and reserve its length in the compaction budget,
+// compact the conversation under the budget, merge the notice in, squeeze again
+// until the final list fits, and finally record the usage report of the request
+// that is about to be sent - the report ContextUsagePercent reads.
+//
+// It is the single implementation of that step. `openai.go` calls it once per
+// round, so there is exactly one place where the budget is enforced; a coding
+// integration that drives its own request loop (and therefore bypasses the
+// native tool loop, which used to skip *both* the compaction guard and
+// RecordContextUsage and left a chat's context usage permanently unknown) calls
+// exactly the same function instead of re-implementing it.
+func CompactAndReportContext(messages []map[string]interface{}, chatUUID string, budget ContextBudget, truncatedToolResults int) ([]map[string]interface{}, ContextUsageReport) {
+	budget = budget.WithDefaults()
+	currentMessages := messages
+
+	// ci#822 r46: resolve the notice *first* and reserve its length in the
+	// compaction budget. The notice is merged into the leading system message,
+	// which neither compaction pass ever rewrites, so text added there could
+	// not be compensated by a later compaction afterwards.
+	noticeProbe := BuildContextUsageReport(currentMessages, budget.BudgetChars, ContextCompactionStats{}, budget.Limits, truncatedToolResults)
+	notice := contextBudgetNoticeFor(currentMessages, noticeProbe)
+	reserve := 0
+	if notice != "" {
+		// The merged prompt is base + "\n\n" + notice, and the notice of an
+		// earlier round is replaced (never stacked), so the reserve is the
+		// separator plus the notice's own length.
+		reserve = len(notice) + len("\n\n")
+		if previous := leadingSystemNoticeText(currentMessages); previous != "" {
+			reserve -= len(previous)
+		}
+		if reserve < 0 {
+			reserve = 0
+		}
+		// The numbers in the notice grow with the history; the constant
+		// headroom covers a notice that is re-rendered slightly longer than
+		// the one measured here.
+		if reserve < contextBudgetNoticeReserveChars {
+			reserve = contextBudgetNoticeReserveChars
+		}
+	}
+
+	// ci#680: keep the outgoing request under the chat's context budget
+	// *before* it is sent. Older tool results and intermediate narration are
+	// evicted (and, as a last resort, whole old messages dropped) so a turn
+	// with several large tool outputs continues instead of failing with
+	// "exceeded maximum context".
+	budgetStats := ContextCompactionStats{}
+	if compacted, stats, changed := compactMessagesToContextBudgetReserving(currentMessages, budget.BudgetChars, reserve); changed {
+		currentMessages = compacted
+		budgetStats = stats
+	}
+	preReport := BuildContextUsageReport(currentMessages, budget.BudgetChars, budgetStats, budget.Limits, truncatedToolResults)
+	currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+
+	// ci#822 r46: belt and braces. The compaction above reserves the notice,
+	// but the *final* list is what the provider sees, so verify it and squeeze
+	// again (now measuring the notice too) until the request fits.
+	for attempt := 0; attempt < 3 && messagesCharCount(currentMessages) > budget.BudgetChars; attempt++ {
+		compacted, stats, changed := compactMessagesToContextBudget(currentMessages, budget.BudgetChars)
+		if !changed {
+			// Nothing left to evict (eg only protected tail messages remain);
+			// dropping further would break the conversation.
+			break
+		}
+		currentMessages = compacted
+		budgetStats = mergeContextCompactionStats(budgetStats, stats)
+		preReport = BuildContextUsageReport(currentMessages, budget.BudgetChars, budgetStats, budget.Limits, truncatedToolResults)
+		currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+	}
+
+	// ci#680: record the usage report of the request that is about to be sent,
+	// so the chat metadata, the `coder_context` tool and ContextUsagePercent
+	// can report the numbers and an agent can self-throttle.
+	report := BuildContextUsageReport(currentMessages, budget.BudgetChars, budgetStats, budget.Limits, truncatedToolResults)
+	report.ChatUUID = chatUUID
+	RecordContextUsage(chatUUID, report)
+	return currentMessages, report
 }
 
 // CompactMessagesToContextBudget exposes the conversation budget guard to a
