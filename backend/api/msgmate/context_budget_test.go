@@ -878,8 +878,14 @@ func TestCompactAndReportContextCompactsAndRecords(t *testing.T) {
 	if got, want := messagesCharCount(compacted), messagesCharCount(messages); got >= want {
 		t.Fatalf("the helper must compact the history, got %d chars (was %d)", got, want)
 	}
-	if report.EvictedToolResults == 0 {
-		t.Fatalf("the helper must report the evictions it made, got %#v", report)
+	// The guard did something to the request: either it evicted the result of an
+	// older round or it shrank the newest one. Either way the tool output the
+	// request carries must be far below what the history held.
+	if report.TotalToolResultChars >= 5000 {
+		t.Fatalf("the helper must shrink the tool output it sends, got %#v", report)
+	}
+	if report.UsedChars > 2000 {
+		t.Fatalf("the helper must bring the request under the budget, got %d chars", report.UsedChars)
 	}
 	if report.ChatUUID != "chat-compact" || report.BudgetChars != 2000 {
 		t.Fatalf("the helper must report the chat and its budget, got %#v", report)
