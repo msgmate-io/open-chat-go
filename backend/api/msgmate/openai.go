@@ -648,79 +648,11 @@ func streamChatCompletion(
 				return
 			}
 
-			// ci#822 r46: the notice is merged into the *leading system*
-			// message, which neither compaction pass ever rewrites. Text added
-			// there can therefore no longer be compensated by a later
-			// compaction, so a round that measured as fitting before the notice
-			// (59889 of 60000 chars) was still sent at 60190 chars. Resolve the
-			// notice *first*, reserve its length in the compaction budget, and
-			// only then compact: the guard now measures the exact request that
-			// goes out.
-			noticeProbe := BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, ContextCompactionStats{}, contextBudget.Limits, truncatedToolResults)
-			notice := contextBudgetNoticeFor(currentMessages, noticeProbe)
-			reserve := 0
-			if notice != "" {
-				// The merged prompt is base + "\n\n" + notice, and the notice of
-				// an earlier round is replaced (never stacked), so the reserve
-				// is the separator plus the notice's own length.
-				reserve = len(notice) + len("\n\n")
-				if previous := leadingSystemNoticeText(currentMessages); previous != "" {
-					reserve -= len(previous)
-				}
-				if reserve < 0 {
-					reserve = 0
-				}
-				// The numbers in the notice grow with the history; the constant
-				// headroom covers a notice that is re-rendered slightly longer
-				// than the one measured here.
-				if reserve < contextBudgetNoticeReserveChars {
-					reserve = contextBudgetNoticeReserveChars
-				}
-			}
-
-			// ci#680: keep the outgoing request under the chat's context budget
-			// *before* it is sent. Older tool results and intermediate narration
-			// are evicted (and, as a last resort, whole old messages dropped) so a
-			// turn with several large tool outputs continues instead of failing
-			// with "exceeded maximum context". The notice reserve keeps the
-			// post-injection request under the same budget.
-			budgetStats := ContextCompactionStats{}
-			if compacted, stats, changed := compactMessagesToContextBudgetReserving(currentMessages, contextBudget.BudgetChars, reserve); changed {
-				currentMessages = compacted
-				budgetStats = stats
-			}
-			// Once the conversation approaches its budget the model gets a
-			// one-line self-throttling notice (targeted reads, shallow listings)
-			// merged into the system prompt. The notice is replaced on every
-			// round, never stacked.
-			preReport := BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
-			currentMessages = injectContextBudgetNotice(currentMessages, preReport)
-
-			// ci#822 r46: belt and braces. The compaction above reserves the
-			// notice, but the *final* list is what the provider sees, so verify
-			// it and squeeze again (now measuring the notice too) until the
-			// request fits - e.g. when the reserve was under-estimated by a
-			// longer re-rendered notice, or when the second compaction freed
-			// room for a longer notice again.
-			for attempt := 0; attempt < 3 && messagesCharCount(currentMessages) > contextBudget.BudgetChars; attempt++ {
-				compacted, stats, changed := compactMessagesToContextBudget(currentMessages, contextBudget.BudgetChars)
-				if !changed {
-					// Nothing left to evict (e.g. only protected tail messages
-					// remain); dropping further would break the conversation.
-					break
-				}
-				currentMessages = compacted
-				budgetStats = mergeContextCompactionStats(budgetStats, stats)
-				preReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
-				currentMessages = injectContextBudgetNotice(currentMessages, preReport)
-			}
-
-			// ci#680: record the usage report of the request that is about to be
-			// sent, so the chat metadata and the `coder_context` tool can report
-			// the numbers and an agent can self-throttle.
-			lastContextReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
-			lastContextReport.ChatUUID = meta.ChatUUID
-			RecordContextUsage(meta.ChatUUID, lastContextReport)
+			// ci#1086: the whole budget guard (notice reserve -> compaction ->
+			// notice injection -> belt-and-braces re-compaction -> usage record)
+			// lives in CompactAndReportContext, so a client that bypasses this
+			// loop can run exactly the same step instead of silently skipping it.
+			currentMessages, lastContextReport = CompactAndReportContext(currentMessages, meta.ChatUUID, contextBudget, truncatedToolResults)
 
 			// Make initial request (with provider retries when enabled).
 			logging.Debugf("\n=== STARTING NEW REQUEST ROUND ===")
