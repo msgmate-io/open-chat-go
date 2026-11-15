@@ -621,21 +621,6 @@ func resetContextUsageRegistry() {
 	contextUsageRegistry.byChat = map[string]ContextUsageReport{}
 }
 
-// ContextUsagePercent reports how much of its context window a chat's newest
-// outgoing request consumed, in percent (ci#1086). ok is false when this process
-// has no recorded usage for the chat.
-//
-// It is the entry point for surfaces that only want the percentage indicator
-// (the TUI status line, the interaction status API) rather than the full
-// report.
-func ContextUsagePercent(chatUUID string) (int, bool) {
-	report, ok := ContextUsageFor(chatUUID)
-	if !ok {
-		return 0, false
-	}
-	return report.UsedPercent, true
-}
-
 // contextUsageSnapshotFor renders a chat's recorded usage in the neutral
 // chatstate form, so a status surface can show the same indicator for cloud
 // workflows and local/TUI coding sessions without importing this package.
