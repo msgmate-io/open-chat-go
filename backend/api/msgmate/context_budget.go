@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"backend/chatstate"
 	"backend/logging"
 )
 
@@ -618,6 +619,45 @@ func resetContextUsageRegistry() {
 	contextUsageRegistry.mu.Lock()
 	defer contextUsageRegistry.mu.Unlock()
 	contextUsageRegistry.byChat = map[string]ContextUsageReport{}
+}
+
+// contextUsageSnapshotFor renders a chat's recorded usage in the neutral
+// chatstate form, so the interaction status API (and any other status surface)
+// can show the percentage indicator of a chat without importing this package,
+// which would be an import cycle: api/msgmate already imports api/chats
+// (ci#1086).
+func contextUsageSnapshotFor(chatUUID string) (chatstate.ContextUsageSnapshot, bool) {
+	report, ok := ContextUsageFor(chatUUID)
+	if !ok {
+		return chatstate.ContextUsageSnapshot{}, false
+	}
+	return chatstate.ContextUsageSnapshot{
+		// The recorded (integer) percentage is what the report's own metadata and
+		// the self-throttling notice render, so a status line and the notice
+		// cannot disagree.
+		UsedPercent:     report.UsedPercent,
+		UsedChars:       report.UsedChars,
+		BudgetChars:     report.BudgetChars,
+		EstimatedTokens: report.EstimatedTokens,
+		// A chat whose last request had to evict or drop content is a chat where
+		// compaction actually ran, which is what makes "local/TUI sessions never
+		// compact" measurable instead of anecdotal (ci#1086).
+		//
+		// TruncatedToolResults is deliberately NOT part of this verdict: it also
+		// counts the routine per-tool output cap of an ordinary turn (ci#910), so
+		// folding it in would report compaction for chats that never compacted.
+		Compacted: report.EvictedToolResults > 0 || report.EvictedNarration > 0 ||
+			report.EvictedUserMessages > 0 || report.DroppedMessages > 0,
+		UpdatedAt: report.UpdatedAt,
+	}, true
+}
+
+// init registers the context usage provider, so chat status endpoints can report
+// the percentage indicator of a chat without importing the AI handler
+// (ci#1086). The registry lives in chatstate because it must stay free of API
+// imports; see chatstate.RegisterContextUsageProvider.
+func init() {
+	chatstate.RegisterContextUsageProvider(contextUsageSnapshotFor)
 }
 
 // contextUsageLookup is what the `coder_context` tool calls: the recorded report
