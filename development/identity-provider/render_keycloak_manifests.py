@@ -171,6 +171,11 @@ spec:
               value: "true"
             - name: KC_METRICS_ENABLED
               value: "true"
+            # Keycloak's build step ("Changes detected in configuration. Updating
+            # the server image") runs a separate JVM and is OOMKilled at 1Gi, so
+            # the ceiling is 2Gi with the heap pinned well below it.
+            - name: JAVA_OPTS_APPEND
+              value: "-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=40"
             # Sticky sessions on the Ingress keep one login flow on one pod; the
             # local cache is what Keycloak supports without an Infinispan cluster.
             - name: KC_CACHE
@@ -235,10 +240,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 512Mi
+              memory: 768Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              memory: 2Gi
           volumeMounts:
             # The realm template from development/identity-provider/realm/, as a
             # ConfigMap the operator creates out of band.
@@ -292,13 +297,15 @@ metadata:
   annotations:
     # One login flow spans several requests: keep a browser session on one pod
     # while KC_CACHE is local.
-    nginx.ingress.kubernetes.io/affinity: cookie
-    nginx.ingress.kubernetes.io/affinity-mode: persistent
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: keycloak_route
     # Keycloak reads the scheme from X-Forwarded-* (KC_PROXY_HEADERS).
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # cert-manager issues the certificate; the Secret is created by the issuer.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
-  ingressClassName: nginx
+  ingressClassName: public
   tls:
     - hosts:
         - {idp_host}
@@ -337,7 +344,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: ingress
       ports:
         - port: 8080
           protocol: TCP
