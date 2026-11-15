@@ -14,6 +14,10 @@ generic OpenID Connect authorization-code login flow (PKCE, S256) to Open Chat,
 with optional identity-to-user bootstrap mapping. It never exposes the client
 secret.
 
+The deployment/operator assets (Keycloak realm, rendered manifests, Helm chart
+patches and local sandbox) live in the private `open-chat-go-ci` checkout and are
+consumed from `development/ci/` when that profile is materialized.
+
 ## Routes
 
 | Method | Path | Purpose |
