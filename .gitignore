@@ -44,6 +44,7 @@ backend/data.db-journal
 backend/.devbin/
 backend/.generated/
 kubeconfig.yaml
+kubeconfig_prod.yaml
 .playwright-mcp/
 backend/uploads/*
 backend/open-chat.json
