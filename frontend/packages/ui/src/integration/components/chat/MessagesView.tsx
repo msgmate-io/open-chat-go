@@ -14,6 +14,7 @@ import { buildMessageGroups } from "../../lib/message-groups";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
+import { WEBSOCKET_RECONNECTED_EVENT } from "../../lib/websocket";
 import {
     buildSendMessageBody,
     type BotReplyDeliveryMode,
@@ -124,35 +125,46 @@ export function MessagesScroll({
     // Hydrate a mid-stream snapshot after a page reload: while a bot reply is
     // still streaming, the DB keeps a throttled snapshot so progress is not
     // lost when the client reconnects.
-    useEffect(() => {
+    const hydrateStreamingSnapshot = useCallback(async () => {
         if (!chatUUID) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await fetch(`/api/v1/chats/${chatUUID}/messages/streaming`, {
-                    credentials: "include",
-                });
-                if (res.status === 204 || !res.ok) return;
-                const snapshot = await res.json();
-                if (cancelled || !snapshot?.session_id) return;
-                const existing = usePartialMessageStore.getState().partialMessages[chatUUID];
-                if (existing) return;
-                addPartialMessage(chatUUID, {
-                    text: snapshot.text || "",
-                    thoughts: snapshot.reasoning || [],
-                    meta_data: { partial_phase: "responding" },
-                    tool_calls: snapshot.tool_calls || [],
-                    seq: snapshot.seq || 0,
-                    session_id: snapshot.session_id,
-                }, snapshot.session_id);
-            } catch {
-                // Hydration is best-effort only.
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
+        try {
+            const res = await fetch(`/api/v1/chats/${chatUUID}/messages/streaming`, {
+                credentials: "include",
+            });
+            if (res.status === 204 || !res.ok) return;
+            const snapshot = await res.json();
+            if (!snapshot?.session_id) return;
+            const existing = usePartialMessageStore.getState().partialMessages[chatUUID];
+            if (existing) return;
+            addPartialMessage(chatUUID, {
+                text: snapshot.text || "",
+                thoughts: snapshot.reasoning || [],
+                meta_data: { partial_phase: "responding" },
+                tool_calls: snapshot.tool_calls || [],
+                seq: snapshot.seq || 0,
+                session_id: snapshot.session_id,
+            }, snapshot.session_id);
+        } catch {
+            // Hydration is best-effort only.
+        }
     }, [chatUUID, addPartialMessage]);
+
+    useEffect(() => {
+        void hydrateStreamingSnapshot();
+    }, [hydrateStreamingSnapshot]);
+
+    // ci#1105: a reconnected socket cannot replay frames emitted while it was
+    // down. Re-fetch the streaming snapshot and the transcript so a tab that
+    // lost the socket catches up instead of rendering a stale partial reply.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const onReconnected = () => {
+            void hydrateStreamingSnapshot();
+            void mutateMessages();
+        };
+        window.addEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+        return () => window.removeEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+    }, [hydrateStreamingSnapshot, mutateMessages]);
 
     const { data: integrations, mutate: mutateIntegrations } = useSWR<{ rows?: Array<{ name: string }> }>(
         shouldLoadIntegrations ? "/api/v1/integrations/list" : null,
@@ -685,6 +697,21 @@ export function MessagesView({
         document.addEventListener("visibilitychange", onVisibilityChange);
         return () => document.removeEventListener("visibilitychange", onVisibilityChange);
     }, [mutateInteractionStatus]);
+
+    // ci#1105: after a websocket reconnect, reload the transcript and status so
+    // messages that landed while the socket was down are not missed.
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+        const onReconnected = () => {
+            void mutateMessages();
+            void mutateInteractionStatus();
+            void revalidateChatData(chatUUID);
+        };
+        window.addEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+        return () => window.removeEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+    }, [chatUUID, mutateMessages, mutateInteractionStatus]);
 
     // Without a websocket the final bot message only lands in the DB once the
     // interaction becomes inactive, so refetch on the active -> inactive edge.

@@ -6,6 +6,7 @@ import { usePartialMessageStore } from "./chat/PartialMessages";
 import { useAppendPartialMessage, useRemovePartialMessage, useAddPartialMessage } from "./chat/PartialMessages.selectors";
 import { createPartialDeltaQueue } from "./chat/partialDeltaQueue";
 import { revalidateChatData, revalidateChatStates } from "../lib/chat-cache";
+import { announceWebsocketReconnected } from "../lib/websocket";
 
 const useWebSocket =
   typeof useWebSocketModule === "function"
@@ -20,9 +21,26 @@ export function WebsocketHandler() {
         setSocketUrl(`${protocol}//${window.location.host}/ws/connect`);
     }, []);
 
+    // ci#1105: keep the socket alive across transient drops and announce a
+    // reconnection so the chat can reload frames it missed while offline.
+    // react-use-websocket reconnects by default, but making the policy explicit
+    // (and generous) prevents a short network blip from leaving the UI detached
+    // from the stream for the rest of the session.
+    const hasOpenedRef = useRef(false);
     const { lastMessage, readyState } = useWebSocket(
         socketUrl,
-        undefined,
+        {
+            shouldReconnect: () => true,
+            reconnectAttempts: 50,
+            reconnectInterval: 1500,
+            retryOnError: true,
+            onOpen: () => {
+                if (hasOpenedRef.current) {
+                    announceWebsocketReconnected();
+                }
+                hasOpenedRef.current = true;
+            },
+        },
         socketUrl !== null,
     );
 
