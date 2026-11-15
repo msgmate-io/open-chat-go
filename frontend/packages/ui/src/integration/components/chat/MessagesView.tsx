@@ -23,6 +23,10 @@ import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
 import { PullToRefresh } from "../PullToRefresh";
 import { Skeleton } from "../../../components/skeleton";
+import {
+    INTERACTION_STATUS_POST_SEND_FAST_WINDOW_MS,
+    interactionStatusRefreshInterval,
+} from "./interactionStatusPolling";
 
 const ScrollButton = React.memo(({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) => {
     const [shouldShow, setShouldShow] = useState(false);
@@ -92,6 +96,7 @@ export function MessagesScroll({
     chat,
     mutateMessages,
     onRefresh,
+    onMessageSent,
 }: {
     messages: any,
     chat: any,
@@ -101,6 +106,8 @@ export function MessagesScroll({
     footerSlot?: ReactNode;
     mutateMessages: any;
     onRefresh?: () => void | Promise<unknown>;
+    /** Fired after a message was accepted, so the parent can re-accelerate its status poll. */
+    onMessageSent?: () => void;
 }) {
     const [text, setText] = useState("");
     // Narrow selectors only: `usePartialMessageStore()` (whole store) re-rendered
@@ -273,6 +280,11 @@ export function MessagesScroll({
             // chat into the active state; refresh the derived caches so the
             // list and state dots update without waiting for the next poll.
             void revalidateChatData(chatUUID);
+
+            // ci#1089: the status poll may be backed off (the previous turn
+            // finished), so re-accelerate it instead of missing this turn's
+            // active -> inactive edge.
+            onMessageSent?.();
             
             // Clear input after successful send
             setText('');
@@ -657,14 +669,45 @@ export function MessagesView({
     const { data: user, error: userError, mutate: reloadUser } = useSWR(`/api/v1/user/self`, fetcher)
     const isAutomatedPartner = Boolean(chat?.partner?.is_automated || chat?.partner?.is_bot);
     const shouldPollStatus = Boolean(chatUUID && chat?.chat_type === "interaction" && isAutomatedPartner);
+    // ci#1089: keep a long session cheap. The status poll used to run at the
+    // live cadence (800ms) for the whole lifetime of the chat, and every tick
+    // re-renders the whole transcript, so a coder session got slower the longer
+    // it stayed open. Back off once the interaction finished and stop entirely
+    // while the tab is hidden (SWR revalidates on focus).
+    const [isDocumentHidden, setIsDocumentHidden] = useState<boolean>(
+        () => typeof document !== "undefined" && document.hidden,
+    );
+    // Sending a message re-accelerates the poll for a bounded window: right
+    // after a send the interaction has not flipped to active yet, so a
+    // backed-off poll would miss the active window of a short turn.
+    const [postSendFastUntil, setPostSendFastUntil] = useState(0);
+    const onMessageSent = useCallback(() => {
+        setPostSendFastUntil(Date.now() + INTERACTION_STATUS_POST_SEND_FAST_WINDOW_MS);
+    }, []);
+    useEffect(() => {
+        if (typeof document === "undefined") {
+            return;
+        }
+        const onVisibilityChange = () => setIsDocumentHidden(document.hidden);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    }, []);
     const { data: interactionStatus, mutate: mutateInteractionStatus } = useSWR(
         shouldPollStatus ? `/api/v1/chats/${chatUUID}/status` : null,
         fetcher,
         {
-            refreshInterval: 800,
+            // Called by SWR on every tick, so a status (or visibility) change
+            // takes effect on the next interval instead of restarting the timer
+            // through a setState-in-effect loop.
+            refreshInterval: () =>
+                interactionStatusRefreshInterval(interactionStatus, {
+                    documentHidden: isDocumentHidden,
+                    postSendFastUntil,
+                }),
             revalidateOnFocus: true,
         }
     );
+
     const chatWithStatus = chat ? { ...chat, status: interactionStatus } : chat;
     const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
@@ -819,6 +862,7 @@ export function MessagesView({
                     chat={chatWithStatus}
                     mutateMessages={mutateMessages}
                     onRefresh={handlePullRefresh}
+                    onMessageSent={onMessageSent}
                 />
         </div>
     );
