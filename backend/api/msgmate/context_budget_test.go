@@ -887,6 +887,15 @@ func TestCompactAndReportContextCompactsAndRecords(t *testing.T) {
 	if report.UsedChars > 2000 {
 		t.Fatalf("the helper must bring the request under the budget, got %d chars", report.UsedChars)
 	}
+	// ci#910: this fixture's only tool round is the newest one, so the guard does
+	// not evict it - it truncates the result to a bounded head. The report must
+	// say so, otherwise the self-throttling notice claims nothing was cut.
+	if report.EvictedToolResults == 0 && report.TruncatedToolResults == 0 {
+		t.Fatalf("the helper must report the squeeze it made, got %#v", report)
+	}
+	if report.TruncatedToolResults == 0 {
+		t.Fatalf("the newest round must be truncated (not evicted), got %#v", report)
+	}
 	if report.ChatUUID != "chat-compact" || report.BudgetChars != 2000 {
 		t.Fatalf("the helper must report the chat and its budget, got %#v", report)
 	}

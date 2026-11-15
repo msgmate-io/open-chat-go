@@ -450,8 +450,10 @@ type ContextUsageReport struct {
 	TotalToolResultChars   int    `json:"total_tool_result_chars"`
 	LargestToolResultChars int    `json:"largest_tool_result_chars"`
 	LargestToolResult      string `json:"largest_tool_result,omitempty"`
-	// TruncatedToolResults is how many results this turn's per-tool budget cut,
-	// and the Evicted*/Dropped* counters what the budget guard had to squeeze.
+	// TruncatedToolResults is how many results were cut: this turn's per-tool
+	// output budget plus the newest-round truncations of the compaction pass
+	// (ci#910), which shorten a result without leaving an eviction marker. The
+	// Evicted*/Dropped* counters are what the guard had to evict or drop.
 	TruncatedToolResults int `json:"truncated_tool_results"`
 	EvictedToolResults   int `json:"evicted_tool_results"`
 	EvictedNarration     int `json:"evicted_narration"`
@@ -503,13 +505,17 @@ func (r ContextUsageReport) Metadata() map[string]interface{} {
 // guards did to it.
 func BuildContextUsageReport(messages []map[string]interface{}, budgetChars int, stats ContextCompactionStats, limits ToolResultLimits, truncatedToolResults int) ContextUsageReport {
 	used := messagesCharCount(messages)
+	// ci#910: the per-tool budget of this turn and the compaction guard's own
+	// newest-round truncations both cut the outgoing request, so the report (and
+	// the self-throttling notice rendered from it) counts them together instead
+	// of claiming nothing was cut.
 	report := ContextUsageReport{
 		BudgetChars:          budgetChars,
 		UsedChars:            used,
 		EstimatedTokens:      EstimateTokensForChars(used),
 		AssumedWindowTokens:  DefaultModelContextWindowTokens,
 		Messages:             len(messages),
-		TruncatedToolResults: truncatedToolResults,
+		TruncatedToolResults: truncatedToolResults + stats.TruncatedToolResults,
 		EvictedToolResults:   stats.EvictedToolResults,
 		EvictedNarration:     stats.EvictedNarration,
 		EvictedUserMessages:  stats.EvictedUserMessages,
