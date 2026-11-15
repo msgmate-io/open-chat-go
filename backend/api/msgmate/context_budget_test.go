@@ -816,3 +816,88 @@ func TestContextUsageLookupFallsBackToBudgets(t *testing.T) {
 		t.Fatal("an empty chat id must not report a measurement")
 	}
 }
+
+// TestContextUsagePercentMatchesTheReportedUsedPercent covers ci#1086: the
+// status-line accessor and the recorded report (which the notice renders) must
+// be derived from the same numbers, so they cannot diverge.
+func TestContextUsagePercentMatchesTheReportedUsedPercent(t *testing.T) {
+	resetContextUsageRegistry()
+	t.Cleanup(resetContextUsageRegistry)
+
+	if _, ok := ContextUsagePercent("chat-unknown"); ok {
+		t.Fatal("an unknown chat must not report a usage percentage")
+	}
+	if pct, ok := ContextUsagePercent(""); ok || pct != 0 {
+		t.Fatalf("an empty chat id must not report a usage percentage, got %v (measured=%t)", pct, ok)
+	}
+
+	messages := []map[string]interface{}{{"role": "user", "content": strings.Repeat("x", 500)}}
+	report := BuildContextUsageReport(messages, 1000, ContextCompactionStats{}, ResolveToolResultLimits(nil), 0)
+	RecordContextUsage("chat-known", report)
+
+	pct, measured := ContextUsagePercent("chat-known")
+	if !measured {
+		t.Fatal("a recorded chat must report a usage percentage")
+	}
+	// Same numbers as the report, ie the same numbers the self-throttling
+	// notice renders, just not truncated to an int.
+	if want := float64(report.UsedChars) * 100 / float64(report.BudgetChars); pct != want {
+		t.Fatalf("the accessor must derive from the recorded report: got %v%%, want %v%% (%#v)", pct, want, report)
+	}
+	if int(pct) != report.UsedPercent {
+		t.Fatalf("the accessor and the reported UsedPercent must not diverge: %v vs %d", pct, report.UsedPercent)
+	}
+}
+
+// TestCompactAndReportContextCompactsAndRecords covers ci#1086: the helper is
+// the whole guard (compaction plus usage record) in one call, so a client that
+// drives its own request loop gets exactly what the native tool loop gets.
+func TestCompactAndReportContextCompactsAndRecords(t *testing.T) {
+	resetContextUsageRegistry()
+	t.Cleanup(resetContextUsageRegistry)
+
+	messages := []map[string]interface{}{
+		{"role": "system", "content": "system"},
+		{
+			"role":    "assistant",
+			"content": "reading",
+			"tool_calls": []map[string]interface{}{{
+				"type":     "function",
+				"id":       "call-1",
+				"function": map[string]interface{}{"name": "coder_read", "arguments": `{"path":"a.go"}`},
+			}},
+		},
+		{"role": "tool", "tool_call_id": "call-1", "content": strings.Repeat("a", 5000)},
+		{"role": "user", "content": "continue"},
+	}
+	if _, ok := ContextUsagePercent("chat-compact"); ok {
+		t.Fatal("the chat must not have a usage percentage before the helper ran")
+	}
+
+	compacted, report := CompactAndReportContext(messages, "chat-compact", ContextBudget{BudgetChars: 2000}, 0)
+	if got, want := messagesCharCount(compacted), messagesCharCount(messages); got >= want {
+		t.Fatalf("the helper must compact the history, got %d chars (was %d)", got, want)
+	}
+	if report.EvictedToolResults == 0 {
+		t.Fatalf("the helper must report the evictions it made, got %#v", report)
+	}
+	if report.ChatUUID != "chat-compact" || report.BudgetChars != 2000 {
+		t.Fatalf("the helper must report the chat and its budget, got %#v", report)
+	}
+
+	// The record step is what makes the accessor work at all.
+	recorded, ok := ContextUsageFor("chat-compact")
+	if !ok {
+		t.Fatal("the helper must record the usage report of the outgoing request")
+	}
+	if recorded.UsedChars != messagesCharCount(compacted) {
+		t.Fatalf("the recorded report must measure the compacted request, got %#v", recorded)
+	}
+	pct, measured := ContextUsagePercent("chat-compact")
+	if !measured {
+		t.Fatal("a chat the helper ran for must report a usage percentage")
+	}
+	if want := float64(recorded.UsedChars) * 100 / float64(recorded.BudgetChars); pct != want {
+		t.Fatalf("the accessor must reflect the recorded report: got %v%%, want %v%%", pct, want)
+	}
+}
