@@ -140,6 +140,33 @@ The preflight is reporting only: it never sets an error, so a red auto-approve
 run still means a real regression. Its guard is
 `development/scripts/test_auto_approve_merge_protection_preflight.py`.
 
+The *decision* that preflight feeds - "is the hop unattended for the right
+reason, and is re-enabling the ruleset the correct next step?" - is a pure
+predicate in `development/scripts/promotion_hop_readiness.py`, so nobody has to
+re-derive it from raw API payloads (which is how the masked state passed for a
+healthy hop in the first place):
+
+```bash
+# live, read-only (needs a token with `rules:read`; never prints the credential)
+python3 development/scripts/promotion_hop_readiness.py --live --repo msgmate-io/open-chat-go
+# or from a saved observation document
+python3 development/scripts/promotion_hop_readiness.py observation.json --json
+```
+
+| Verdict | Exit | Meaning |
+| --- | --- | --- |
+| `ready_approver` | 0 | ruleset `active`, a write-access approver identity is usable: the hop can merge unattended |
+| `ready_bypass` | 0 | ruleset `active`, a bypass actor covers the automation identity: the hop can merge unattended |
+| `needs_approver` | 1 | ruleset `active`, no usable approver and no bypass actor: the hop is human-gated (the ci#1066 defect, not a regression) |
+| `masked` | 2 | the review requirement is not enforced; `safe_to_enable` says whether the approver path is already in place |
+| `unknown` | 3 | the observation is incomplete or the API could not be read - never reported as `masked` |
+
+The effective-rules answer (`rules/branches/main`) is authoritative for *whether*
+the requirement is enforced; the ruleset resource is authoritative for its
+enforcement level and bypass actors. The tool joins the two, so a ruleset that
+claims `active` while `rules/branches/main` answers `[]` is reported as `masked`.
+Its guard is `development/scripts/test_promotion_hop_readiness.py`.
+
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
 section for it); `PR Test Merge Requirement` reads that and nothing else.
