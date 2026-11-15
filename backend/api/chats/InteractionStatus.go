@@ -47,6 +47,54 @@ type InteractionStatusResponse struct {
 	// once the live turn completes, so the transcript can render them as
 	// pending instead of them looking lost.
 	QueuedReplies int `json:"queued_replies,omitempty"`
+	// ContextUsage is how much of the chat's context window its newest outgoing
+	// request consumed (ci#1086). It is the same indicator for cloud workflows
+	// and for local/TUI coding sessions, so a session that is close to
+	// compaction shows it before the turn dies. Absent when this process has no
+	// recorded usage for the chat.
+	ContextUsage *ContextUsageIndicator `json:"context_usage,omitempty"`
+}
+
+// ContextUsageIndicator is the context-window usage of one chat (ci#1086).
+type ContextUsageIndicator struct {
+	// UsedPercent is the share of the character budget the newest request uses;
+	// the UI renders it as the "x% of context used" indicator.
+	UsedPercent int `json:"used_percent"`
+	UsedChars   int `json:"used_chars"`
+	BudgetChars int `json:"budget_chars"`
+	// EstimatedTokens puts the usage in model terms.
+	EstimatedTokens int `json:"estimated_tokens,omitempty"`
+	// Compacted is true when the newest request had to evict or drop content to
+	// fit the budget, ie compaction actually ran for this chat. A session that
+	// never reports it is, by definition, not compacting (ci#1086).
+	Compacted bool `json:"compacted"`
+	// UpdatedAt is when the usage was recorded (RFC3339).
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// contextUsageForChat resolves the context-usage indicator of a chat through the
+// chatstate provider registry, so this package reports usage without importing
+// the AI handler (ci#1086).
+func contextUsageForChat(chatUUID string) *ContextUsageIndicator {
+	if strings.TrimSpace(chatUUID) == "" {
+		return nil
+	}
+	provider, ok := chatstate.LookupContextUsageProvider()
+	if !ok {
+		return nil
+	}
+	snapshot, ok := provider(chatUUID)
+	if !ok {
+		return nil
+	}
+	return &ContextUsageIndicator{
+		UsedPercent:     snapshot.UsedPercent,
+		UsedChars:       snapshot.UsedChars,
+		BudgetChars:     snapshot.BudgetChars,
+		EstimatedTokens: snapshot.EstimatedTokens,
+		Compacted:       snapshot.Compacted,
+		UpdatedAt:       snapshot.UpdatedAt,
+	}
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -239,6 +287,12 @@ func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue ch
 		Source:   "none",
 	}
 	response = populateAutoContinueStatus(DB, chat, response)
+
+	// ci#1086: report how much of the context window the chat's newest request
+	// consumed. Resolved here, before the early returns below, so the indicator
+	// is present for every interaction state (active, needs_confirmation,
+	// finished, idle) and for local/TUI sessions exactly like cloud workflows.
+	response.ContextUsage = contextUsageForChat(chat.UUID)
 
 	// ci#656: report how many replies are queued behind the live turn so the UI
 	// can render those persisted messages as pending rather than lost. Resolved
