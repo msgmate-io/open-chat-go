@@ -335,7 +335,7 @@ def main(argv=None):
     if failed:
         print(
             "::error::redis compose probe budget contract violated (ci#722); "
-            "mirror development/redis-readiness/ci-722-redis-probes.patch.json"
+            "mirror development/ci/redis-readiness/ci-722-redis-probes.patch.json"
         )
         return 1
     print("redis_compose_readiness contract=ok")
