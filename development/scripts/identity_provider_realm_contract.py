@@ -48,7 +48,7 @@ CHART_PATCH = Path("development") / "helm-identity-provider" / "ci-1061-identity
 RUNBOOK = Path("development") / "identity-provider" / "README.md"
 
 # The rendered IdP deployment (see development/identity-provider/render_keycloak_manifests.py).
-DEPLOYMENT_DIR = Path("development") / "identity-provider" / "deploy"
+DEPLOYMENT_DIR = Path("development") / "ci"
 SANDBOX_COMPOSE = Path("development") / "sandbox" / "identity_provider" / "docker-compose.yaml"
 
 # The realm both environments authenticate against. Keycloak issuers end in
@@ -246,7 +246,7 @@ def evaluate_deployment(
         if not manifest.strip():
             findings.fail(
                 f"{environment}: missing rendered identity provider deployment "
-                f"(development/identity-provider/deploy/keycloak-msgmate-io-{environment}.yaml) - "
+                f"(development/ci/keycloak-msgmate-io-{environment}.yaml) - "
                 "run development/identity-provider/render_keycloak_manifests.py --write"
             )
             continue

@@ -45,7 +45,7 @@ KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.0.7"
 # application release, and the application stays a pure OIDC client.
 NAMESPACE = "identity-provider"
 
-ARTIFACT_DIR = Path("development") / "identity-provider" / "deploy"
+ARTIFACT_DIR = Path("development") / "ci"
 
 
 def artifact_path(environment: str) -> Path:

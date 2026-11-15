@@ -47,7 +47,7 @@ browser ──POST /auth/login──▶ msgmate.io (open-chat backend)          
 | `realm/msgmate-io-main-realm.json` | Keycloak realm `main` - the confidential `open-chat` client, PKCE S256, authorization-code flow only, no self-registration, no seeded users. |
 | `development/helm-identity-provider/ci-1061-identity-provider.patch` | The chart change (`identityProvider:` block, `OCI_IDENTITY_PROVIDER_*` env, `secretKeyRef` wiring) - see that directory's README. |
 | `development/scripts/identity_provider_realm_contract.py` | Pins the realm/chart agreement and the no-secrets rule. |
-| `deploy/keycloak-msgmate-io-production.yaml` / `deploy/keycloak-msgmate-io-staging.yaml` | The rendered IdP deployment: Namespace, Deployment, Service, Ingress and NetworkPolicy for `id.msgmate.io` / `id.stage.msgmate.io`. Generated - never edit by hand. |
+| `development/ci/keycloak-msgmate-io-production.yaml` / `development/ci/keycloak-msgmate-io-staging.yaml` | The rendered IdP deployment: Namespace, Deployment, Service, Ingress and NetworkPolicy for `id.msgmate.io` / `id.stage.msgmate.io`. Generated - never edit by hand. |
 | `render_keycloak_manifests.py` | Renders the two manifests above from the same `ENVIRONMENTS` table the contract checks, so the deployed issuer cannot drift from the chart's issuer. |
 
 `enabled` is `false` in the chart default (`backend/values.yaml`), so a default
@@ -79,7 +79,7 @@ once per environment and rarely change.
    #   Secret keycloak-tls   : serving certificate for the id. host, OR let
    #                           cert-manager issue it for the Ingress
    #   ConfigMap keycloak-realm : main.json <- realm/msgmate-io-main-realm.json
-   kubectl apply -f development/identity-provider/deploy/keycloak-msgmate-io-staging.yaml
+   kubectl apply -f development/ci/keycloak-msgmate-io-staging.yaml
    ```
 
    The pod starts with `--import-realm`, so the ConfigMap mount is imported on
