@@ -39,10 +39,15 @@ sys.path.insert(0, HERE)
 import redis_readiness_contract as contract  # noqa: E402
 
 PATCH_ARTIFACT = (
-    pathlib.Path(HERE).resolve().parents[0]
-    / "redis-readiness"
+    pathlib.Path(HERE).resolve().parents[1]
+    / "development" / "ci" / "redis-readiness"
     / "ci-722-redis-probes.patch.json"
 )
+
+
+def setUpModule():
+    if not PATCH_ARTIFACT.is_file():
+        raise unittest.SkipTest(f"private open-chat-go-ci checkout is not materialized: {PATCH_ARTIFACT}")
 
 
 def deployment(container_overrides=None, container_name=contract.CONTAINER_NAME):

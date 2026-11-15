@@ -10,7 +10,7 @@ never applies it. This script is the repo-side half of that contract:
   * it re-derives the same findings from a redis Deployment manifest
     (`kubectl get deploy ... -o json`, or a file/JSON on stdin),
   * it emits the exact remediation patch the gate proposed (ci#722), so the
-    patch in `development/redis-readiness/` cannot drift from the checks,
+    patch in `development/ci/redis-readiness/` cannot drift from the checks,
   * and it exits non-zero while any contract check fails.
 
 Findings are reported in a fixed order - probe presence, then per probe
@@ -285,7 +285,7 @@ def main(argv=None):
     if findings:
         print(
             "::error::redis probe budget contract violated (ci#722); apply "
-            "development/redis-readiness/ci-722-redis-probes.patch.json"
+            "development/ci/redis-readiness/ci-722-redis-probes.patch.json"
         )
         return 1
     print("redis_readiness contract=ok")

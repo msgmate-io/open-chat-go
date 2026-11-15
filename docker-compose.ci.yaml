@@ -54,7 +54,7 @@ services:
     # keep a healthy redis in the pool under load, and the CPU/memory budget
     # below gives redis a scheduling guarantee behind the agent workloads -
     # the same contract the live Deployment is patched with
-    # (`development/redis-readiness/ci-722-redis-probes.patch.json`).
+    # (`development/ci/redis-readiness/ci-722-redis-probes.patch.json`).
     #
     # The budget uses the non-swarm keys (`cpus`/`mem_limit`) that
     # `docker compose up` actually honours and that the sandbox overlay

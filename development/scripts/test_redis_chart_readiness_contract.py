@@ -12,7 +12,7 @@ kubelet probe defaults and no CPU request.
 These tests pin:
 
   * the chart template *as it is today* (fixture
-    ``development/redis-readiness/chart-redis-template.before.yaml``) renders
+    ``development/ci/redis-readiness/chart-redis-template.before.yaml``) renders
     exactly the reported findings - i.e. the chart is the root cause of the
     recurring re-failure, not just the live object;
   * the patched template (fixture ``...after.yaml``, the file the checked-in
@@ -44,12 +44,17 @@ sys.path.insert(0, HERE)
 import redis_chart_readiness_contract as chart  # noqa: E402
 import redis_readiness_contract as contract  # noqa: E402
 
-FIXTURES = pathlib.Path(HERE).resolve().parents[0] / "redis-readiness"
+FIXTURES = pathlib.Path(HERE).resolve().parents[1] / "development" / "ci" / "redis-readiness"
 BEFORE = FIXTURES / "chart-redis-template.before.yaml"
 AFTER = FIXTURES / "chart-redis-template.after.yaml"
 CHART_PATCH = FIXTURES / "ci-722-chart.patch"
 
 STARTUP_MISSING = contract.PROBE_CONTRACT[2][1]
+
+
+def setUpModule():
+    if not FIXTURES.is_dir():
+        raise unittest.SkipTest(f"private open-chat-go-ci checkout is not materialized: {FIXTURES}")
 
 
 def run_main(argv):
