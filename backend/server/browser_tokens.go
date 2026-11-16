@@ -68,6 +68,12 @@ var coderTUITokenRoutes = []browserTokenRoute{
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/status", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/streaming", Scope: ""},
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/signals/{signal}", Scope: ""},
+	// ci#1101: the TUI reports the liveness of the local ssh link it runs
+	// over, so an interaction stops when that link ends instead of running on
+	// headless. All three handlers re-check chat participation.
+	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/link", Scope: ""},
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/link/heartbeat", Scope: ""},
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/link/end", Scope: ""},
 	// The forwarded TUI surfaces the coder's confirmable actions inline, so it
 	// can approve or reject a parked tool call exactly like the web widget.
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", Scope: ""},
