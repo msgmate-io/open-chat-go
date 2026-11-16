@@ -5,7 +5,9 @@ import (
 	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/logging"
 	"backend/server/util"
+	"backend/suspend"
 	"backend/workqueue"
 	"context"
 	"encoding/json"
@@ -24,15 +26,19 @@ type ConfirmableActionExecuteRequest struct {
 }
 
 type ConfirmableActionExecuteResponse struct {
-	Success              bool                   `json:"success"`
-	Status               string                 `json:"status"`
-	ActionID             string                 `json:"action_id"`
-	TargetTool           string                 `json:"target_tool_name"`
-	ToolResult           string                 `json:"tool_result,omitempty"`
-	Error                string                 `json:"error,omitempty"`
-	ContinueAfterExecute bool                   `json:"continue_after_execute"`
-	ContinuationQueued   bool                   `json:"continuation_queued,omitempty"`
-	UpdatedAction        map[string]interface{} `json:"updated_action,omitempty"`
+	Success              bool   `json:"success"`
+	Status               string `json:"status"`
+	ActionID             string `json:"action_id"`
+	TargetTool           string `json:"target_tool_name"`
+	ToolResult           string `json:"tool_result,omitempty"`
+	Error                string `json:"error,omitempty"`
+	ContinueAfterExecute bool   `json:"continue_after_execute"`
+	// Resumed reports that the decision was delivered back into the parked
+	// generation (ci#1116): the tool result landed in the same turn instead of a
+	// new bot reply being queued.
+	Resumed            bool                   `json:"resumed"`
+	ContinuationQueued bool                   `json:"continuation_queued,omitempty"`
+	UpdatedAction      map[string]interface{} `json:"updated_action,omitempty"`
 }
 
 // ConfirmableActionRejectRequest is the body of a confirm-actions reject call.
@@ -358,8 +364,24 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 	// Resume the interaction so the model observes the rejection (recorded as the
 	// tool-call result) and can respond with a clear acknowledgement and
 	// alternative, rather than the chat being left with no reply.
+	// ci#1116: deliver the rejection back into the parked generation first, so the
+	// model observes it as the tool-call result inside the SAME turn. Queueing a
+	// fresh bot reply is only the fallback for an expired/unknown suspension.
+	resumed := false
+	if continueAfterReject {
+		resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
+			Rejected: true,
+			Reason:   reason,
+			ActionID: actionID,
+		})
+		resumed = resumedTurn && resumeErr == nil
+		if resumeErr != nil {
+			logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+		}
+	}
+
 	continuationQueued := false
-	if continueAfterReject && rejectionMessageUUID != "" {
+	if !resumed && continueAfterReject && rejectionMessageUUID != "" {
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
 		if clientErr == nil && inspectorErr == nil {
@@ -379,6 +401,7 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 		"status":                "rejected",
 		"action_id":             actionID,
 		"continue_after_reject": continueAfterReject,
+		"resumed":               resumed,
 		"continuation_queued":   continuationQueued,
 	})
 }
@@ -768,15 +791,32 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	}
 
 	if continueAfterExecute && continuationMessageUUID != "" {
-		queueClient, clientErr := util.GetAsynqClient(r)
-		queueInspector, inspectorErr := util.GetAsynqInspector(r)
-		if clientErr == nil && inspectorErr == nil {
-			if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
-				ChatUUID:    chatUUID,
-				MessageUUID: continuationMessageUUID,
-				BotUserID:   botUserID,
-			}); enqueueErr == nil {
-				response.ContinuationQueued = true
+		// ci#1116: deliver the executed tool result back into the parked
+		// generation so the tool result lands in the SAME turn. Only when the
+		// suspension is gone or expired (Take misses) do we fall back to queueing
+		// a fresh bot reply, which is reported as resumed:false.
+		resumed, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
+			Result:   toolResult,
+			Approved: true,
+			ActionID: actionID,
+		})
+		if resumed {
+			response.Resumed = resumeErr == nil
+			if resumeErr != nil {
+				logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+			}
+		}
+		if !response.Resumed {
+			queueClient, clientErr := util.GetAsynqClient(r)
+			queueInspector, inspectorErr := util.GetAsynqInspector(r)
+			if clientErr == nil && inspectorErr == nil {
+				if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+					ChatUUID:    chatUUID,
+					MessageUUID: continuationMessageUUID,
+					BotUserID:   botUserID,
+				}); enqueueErr == nil {
+					response.ContinuationQueued = true
+				}
 			}
 		}
 	}
