@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"backend/api/chats"
 	"backend/api/msgmate"
 	userapi "backend/api/user"
 	"backend/database"
@@ -1007,6 +1008,12 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	} else {
 		logging.Infof("Expired session sweeping disabled (%s=off)", database.SessionSweepIntervalEnv)
 	}
+
+	// ci#1101: a coder TUI that runs over a local ssh link reports the link's
+	// liveness; when the link ends (cleanly or by lease expiry) the interaction
+	// it drove is stopped instead of running on headless.
+	logging.Infof("Sweeping local-link leases every %s (grace %s)", chats.DefaultLocalLinkSweepInterval, chats.DefaultLocalLinkGrace)
+	defer chats.StartLocalLinkLeaseSweeper(DB, queueInspector, chats.DefaultLocalLinkSweepInterval)()
 
 	// Message history is the bulk of the SQLite volume and nothing ever removed
 	// it. Prune it off the request path on an interval, keeping a window plus a
