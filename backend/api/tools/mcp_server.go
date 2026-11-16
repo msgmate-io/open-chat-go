@@ -361,6 +361,30 @@ func mcpArgInt(args map[string]interface{}, key string, fallback, max int) int {
 	return value
 }
 
+// mcpArgBool reads a boolean tool argument, accepting the string spellings a
+// model may send. Absent or unparsable values are false.
+func mcpArgBool(args map[string]interface{}, key string) bool {
+	if args == nil {
+		return false
+	}
+	switch typed := args[key].(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "y", "on":
+			return true
+		}
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	case int64:
+		return typed != 0
+	}
+	return false
+}
+
 // scopedInteractionsQuery applies the caller's visibility scope: admins see
 // every chat, regular users only chats they participate in.
 func scopedInteractionsQuery(db *gorm.DB, user *database.User) *gorm.DB {
