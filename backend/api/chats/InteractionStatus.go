@@ -53,6 +53,12 @@ type InteractionStatusResponse struct {
 	// compaction shows it before the turn dies. Absent when this process has no
 	// recorded usage for the chat.
 	ContextUsage *ContextUsageIndicator `json:"context_usage,omitempty"`
+	// Todos is the todo list the agent maintains for this interaction run
+	// (ci#1100). It rides the existing status poll so the chat details "Todos"
+	// tab needs no extra route, and it is per run: it is read from the newest
+	// `todo_write` tool call in this chat's own transcript, so nothing new is
+	// persisted.
+	Todos []InteractionStatusTodo `json:"todos,omitempty"`
 }
 
 // ContextUsageIndicator is the context-window usage of one chat (ci#1086).
@@ -94,6 +100,145 @@ func contextUsageForChat(chatUUID string) *ContextUsageIndicator {
 		EstimatedTokens: snapshot.EstimatedTokens,
 		Compacted:       snapshot.Compacted,
 		UpdatedAt:       snapshot.UpdatedAt,
+	}
+}
+
+// InteractionStatusTodo is one entry of the agent-maintained todo list.
+type InteractionStatusTodo struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
+}
+
+// todoScanLimit is how many recent messages are scanned for the agent's todo
+// list when the transcript tail read for the confirmation check carries no
+// `todo_write` call (ci#1100).
+const todoScanLimit = 20
+
+// latestTodoState resolves the newest todo list the agent wrote in this chat.
+// The todo state is per interaction run and is never stored separately: it is
+// derived from the latest `todo_write` tool call in the chat's transcript,
+// reusing the tail read the status resolver already performed (ci#1100).
+func latestTodoState(DB *gorm.DB, chatID uint, tail []database.Message) []InteractionStatusTodo {
+	if todos, ok := todosFromMessages(tail); ok {
+		return todos
+	}
+	messages, err := recentMessagesForChat(DB, chatID, todoScanLimit)
+	if err != nil {
+		return nil
+	}
+	todos, _ := todosFromMessages(messages)
+	return todos
+}
+
+// todosFromMessages returns the todo list carried by the newest `todo_write`
+// call (newest message first, newest call last within a message). The boolean
+// reports whether such a call was found at all, so an agent that wrote an empty
+// list is distinguishable from a chat that never touched the todo tool.
+func todosFromMessages(messages []database.Message) ([]InteractionStatusTodo, bool) {
+	for _, message := range messages {
+		if message.ToolCalls == nil {
+			continue
+		}
+		calls := *message.ToolCalls
+		for i := len(calls) - 1; i >= 0; i-- {
+			if todos, ok := todosFromToolCall(calls[i]); ok {
+				return todos, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func todosFromToolCall(raw json.RawMessage) ([]InteractionStatusTodo, bool) {
+	var call map[string]interface{}
+	if json.Unmarshal(raw, &call) != nil {
+		return nil, false
+	}
+	if !isTodoWriteToolName(toolCallName(call)) {
+		return nil, false
+	}
+	args := toolCallArguments(call)
+	if args == nil {
+		return nil, false
+	}
+	rawTodos, ok := args["todos"].([]interface{})
+	if !ok {
+		return nil, false
+	}
+	todos := make([]InteractionStatusTodo, 0, len(rawTodos))
+	for _, item := range rawTodos {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(actionTaskFirstNonEmpty(
+			actionTaskStringField(entry, "text"),
+			actionTaskStringField(entry, "content"),
+			actionTaskStringField(entry, "title"),
+		))
+		if text == "" {
+			continue
+		}
+		todos = append(todos, InteractionStatusTodo{
+			Text:   text,
+			Status: normalizeTodoStatus(actionTaskStringField(entry, "status")),
+		})
+	}
+	return todos, true
+}
+
+// toolCallName resolves the tool name of a persisted call, accepting the bare
+// OpenAI tool shape that nests it under `function`.
+func toolCallName(call map[string]interface{}) string {
+	name := actionTaskFirstNonEmpty(actionTaskStringField(call, "name"), actionTaskStringField(call, "tool_name"))
+	if name != "" {
+		return name
+	}
+	if fn, ok := call["function"].(map[string]interface{}); ok {
+		return actionTaskFirstNonEmpty(actionTaskStringField(fn, "name"), actionTaskStringField(fn, "tool_name"))
+	}
+	return ""
+}
+
+// toolCallArguments decodes a persisted call's arguments, which arrive either as
+// an already-decoded object or as the JSON string the bridge marshals.
+func toolCallArguments(record map[string]interface{}) map[string]interface{} {
+	switch args := record["arguments"].(type) {
+	case map[string]interface{}:
+		return args
+	case string:
+		trimmed := strings.TrimSpace(args)
+		if trimmed == "" {
+			return nil
+		}
+		var decoded map[string]interface{}
+		if json.Unmarshal([]byte(trimmed), &decoded) == nil {
+			return decoded
+		}
+		return nil
+	}
+	if fn, ok := record["function"].(map[string]interface{}); ok {
+		return toolCallArguments(fn)
+	}
+	return nil
+}
+
+func isTodoWriteToolName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.TrimPrefix(normalized, "coder_")
+	return normalized == "todo_write"
+}
+
+func normalizeTodoStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "complete", "done":
+		return "completed"
+	case "in_progress", "in-progress", "active", "running":
+		return "in_progress"
+	case "cancelled", "canceled":
+		return "cancelled"
+	default:
+		return "pending"
 	}
 }
 
@@ -303,6 +448,11 @@ func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue ch
 	// resolver asks of it - "is the newest message a pending user action?" and
 	// "what is the newest message?" - instead of two separate round-trips.
 	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
+
+	// ci#1100: the agent-maintained todo list of this interaction run rides the
+	// same status read, so the chat details "Todos" tab is a pure render of the
+	// existing poll. Best effort: a missing list just renders the empty state.
+	response.Todos = latestTodoState(DB, chat.ID, recent)
 
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
