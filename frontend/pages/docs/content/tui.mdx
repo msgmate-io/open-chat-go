@@ -111,6 +111,34 @@ auto-continuation (`auto_continue`, `auto_continue_turns` / `auto_continue_max`,
   `delivery_mode: "interrupt"` stops the live turn and starts the new one
   immediately, which is what a "send now" affordance uses.
 
+### Live fine grained stream
+
+The 2s `/status` poll and the ~500ms snapshot poll are backstops. The live path
+is the authenticated interaction websocket
+(`/api/v1/interaction/messages/ws`) opened with `?stream=fine`. Without that
+query parameter the socket only carries the coarse legacy frames, so the TUI
+would show a turn as "running" while the assistant silently calls tools.
+
+With `stream=fine` the socket carries small frames that each name one thing that
+changed, and the TUI applies one frame to one row - it never re-renders the
+transcript array:
+
+- `tool_call_started` / `tool_call_updated` / `tool_call_ended` - a tool call row
+  keyed by `tool_call_id`, appended once and then updated in place, so the user
+  watches `coder_read`, `coder_bash`, ... start, change status and finish as it
+  happens.
+- `status_changed` - the footer state (`state`, `is_active`, stall and queue
+  counters) without polling `/status`.
+- `reasoning_delta` - appends to the reasoning row; `partial_snapshot`
+  reconciles the assistant text and the reasoning with the accumulated turn text.
+- `new_partial_message` and the legacy message frames stay accepted, so a turn
+  replayed from a legacy socket renders identically.
+
+Frames for another `chat_uuid` and frame types the client does not know yet are
+dropped rather than treated as errors, so a server that grows new events does not
+break an older client mid-turn. A cancelled turn (Esc) closes the socket without
+surfacing a stream error.
+
 ## Configuration
 
 Servers and tokens are stored in a device-scoped JSON file under the platform's
