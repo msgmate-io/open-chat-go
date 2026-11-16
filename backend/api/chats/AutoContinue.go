@@ -591,6 +591,16 @@ func maybeAutoContinueInteraction(ctx context.Context, db *gorm.DB, client *asyn
 	}
 	meta, _ := decodeMessageMetadata(message.MetaData)
 	state := loadAutoContinueState(db, chat.ID)
+	// ci#1101: an interaction driven by a coder TUI over a local ssh link must
+	// not keep driving itself once that link is gone. The lease sweeper stops
+	// expired leases, but a turn can complete between two sweeps, so re-check
+	// here as well: an armed-and-expired lease latches the loop off instead of
+	// scheduling another headless turn.
+	if lease, armed, expired := LocalLinkLeaseStatus(chat.UUID, time.Now()); armed && expired {
+		recordAutoContinueStop(db, chat, state, localLinkStopReason)
+		logging.Infof("ci#1101: not continuing interaction %s: its local link lease expired at %s", chat.UUID, lease.expiresAt().UTC().Format(time.RFC3339))
+		return false
+	}
 	// Per-interaction token budget (ci#910 follow-up): stop the self-driving
 	// loop once the interaction has spent its budget, so a runaway interaction
 	// cannot keep re-billing its growing context.
