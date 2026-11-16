@@ -501,6 +501,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
+	// Linked external identities + password management (ci#1111): one account,
+	// one optional password, N linked OIDC/Google identities.
+	v1PrivateApis.HandleFunc("POST /user/password", userHandler.SetPassword)
+	v1PrivateApis.HandleFunc("GET /user/identities", userHandler.ListIdentities)
+	v1PrivateApis.HandleFunc("DELETE /user/identities/{identity_uuid}", userHandler.UnlinkIdentity)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
