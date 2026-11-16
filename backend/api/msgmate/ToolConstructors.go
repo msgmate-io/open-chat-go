@@ -27,6 +27,10 @@ func init() {
 	// core's per-chat compaction store, whose bounded output is the persisted
 	// context_summary the reader re-injects on later turns.
 	tooldefs.CoderCompactRunnerProvider = coderCompactToolRunner
+	// ci#1103 (hive-mind integration): back the `coder_recall` tool with the
+	// core's DB-backed recall of this agent's own past interactions with the
+	// user who triggered the running turn.
+	tooldefs.CoderRecallRunnerProvider = coderRecallToolRunner
 }
 
 func NewWeatherTool() Tool {
@@ -95,6 +99,13 @@ func NewCoderScheduleTool() Tool {
 // provider context window.
 func NewCoderCompactTool() Tool {
 	return NewToolFromDefinition(tooldefs.CoderCompactToolDef)
+}
+
+// NewCoderRecallTool is the ci#1103 (hive-mind integration) recall tool: it lets
+// an agent read or search its own past interactions with the user who triggered
+// the current turn, so a fresh or compacted session can pick the thread back up.
+func NewCoderRecallTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderRecallToolDef)
 }
 
 // NewGitHubPREditTool is the ci#1035 typed pull-request edit tool: it PATCHes an

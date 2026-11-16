@@ -72,6 +72,13 @@ func init() {
 	// re-injected on later turns so a long interaction survives the context
 	// window. Integration tool keeps ownership under the same free-name rule.
 	registerToolConstructorIfFree("coder_compact", nil, NewCoderCompactTool)
+	// ci#1103 (hive-mind integration): `coder_recall` lets an agent read or
+	// search its own past interactions with the user who triggered the running
+	// turn (scoped to that agent/user pair by the runner, never by the model),
+	// so a fresh chat or a compacted session can continue earlier work. Same
+	// free-name rule: an integration shipping its own `coder_recall` keeps
+	// ownership.
+	registerToolConstructorIfFree("coder_recall", nil, NewCoderRecallTool)
 	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
 	// task; the turn reader promotes its call into `task_completed` metadata.
 	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
