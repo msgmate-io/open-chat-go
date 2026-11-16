@@ -153,7 +153,10 @@ func selfHistoryQuery(db *gorm.DB, self *database.User, acting *database.User, a
 		labelSubquery := db.Table("automation_chat_labels").
 			Select("chat_uuid").
 			Where("label LIKE ?", like)
-		query = query.Where("id IN (?) OR uuid IN (?) OR CAST(tags AS TEXT) LIKE ?", titleSubquery, labelSubquery, like)
+		// Parenthesised on purpose: GORM ANDs raw string conditions without
+		// adding parens, so a bare "a OR b" here would escape the
+		// authorisation predicate above.
+		query = query.Where("(id IN (?) OR uuid IN (?) OR CAST(tags AS TEXT) LIKE ?)", titleSubquery, labelSubquery, like)
 	}
 	return query
 }
