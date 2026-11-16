@@ -455,3 +455,123 @@ func VerifyUserPassword(user *User, password string) error {
 	}
 	return bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 }
+
+// IdentityIssuerBootstrap is the issuer of the link the *core* bootstrap path
+// writes. It is deliberately not a real OIDC issuer: it records which stable
+// identity the singleton admin was provisioned for, so the operator-visible
+// state shows that the password account and the Google account are the same
+// person instead of two unrelated rows (ci#1111 cause (c)).
+const IdentityIssuerBootstrap = "open-chat-bootstrap"
+
+// EnsureBootstrapAdminIdentity pins the bootstrap/singleton admin account to a
+// stable identity: the configured admin email becomes the account email *and* is
+// recorded as a bootstrap link. Because the email is now the same value the
+// identity provider asserts, a later OIDC/Google login for that email resolves
+// through findAccountForIdentity and is bound to this row instead of
+// provisioning a second admin (`admin` next to `open-chat-go-admin`).
+//
+// The function is idempotent, so it runs on every start: a second call only
+// refreshes the link bookkeeping. It never re-points an existing
+// `(issuer, subject)` binding to another account and never touches the other
+// rows; an occupied binding is reported as ErrIdentityAlreadyLinked so the
+// caller can flag the duplicate instead of silently merging accounts, bots or
+// chats.
+//
+// `linked` reports whether a link row was written by this call.
+func EnsureBootstrapAdminIdentity(DB *gorm.DB, userID uint, email string) (linked bool, err error) {
+	if DB == nil {
+		return false, errors.New("db is required")
+	}
+	if userID == 0 {
+		return false, errors.New("user id is required")
+	}
+
+	var admin User
+	if err := DB.First(&admin, "id = ?", userID).Error; err != nil {
+		return false, err
+	}
+
+	normalized := NormalizeEmail(email)
+
+	// Duplicate detection, not merging: if another row already owns the
+	// configured admin email the deployment is already forked (the
+	// `open-chat-go-admin` + `admin` pair from ci#1111). Claiming the email here
+	// would have to steal it from the other row and silently point the identity
+	// at one of them, which is exactly the destructive "merge" we refuse to do:
+	// bots, chats and API keys hang off both rows. Instead the collision is
+	// reported before anything is written and the bootstrap leaves the state
+	// untouched; the operator resolves it with the identity repair path.
+	if normalized != "" {
+		var conflicting []User
+		if err := DB.Where("lower(email) = ? AND id <> ?", normalized, admin.ID).Limit(2).Find(&conflicting).Error; err != nil {
+			return false, err
+		}
+		if len(conflicting) > 0 {
+			uuids := make([]string, 0, len(conflicting))
+			for i := range conflicting {
+				uuids = append(uuids, fmt.Sprintf("%s/%s", conflicting[i].Username, conflicting[i].UUID))
+			}
+			return false, fmt.Errorf("%w (bootstrap admin email %q is already used by %s)",
+				ErrIdentityLinkRequired, normalized, strings.Join(uuids, ", "))
+		}
+	}
+
+	if normalized != "" && NormalizeEmail(admin.Email) != normalized {
+		if err := DB.Model(&User{}).Where("id = ?", admin.ID).Update("email", normalized).Error; err != nil {
+			return false, fmt.Errorf("failed to pin bootstrap admin email: %w", err)
+		}
+		admin.Email = normalized
+	}
+
+	issuer, subject := NormalizeIdentityKey(IdentityIssuerBootstrap, NormalizeEmail(admin.Email))
+	if subject == "" {
+		// Without any email there is no stable key to pin; the account still
+		// works, it just cannot be pre-linked. Never invent a subject: a fresh
+		// random one would re-fork the identity on the next deploy.
+		return false, nil
+	}
+
+	existingUser, existingLink, err := FindUserByIdentity(DB, issuer, subject)
+	if err != nil {
+		return false, err
+	}
+	if existingUser != nil {
+		if existingUser.ID != admin.ID {
+			return false, fmt.Errorf("%w (bootstrap identity belongs to user %s)", ErrIdentityAlreadyLinked, existingUser.UUID)
+		}
+		if existingLink != nil && (existingLink.Email != NormalizeEmail(admin.Email) || existingLink.Source != IdentityLinkSourceBootstrap) {
+			if err := DB.Model(&UserIdentity{}).Where("id = ?", existingLink.ID).Updates(map[string]interface{}{
+				"email":  NormalizeEmail(admin.Email),
+				"name":   admin.Name,
+				"source": IdentityLinkSourceBootstrap,
+			}).Error; err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+
+	if _, err := LinkUserIdentity(DB, admin.ID, issuer, subject, NormalizeEmail(admin.Email), admin.Name, IdentityLinkSourceBootstrap); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// FindDuplicateAdminAccounts reports *all* admin rows when more than one exists.
+// A deployment that already forked the pair (`open-chat-go-admin` + `admin`) must
+// keep both rows: bots, chats and API keys hang off them, so merging is a
+// destructive operator decision, not something a migration may do. The bootstrap
+// path calls this purely to flag the duplicate; it deletes and re-points nothing.
+func FindDuplicateAdminAccounts(DB *gorm.DB) ([]User, error) {
+	if DB == nil {
+		return nil, errors.New("db is required")
+	}
+	var admins []User
+	if err := DB.Where("is_admin = ?", true).Order("id asc").Find(&admins).Error; err != nil {
+		return nil, err
+	}
+	if len(admins) < 2 {
+		return nil, nil
+	}
+	return admins, nil
+}
