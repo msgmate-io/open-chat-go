@@ -47,11 +47,11 @@ tickets piled up as "implemented" but never "live" (ci#1055). The development
 lead may therefore merge the promotion PR on its own once **all required checks
 on it are green** - and must then verify that the deployment actually serves the
 promoted code. The two decisions are implemented once, as unit-tested
-predicates, in `development/scripts/promotion_hop.py`:
+predicates, in `development/ci/scripts/ci-flows/promotion_hop.py`:
 
 ```bash
-development/scripts/promotion_hop.sh merge                 # may the hop be merged now?
-development/scripts/promotion_hop.sh deploy <VERSION>      # is that version live?
+development/ci/scripts/ci-flows/promotion_hop.sh merge                 # may the hop be merged now?
+development/ci/scripts/ci-flows/promotion_hop.sh deploy <VERSION>      # is that version live?
 ```
 
 `merge` exits `0` merge, `1` wait (green not reached), `2` refuse (the PR is not
@@ -138,19 +138,19 @@ reports the live protection state in the job summary:
 
 The preflight is reporting only: it never sets an error, so a red auto-approve
 run still means a real regression. Its guard is
-`development/scripts/test_auto_approve_merge_protection_preflight.py`.
+`development/ci/scripts/ci-flows/test_auto_approve_merge_protection_preflight.py`.
 
 The *decision* that preflight feeds - "is the hop unattended for the right
 reason, and is re-enabling the ruleset the correct next step?" - is a pure
-predicate in `development/scripts/promotion_hop_readiness.py`, so nobody has to
+predicate in `development/ci/scripts/ci-flows/promotion_hop_readiness.py`, so nobody has to
 re-derive it from raw API payloads (which is how the masked state passed for a
 healthy hop in the first place):
 
 ```bash
 # live, read-only (needs a token with `rules:read`; never prints the credential)
-python3 development/scripts/promotion_hop_readiness.py --live --repo msgmate-io/open-chat-go
+python3 development/ci/scripts/ci-flows/promotion_hop_readiness.py --live --repo msgmate-io/open-chat-go
 # or from a saved observation document
-python3 development/scripts/promotion_hop_readiness.py observation.json --json
+python3 development/ci/scripts/ci-flows/promotion_hop_readiness.py observation.json --json
 ```
 
 | Verdict | Exit | Meaning |
@@ -165,7 +165,7 @@ The effective-rules answer (`rules/branches/main`) is authoritative for *whether
 the requirement is enforced; the ruleset resource is authoritative for its
 enforcement level and bypass actors. The tool joins the two, so a ruleset that
 claims `active` while `rules/branches/main` answers `[]` is reported as `masked`.
-Its guard is `development/scripts/test_promotion_hop_readiness.py`.
+Its guard is `development/ci/scripts/ci-flows/test_promotion_hop_readiness.py`.
 
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
 its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`

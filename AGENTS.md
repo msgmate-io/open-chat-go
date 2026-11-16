@@ -87,7 +87,7 @@ the final summary is a failed run, not a partial success.
 
 ### The tracker line is a line, not a sentence
 
-`PR Test Merge Requirement` reads the body with `development/scripts/linked_ci_issues.sh`
+`PR Test Merge Requirement` reads the body with `development/ci/scripts/ci-flows/linked_ci_issues.sh`
 and only accepts a line whose entire content is that reference - optionally
 wrapped in markdown (a `- ` bullet, `**bold**`, a `| table cell |`) and
 optionally ending in punctuation. A prose mention such as
@@ -217,8 +217,8 @@ is needed for the loop to close. Decide with the tested predicate instead of
 reading API payloads by eye:
 
 ```bash
-development/scripts/promotion_hop.sh merge              # 0 merge, 1 wait, 2 refuse
-development/scripts/promotion_hop.sh deploy <VERSION>   # 0 healthy, 1 broken
+development/ci/scripts/ci-flows/promotion_hop.sh merge              # 0 merge, 1 wait, 2 refuse
+development/ci/scripts/ci-flows/promotion_hop.sh deploy <VERSION>   # 0 healthy, 1 broken
 ```
 
 `merge` refuses anything that is not `dev` -> `main`, and it collapses duplicate
@@ -294,4 +294,4 @@ feature or consolidation PR:
   is nothing to say) so the head has a single fresh run, and let that run's own
   `PR Test Merge Requirement` decide;
 - the authoritative verdict for a commit is its **newest** run per check name,
-  the same collapse `development/scripts/promotion_hop.sh merge` performs.
+  the same collapse `development/ci/scripts/ci-flows/promotion_hop.sh merge` performs.

@@ -163,7 +163,7 @@ services:
     # explicit budget tolerates >= 60s of sustained failure (5s x 12) with a
     # timeout above the 1s kubelet/compose default, and the CPU limit/reservation
     # mirror the ci#722 deployment patch
-    # (`development/redis-readiness/ci-722-redis-probes.patch.json`).
+    # (`development/ci/redis-readiness/ci-722-redis-probes.patch.json`).
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
