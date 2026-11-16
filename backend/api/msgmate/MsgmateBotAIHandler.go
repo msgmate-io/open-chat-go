@@ -1231,6 +1231,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		partialSeq++
 		return partialSeq
 	}
+	// ci#1104: the fine grained non-text channel. It is purely additive - the
+	// legacy partial frames below are still emitted unchanged, and the fine
+	// frames only reach subscribers that negotiated `?stream=fine`.
+	fineStream := newFineStreamEmitter(
+		aih.botContext.WSHandler,
+		message.Content.ChatUUID,
+		message.Content.SenderUUID,
+		partialSessionID,
+		nextPartialSeq,
+	)
 	streamSnapshot := newPartialMessagePersister(
 		message.Content.ChatUUID,
 		partialSessionID,
@@ -1243,7 +1253,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			copy(entries, reasoningEntries)
 			entries[len(reasoningEntries)] = inProgress
 		}
-		streamSnapshot.snapshot(partialSeq, fullText.String()+currentBuffer.String(), entries, allToolCalls)
+		text := fullText.String() + currentBuffer.String()
+		// ci#1104: the 1s persistence throttle doubles as the reconcile floor
+		// for the fine channel, so no second timer is introduced.
+		if streamSnapshot.snapshot(partialSeq, text, entries, allToolCalls) {
+			fineStream.snapshot(text, entries, allToolCalls)
+		}
 	}
 	flushStreamSnapshot := func() {
 		entries := reasoningEntries
@@ -1746,6 +1761,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			return
 		}
 		fullText.WriteString(chunk)
+		// ci#1104: the phase transition is its own frame for fine clients; the
+		// text delta itself is already fine grained and stays untouched.
+		fineStream.status("responding")
 		totalTime := time.Since(startTime)
 		if reasoning {
 			thinkingElapsed := currentThinkingDuration()
@@ -1803,6 +1821,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 		thoughtBuffer.WriteString(chunk)
 		currentThoughtStep.WriteString(chunk)
+		// ci#1104: fine clients get the reasoning increment plus the phase
+		// transition instead of re-parsing the whole reasoning slice.
+		fineStream.status("thinking")
+		fineStream.reasoning(chunk)
 		totalTime := time.Since(startTime)
 		thinkingElapsed := currentThinkingDuration()
 		seq := nextPartialSeq()
@@ -2163,6 +2185,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						nil,
 					),
 				)
+				// ci#1104: split the coarse tool-call frame into a
+				// start/update/end lifecycle frame for fine subscribers.
+				fineStream.status("tool_call")
+				fineStream.toolCall(toolCall.Id, toolCall.ToolName, toolStatus, !updated, map[string]interface{}{
+					"tool_calls_so_far": len(allToolCalls),
+					"tool_call_error":   toolCall.Error,
+					"tool_call_reason":  progressMeta["tool_call_reason"],
+				})
 				persistStreamSnapshot()
 			}
 		case err, ok := <-errs:
