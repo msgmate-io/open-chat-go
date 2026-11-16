@@ -5571,22 +5571,73 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
-          # Only the parser is needed; keep the post-merge job cheap.
-          sparse-checkout: development/scripts
+          # ci#1117: `.github/actions` must be materialised too, or the local
+          # `./.github/actions/profile-setup` action below cannot be resolved
+          # ("Can't find 'action.yml'") and the job dies before the closer
+          # runs. `development/scripts` carries the `build_tools.sh` that the
+          # profile setup itself invokes.
+          sparse-checkout: |
+            development/scripts
+            .github/actions
           sparse-checkout-cone-mode: false
 
+      # ci#1117: the profile setup only materialises the private
+      # `development/ci` checkout that carries the parser - it is an
+      # optimisation, not a precondition for closing the linked issues. A
+      # failure here used to skip the closer entirely (run 43837769940, job
+      # 133198583565) and left every leaf issue of the promotion open with no
+      # trace on the PR.
       - name: Profile setup
+        id: profile_setup
+        continue-on-error: true
         uses: ./.github/actions/profile-setup
         with:
           profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
 
       - name: Close every linked leaf issue
+        # ci#1117: a failed `Profile setup` must never skip the closer, and the
+        # step reports on the PR whatever it could not close.
+        if: always()
         env:
           LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PROFILE_SETUP_OUTCOME: ${{ steps.profile_setup.outcome }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          CI_REPO=msgmate-io/open-chat-go-ci
+          # ci#1117: the promotion PR is the only place a human looks after a
+          # merge, so every path that cannot close the linked leaf issues names
+          # them there instead of failing silently. The POST is best-effort: a
+          # failed comment must not abort the run before the remaining issues
+          # are reported.
+          report_unclosed() {
+            local reason="$1"
+            shift
+            local list="" number
+            for number in "$@"; do
+              list="${list:+${list}, }${CI_REPO}#${number}"
+            done
+            echo "::warning::Linked-issue close did not complete for ${list} (${reason})."
+            local body
+            body="$(jq -n --arg body "⚠️ Linked-issue close did not complete for: ${list} (reason: ${reason}) — please close manually." '{body: $body}')"
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${LINK_TOKEN:-}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/issues/${PR}/comments" \
+              -d "${body}" >/dev/null \
+              || echo "::warning::Could not post the linked-issue report comment on ${REPO}#${PR}."
+          }
+          # ci#1117: a failed `Profile setup` is the reason the parser is
+          # missing, so name it in the report instead of leaving the reader to
+          # open the run.
+          profile_note=""
+          if [ "${PROFILE_SETUP_OUTCOME:-success}" != "success" ]; then
+            profile_note="; Profile setup outcome: ${PROFILE_SETUP_OUTCOME:-unknown}"
+          fi
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${REPO}" ]; then
             echo "::warning::Fork PR: linked-issue closure skipped; a maintainer must close the linked issue."
             exit 0
           fi
@@ -5595,15 +5646,43 @@ jobs:
           # Requirement` gate, so this job can only close issues the gate
           # admitted (the two anchored `grep` copies had to be kept in sync by
           # hand, and the anchored form rejected a bullet/bold/table-cell line).
-          mapfile -t issues < <(bash development/ci/scripts/ci-flows/linked_ci_issues.sh "${RUNNER_TEMP}/pr-body.md")
+          parser=development/ci/scripts/ci-flows/linked_ci_issues.sh
+          if [ ! -f "${parser}" ]; then
+            # ci#1117: the parser lives in the private `development/ci`
+            # checkout that `Profile setup` materialises. When that step failed
+            # the file is absent; read the base branch's copy over the API
+            # instead of dying on a missing file (the merge gate uses the same
+            # fallback).
+            curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN:-}" \
+              -H "Accept: application/vnd.github.raw" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/contents/${parser}?ref=${{ github.event.pull_request.base.ref }}" \
+              > "${RUNNER_TEMP}/linked_ci_issues.sh" 2>/dev/null || true
+            if [ -s "${RUNNER_TEMP}/linked_ci_issues.sh" ]; then
+              parser="${RUNNER_TEMP}/linked_ci_issues.sh"
+            fi
+          fi
+          issues=()
+          if [ -f "${parser}" ]; then
+            mapfile -t issues < <(bash "${parser}" "${RUNNER_TEMP}/pr-body.md")
+          else
+            # Last resort: the report only has to name the issues, so scan the
+            # body for `open-chat-go-ci#N` references rather than give up.
+            echo "::warning::Linked-issue parser unavailable; falling back to a body scan."
+            mapfile -t issues < <(grep -oE 'open-chat-go-ci#[0-9]+' "${RUNNER_TEMP}/pr-body.md" | grep -oE '[0-9]+$' | sort -un)
+          fi
           if [ "${#issues[@]}" -eq 0 ]; then
             echo "No linked CI issues in the merged PR body; nothing to close."
             exit 0
           fi
           if [ -z "${LINK_TOKEN:-}" ]; then
             echo "::error::BOT_TOKEN is required to close linked CI issues."
+            report_unclosed "BOT_TOKEN is not available${profile_note}" "${issues[@]}"
             exit 1
           fi
+          closed=0
+          already=0
           for number in "${issues[@]}"; do
             issue="$(curl -fsSL \
               -H "Authorization: Bearer ${LINK_TOKEN}" \
@@ -5620,6 +5699,7 @@ jobs:
             state="$(jq -r '.state' <<<"$issue")"
             if [ "$state" = "closed" ]; then
               echo "ci#${number} is already closed."
+              already=$((already + 1))
               continue
             fi
             comment="$(jq -n \
@@ -5640,4 +5720,11 @@ jobs:
               "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}" \
               -d '{"state":"closed","state_reason":"completed"}' >/dev/null
             echo "Closed ci#${number}."
+            closed=$((closed + 1))
           done
+          # ci#1117: nothing was closed and nothing was already closed, so the
+          # linked issues are still open - say so on the PR instead of exiting
+          # green with the tracker untouched.
+          if [ "${closed}" -eq 0 ] && [ "${already}" -eq 0 ]; then
+            report_unclosed "no linked issue could be closed${profile_note}" "${issues[@]}"
+          fi
