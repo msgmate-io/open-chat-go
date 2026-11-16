@@ -159,16 +159,37 @@ func RepoPrefix(reference string) string {
 // with `sandbox_misprovisioned_workspace`. Such a pin is reconciled by pinning
 // the task repo and dropping the stale workspace identity, so provisioning
 // clones the task repository instead of reattaching the wrong checkout.
+//
+// ci#1120: the same branch reconciles a pin whose provisioned workspace root was
+// reported as *missing* (see NoteSandboxWorkspaceMissingRoot). A dead pin is
+// equally misprovisioned - replaying it re-enters a `/workspace/coder-<uuid>`
+// that does not exist, which is the deterministic failure the tool-error
+// classifier sees - so the stale identity is dropped and the next turn
+// re-selects a workspace instead of replaying the dead pin.
 func ReconcileTaskRepo(config map[string]interface{}, tags []string, explicitToolInit map[string]interface{}) map[string]interface{} {
 	taskRepo := TaskRepoFromTags(tags)
-	if taskRepo == "" || config == nil {
+	if config == nil {
 		return config
 	}
 	stored := pinnedWorkspaceRepo(config)
 	storedSelector := selectorOf(config)
 	explicitSelector := selectorOf(map[string]interface{}{ToolInitConfigKey: explicitToolInit})
 	repoKnown := RepoSlug(stored) != ""
-	if repoKnown && RepoSlug(stored) == taskRepo {
+	// ci#1120: was this pin's provisioned workspace root reported missing?
+	deadPin := pinsMissingWorkspaceRoot(storedSelector)
+	if taskRepo == "" {
+		if !deadPin || pinsProvisionedWorkspace(explicitSelector) ||
+			RepoSlug(pinnedWorkspaceRepo(map[string]interface{}{ToolInitConfigKey: explicitToolInit})) != "" {
+			// No dispatch task repo and either a live pin or a caller pin:
+			// nothing to reconcile.
+			return config
+		}
+		// The pin names a workspace that no longer exists: drop the identity so
+		// the next turn selects a (fresh) workspace instead of reattaching it,
+		// keeping the repository the pin named.
+		return withSelector(config, dropWorkspaceIdentity(storedSelector))
+	}
+	if repoKnown && RepoSlug(stored) == taskRepo && !deadPin {
 		// Already the task repo: leave it to the ordinary seeding path.
 		return config
 	}
@@ -200,12 +221,95 @@ func ReconcileTaskRepo(config map[string]interface{}, tags []string, explicitToo
 	for _, key := range WorkspaceIdentityConfigKeys {
 		delete(reconciledSelector, key)
 	}
+	// ci#1120: a dead-pin observation is consumed here - the pin above is the
+	// replacement, so keeping the marker would keep reconciling it forever.
+	delete(reconciledSelector, workspaceRootMissingConfigKey)
 	reconciledInit := make(map[string]interface{}, len(toolInitOf(config)))
 	toolInit, _ := config[ToolInitConfigKey].(map[string]interface{})
 	for key, value := range toolInit {
 		reconciledInit[key] = value
 	}
 	reconciledInit[WorkspaceSelectorTool] = reconciledSelector
+	out[ToolInitConfigKey] = reconciledInit
+	return out
+}
+
+// workspaceRootMissingConfigKey is the server-owned selector key that records
+// that the root of the workspace this pin names was reported missing (ci#1120).
+// The tool-error classifier in api/msgmate sees the failure; the dispatch path
+// cannot, so the observation is stamped onto the stored selector and consumed
+// here on the next turn. It is written as a string path
+// (`/workspace/coder-<uuid>`) or "true".
+const workspaceRootMissingConfigKey = "workspace_root_missing"
+
+// NoteSandboxWorkspaceMissingRoot records on a stored workspace selector that the
+// provisioned workspace root it names was reported missing (ci#1120), so the
+// next turn's ReconcileTaskRepo can drop the dead identity instead of replaying a
+// pin that cannot work. An empty selector or one without a provisioned identity
+// is returned unchanged. The input is never mutated.
+func NoteSandboxWorkspaceMissingRoot(selector map[string]interface{}, missingPath string) map[string]interface{} {
+	if !pinsProvisionedWorkspace(selector) {
+		return selector
+	}
+	out := make(map[string]interface{}, len(selector)+1)
+	for key, value := range selector {
+		out[key] = value
+	}
+	if path := strings.TrimSpace(missingPath); path != "" {
+		out[workspaceRootMissingConfigKey] = path
+	} else {
+		out[workspaceRootMissingConfigKey] = true
+	}
+	return out
+}
+
+// pinsMissingWorkspaceRoot reports whether a stored workspace selector was
+// marked as naming a workspace root that does not exist (ci#1120).
+func pinsMissingWorkspaceRoot(selector map[string]interface{}) bool {
+	if !pinsProvisionedWorkspace(selector) {
+		return false
+	}
+	value, ok := selector[workspaceRootMissingConfigKey]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.TrimSpace(typed) != ""
+	default:
+		return false
+	}
+}
+
+// dropWorkspaceIdentity returns a copy of selector without the provisioned
+// workspace identity keys and without the ci#1120 missing-root marker: what
+// remains is a repository pin the selector can re-provision from.
+func dropWorkspaceIdentity(selector map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(selector))
+	for key, value := range selector {
+		out[key] = value
+	}
+	for _, key := range WorkspaceIdentityConfigKeys {
+		delete(out, key)
+	}
+	delete(out, workspaceRootMissingConfigKey)
+	return out
+}
+
+// withSelector returns a copy of config whose `tool_init.<selector>` payload is
+// replaced by selector. The input config is never mutated.
+func withSelector(config map[string]interface{}, selector map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(config))
+	for key, value := range config {
+		out[key] = value
+	}
+	reconciledInit := make(map[string]interface{}, len(toolInitOf(config)))
+	for key, value := range toolInitOf(config) {
+		reconciledInit[key] = value
+	}
+	reconciledInit[WorkspaceSelectorTool] = selector
 	out[ToolInitConfigKey] = reconciledInit
 	return out
 }

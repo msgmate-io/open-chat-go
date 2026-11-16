@@ -221,6 +221,139 @@ func buildSandboxRegistryConflictToolErrorPlaceholder(toolName string, runErr er
 	)
 }
 
+// sandboxWorkspaceMissingMarkers are the lower-cased fragments of a
+// *materialisation* failure: the per-chat sandbox exists and answers, but the
+// workspace root it advertises (`/workspace/coder-<chat_uuid>`) is absent, so
+// every tool body run inside it dies in the shell before doing any work, e.g.
+//
+//	coder tool api failed (400): failed to list .: sh: cd: can't cd to
+//	/workspace/coder-0012091c-…: No such file or directory
+//
+// ci#1120: like the ci#739 registry conflict this is deterministic - the path a
+// chat derives is stable, so every retry re-enters the same missing directory -
+// which is why it must not be retried and must not be reported as a transient
+// blip. Unlike a registry conflict the model cannot act on it either, so the
+// placeholder below names the path and points at re-selecting a workspace.
+var sandboxWorkspaceMissingMarkers = []string{
+	"can't cd to /workspace/",
+	"cant cd to /workspace/",
+	"no such file or directory",
+	"failed to list .",
+	"failed to read .",
+}
+
+// isSandboxWorkspaceMissing reports whether a tool error is a missing sandbox
+// workspace root (see sandboxWorkspaceMissingMarkers) and, when it is, returns
+// the path that was advertised but never materialised. An empty path with a
+// true boolean means the class matched without a parseable path; a nil error is
+// never a workspace-missing failure.
+func isSandboxWorkspaceMissing(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	msg := strings.ToLower(err.Error())
+	matched := false
+	for _, marker := range sandboxWorkspaceMissingMarkers {
+		if strings.Contains(msg, marker) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return "", false
+	}
+	// A bare "no such file or directory" is a generic shell error (a missing
+	// input file, a typo'd path) that the model *can* fix; only an error that
+	// also names the `/workspace/` root is a workspace-materialisation failure.
+	path := sandboxWorkspacePathFromError(err.Error())
+	if path == "" {
+		return "", false
+	}
+	return path, true
+}
+
+// isSandboxWorkspaceMarkerFailure reports the marker half of
+// isSandboxWorkspaceMissing without requiring a parseable path. It exists for the
+// provisioning class, which must also count an unparsable-root failure.
+func isSandboxWorkspaceMarkerFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range sandboxWorkspaceMissingMarkers {
+		if strings.Contains(msg, marker) {
+			return strings.Contains(msg, "/workspace/")
+		}
+	}
+	return false
+}
+
+// sandboxWorkspacePathFromError extracts the `/workspace/coder-<uuid>` path a
+// workspace-missing error names, so the failure can be logged and reported as
+// provisioning *of that path* instead of an anonymous shell error. It returns
+// "" when no such path is present.
+func sandboxWorkspacePathFromError(message string) string {
+	const root = "/workspace/"
+	lower := strings.ToLower(message)
+	for offset := 0; offset < len(lower); {
+		idx := strings.Index(lower[offset:], root)
+		if idx < 0 {
+			return ""
+		}
+		start := offset + idx
+		end := start
+		for end < len(message) && !sandboxWorkspacePathTerminators(message[end]) {
+			end++
+		}
+		path := strings.TrimRight(message[start:end], ".,:;")
+		if len(path) > len(root) {
+			return path
+		}
+		offset = start + len(root)
+	}
+	return ""
+}
+
+// sandboxWorkspacePathTerminators reports whether b ends a path token in a shell
+// or tool-API error message.
+func sandboxWorkspacePathTerminators(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '"', '\'', '`', ':', ',', ')', ']', '}', '<', '>', '|':
+		return true
+	}
+	return false
+}
+
+// buildSandboxWorkspaceMissingToolErrorPlaceholder builds the model-facing result
+// of a tool call that failed because the sandbox workspace root was never
+// materialised (ci#1120) and was therefore *not* retried. The bare error looks
+// like a bad path the model could fix by retrying, which is the one response
+// that cannot work: the root is provisioned (or not) by the sandbox host, not by
+// the tool call. The placeholder names the path, states that the call counts
+// against the failed-tool budget (the condition is deterministic) and points at
+// the remedies that can work.
+func buildSandboxWorkspaceMissingToolErrorPlaceholder(toolName string, path string, runErr error) string {
+	reason := "unknown error"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	if path == "" {
+		path = "/workspace/coder-<chat_uuid>"
+	}
+	return fmt.Sprintf(
+		"Tool %s failed because its coding-sandbox workspace root %s does not exist: %s. "+
+			"The workspace root was never materialised by the sandbox host, so the identical call "+
+			"fails the same way every time: it was not retried and it DOES count against your failed-tool budget. "+
+			"Do not re-issue the same call. Instead re-select the workspace (a fresh sandbox / a new auto_sandbox "+
+			"selection) so a new root is provisioned, or continue with work that needs no sandbox; if neither is "+
+			"possible, say so — the missing sandbox volume needs operator cleanup for %s.",
+		toolName,
+		path,
+		reason,
+		path,
+	)
+}
+
 // isTransientToolFailure reports whether a tool error is an environmental,
 // retryable failure (see transientToolFailureMarkers). A nil error is never
 // transient.
@@ -228,12 +361,17 @@ func buildSandboxRegistryConflictToolErrorPlaceholder(toolName string, runErr er
 // A sandbox-registry constraint violation is explicitly *not* transient (ci#739):
 // retrying it re-runs the same deterministic write with the same stable sandbox
 // name, so the retry loop only burns the turn budget on a condition that cannot
-// change.
+// change. A missing sandbox workspace root is excluded for the same reason
+// (ci#1120): the path is chat-derived and stable, so a retry re-enters the same
+// absent directory.
 func isTransientToolFailure(err error) bool {
 	if err == nil {
 		return false
 	}
 	if isSandboxRegistryConflict(err) {
+		return false
+	}
+	if isSandboxWorkspaceMarkerFailure(err) {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
