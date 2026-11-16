@@ -2026,6 +2026,16 @@ func processParsedToolCall(
 				// scheduler again (ci#691).
 				noteSandboxCapacityFailure(sandboxCapacityBackoffDelay(retries + 1))
 				toolResult = buildSandboxCapacityToolErrorPlaceholder(name, runErr, retries+1)
+			} else if path, missing := isSandboxWorkspaceMissing(runErr); missing {
+				// ci#1120: the sandbox workspace root was never materialised.
+				// Deterministic like the ci#739 conflict above (excluded from
+				// isTransientToolFailure), and equally useless to retry: the
+				// path the chat derives is stable, so re-issuing the identical
+				// call re-enters the same absent directory. Count and log it as
+				// a provisioning failure of that path, and tell the model to
+				// re-select a workspace instead of replaying the call.
+				noteSandboxProvisioningFailure(name, runErr)
+				toolResult = buildSandboxWorkspaceMissingToolErrorPlaceholder(name, path, runErr)
 			} else if isSandboxRegistryConflict(runErr) {
 				// ci#739: deterministic, so never retried (isTransientToolFailure
 				// excludes it), but the bare error reads like a blip and invites

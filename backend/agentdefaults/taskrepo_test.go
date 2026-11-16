@@ -207,6 +207,66 @@ func TestReconcileTaskRepoDropsStaleWorkspaceIdentity(t *testing.T) {
 		}
 	})
 
+	// ci#1120: the stored pin named a workspace whose root was reported missing
+	// (`can't cd to /workspace/coder-<uuid>`). That is the same
+	// `sandbox_misprovisioned_workspace` condition as ci#1048 - except the pin is
+	// provably dead, so even a pin that already names the task repo must be
+	// reconciled: replaying it would re-enter the absent root every turn.
+	t.Run("pin names a workspace root that does not exist", func(t *testing.T) {
+		const missingPath = "/workspace/coder-0012091c-4b1e-4f1a-9b62-2f1d1e1f2c3d"
+		const pinnedUUID = "afad9eba-8bab-429d-895a-4da76b1fdc49"
+
+		// A pin that already names the task repo: without the missing-root
+		// marker reconciliation leaves it alone.
+		liveConfig := storedPinnedConfig("https://github.com/msgmate-io/open-chat-go")
+		selectorOf(liveConfig)["workspace_uuid"] = pinnedUUID
+		if got := ReconcileTaskRepo(liveConfig, taskTags, nil); len(selectorOf(got)) == 0 ||
+			selectorOf(got)["workspace_uuid"] != pinnedUUID {
+			t.Fatalf("a live pin must be left alone, got %#v", selectorOf(got))
+		}
+
+		// Stamp the observation the tool-error classifier makes, then reconcile.
+		marked := NoteSandboxWorkspaceMissingRoot(selectorOf(liveConfig), missingPath)
+		if marked[workspaceRootMissingConfigKey] != missingPath {
+			t.Fatalf("missing-root observation was not recorded: %#v", marked)
+		}
+		if selectorOf(liveConfig)["workspace_root_missing"] != nil {
+			t.Fatal("input selector was mutated")
+		}
+		config := withSelector(liveConfig, marked)
+
+		reconciled := ReconcileTaskRepo(config, taskTags, nil)
+
+		if got, want := pinnedRepoOf(t, reconciled), "https://github.com/msgmate-io/open-chat-go"; got != want {
+			t.Fatalf("reconciled pin = %q, want %q", got, want)
+		}
+		selector := selectorOf(reconciled)
+		for _, key := range append(append([]string{}, WorkspaceIdentityConfigKeys...), workspaceRootMissingConfigKey) {
+			if value, ok := selector[key]; ok {
+				t.Fatalf("dead workspace pin key %q survived reconciliation: %#v", key, value)
+			}
+		}
+		// No dispatch task repo: the dead pin is still dropped, so the next turn
+		// re-selects instead of replaying it.
+		withoutRepo := ReconcileTaskRepo(config, []string{"branch:dev"}, nil)
+		if value, ok := selectorOf(withoutRepo)["workspace_uuid"]; ok {
+			t.Fatalf("dead workspace identity survived without a task repo: %#v", value)
+		}
+	})
+
+	// A healthy pin without the marker keeps its explicit identity (the ci#1048
+	// behaviour must not regress into dropping every provisioned workspace).
+	t.Run("unmarked provisioned pin keeps its identity when it names the task repo", func(t *testing.T) {
+		config := storedPinnedConfig("https://github.com/msgmate-io/open-chat-go")
+		selectorOf(config)["workspace_uuid"] = "afad9eba-8bab-429d-895a-4da76b1fdc49"
+
+		reconciled := ReconcileTaskRepo(config, taskTags, nil)
+
+		if got := selectorOf(reconciled)["workspace_uuid"]; got != "afad9eba-8bab-429d-895a-4da76b1fdc49" {
+			t.Fatalf("unmarked pin identity was dropped: %#v", got)
+		}
+	})
+
 	t.Run("empty identity value is not a pin", func(t *testing.T) {
 		config := map[string]interface{}{
 			ToolInitConfigKey: map[string]interface{}{
