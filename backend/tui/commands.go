@@ -26,6 +26,14 @@ const (
 	// over the bots the user may talk to, and the selected row switches the
 	// bot of the current interaction.
 	ActionPickBot Action = "bots.pick"
+	// ActionPickModel opens the read-only model catalog overlay: the rows come
+	// from BuildModelPicker over `GET /models`, and the selected row becomes the
+	// preferred model of the next turn. The catalog is only read, never written.
+	ActionPickModel Action = "models.pick"
+	// ActionPickTool opens the read-only tool catalog overlay: the rows come from
+	// BuildToolPicker over `GET /tools`. Selecting a row only reports the tool
+	// summary, it never invokes the tool.
+	ActionPickTool Action = "tools.pick"
 )
 
 // Command is one entry of the `:command` palette.
@@ -67,6 +75,20 @@ func CoreCommands() []Command {
 			Description:  "Switch the bot this interaction talks to",
 			ArgumentHint: "<search>",
 			RequiresChat: true,
+		},
+		{
+			Name:         "models",
+			Aliases:      []string{"model"},
+			Action:       ActionPickModel,
+			Description:  "Browse the model catalog and pick the preferred model",
+			ArgumentHint: "<search>",
+		},
+		{
+			Name:         "tools",
+			Aliases:      []string{"tool"},
+			Action:       ActionPickTool,
+			Description:  "Browse the tool catalog (read-only)",
+			ArgumentHint: "<search>",
 		},
 	}
 	for i := range commands {
