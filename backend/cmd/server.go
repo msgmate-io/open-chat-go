@@ -224,6 +224,11 @@ func GetServerFlags() []cli.Flag {
 			Value:   defaultRootCredentialsValue,
 		},
 		&cli.StringFlag{
+			Sources: cli.EnvVars("ADMIN_EMAIL"),
+			Name:    "admin-email",
+			Usage:   "email of the singleton admin; pins the password account to the identity-provider identity (ci#1111)",
+		},
+		&cli.StringFlag{
 			Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
 			Name:    "default-bot",
 			Aliases: []string{"botc"},
@@ -555,6 +560,27 @@ func unusablePasswordHash(hash string) bool {
 	return false
 }
 
+// flagDuplicateAdminAccounts reports (and only reports) a deployment that already
+// carries two admin rows - the `open-chat-go-admin` + `admin` pair from ci#1111.
+// Merging is a destructive operator decision: bots, chats and API keys hang off
+// both rows, so this only logs which accounts are affected.
+func flagDuplicateAdminAccounts(DB *gorm.DB) {
+	duplicates, err := database.FindDuplicateAdminAccounts(DB)
+	if err != nil {
+		fmt.Printf("WARNING: could not check for duplicate admin accounts: %v\n", err)
+		return
+	}
+	if len(duplicates) < 2 {
+		return
+	}
+	descriptions := make([]string, 0, len(duplicates))
+	for i := range duplicates {
+		descriptions = append(descriptions, fmt.Sprintf("%s (uuid %s, email %q)", duplicates[i].Username, duplicates[i].UUID, duplicates[i].Email))
+	}
+	fmt.Printf("WARNING: %d admin accounts exist for the same deployment: %s; accounts are NOT merged, link them to one identity manually if they are the same person\n",
+		len(duplicates), strings.Join(descriptions, ", "))
+}
+
 func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*database.User, error) {
 	if err := renameReservedAdminUsernameConflicts(DB, 0); err != nil {
 		return nil, err
@@ -776,6 +802,28 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		admin, err := ensureSingletonAdminUser(DB, password, spec.IsAutomated)
 		if err != nil {
 			return nil, err
+		}
+		// The email is the key the OIDC/Google path matches on (ci#1111), so the
+		// singleton admin must carry the configured one instead of a generated
+		// placeholder - otherwise the password account and the Google login can
+		// never converge on the same row. The identity link itself is written by
+		// the caller, which owns the duplicate report.
+		if email := database.NormalizeEmail(spec.Email); email != "" && !strings.EqualFold(strings.TrimSpace(admin.Email), email) {
+			var owner database.User
+			switch ownerErr := DB.First(&owner, "lower(email) = ? AND id <> ?", email, admin.ID).Error; {
+			case ownerErr == nil:
+				// Forked deployment: another row already owns the address. Never
+				// steal it, never merge - only flag it.
+				fmt.Printf("WARNING: bootstrap admin email %q is already used by %q (user %s); leaving both accounts untouched, resolve the duplicate identity manually\n",
+					email, owner.Username, owner.UUID)
+			case errors.Is(ownerErr, gorm.ErrRecordNotFound):
+				if err := DB.Model(&database.User{}).Where("id = ?", admin.ID).Update("email", email).Error; err != nil {
+					return nil, fmt.Errorf("failed to set email for %s: %w", spec.Label, err)
+				}
+				admin.Email = email
+			default:
+				return nil, ownerErr
+			}
 		}
 		if err := applyBootstrapTwoFactor(DB, admin, spec); err != nil {
 			return nil, err
@@ -1071,12 +1119,26 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	adminUser, err := ensureBootstrapUserWithBusyRetry(ctx, "root-credentials", DB, bootstrapUserSpec{
 		Label:            "root-credentials",
 		Credentials:      rootCredentials,
+		Email:            c.String("admin-email"),
 		IsAdmin:          true,
 		SingletonAdmin:   true,
 		ValidateStrength: !c.Bool("debug"),
 	})
 	if err != nil {
 		return err
+	}
+
+	// ci#1111: pin the singleton admin to a stable identity so a later
+	// OIDC/Google login for the same person binds to this row instead of
+	// provisioning a second admin. Never fatal: a duplicate or an occupied
+	// binding is reported here and must not keep the server down.
+	if adminUser != nil {
+		if adminEmail := database.NormalizeEmail(c.String("admin-email")); adminEmail == "" {
+			fmt.Printf("INFO: no admin email configured (ADMIN_EMAIL/--admin-email); the admin account cannot be pre-linked to an identity-provider login\n")
+		} else if _, linkErr := database.EnsureBootstrapAdminIdentity(DB, adminUser.ID, adminEmail); linkErr != nil {
+			fmt.Printf("WARNING: could not pin the admin identity to %q: %v\n", adminEmail, linkErr)
+		}
+		flagDuplicateAdminAccounts(DB)
 	}
 
 	botUser, err := ensureBootstrapUserWithBusyRetry(ctx, "default-bot", DB, bootstrapUserSpec{
