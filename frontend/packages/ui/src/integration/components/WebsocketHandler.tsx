@@ -1,14 +1,17 @@
 'use client'
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useWebSocketModule, { ReadyState } from "react-use-websocket";
 import { usePartialMessageStore } from "./chat/PartialMessages";
+import { useAppendPartialMessage, useRemovePartialMessage, useAddPartialMessage } from "./chat/PartialMessages.selectors";
+import { createPartialDeltaQueue } from "./chat/partialDeltaQueue";
 import { revalidateChatData, revalidateChatStates } from "../lib/chat-cache";
+import { announceWebsocketReconnected } from "../lib/websocket";
 
 const useWebSocket =
   typeof useWebSocketModule === "function"
     ? useWebSocketModule
-    : useWebSocketModule.default;
+    : (useWebSocketModule as any).default;
 
 export function WebsocketHandler() {
     const [socketUrl, setSocketUrl] = useState<string | null>(null);
@@ -18,9 +21,26 @@ export function WebsocketHandler() {
         setSocketUrl(`${protocol}//${window.location.host}/ws/connect`);
     }, []);
 
+    // ci#1105: keep the socket alive across transient drops and announce a
+    // reconnection so the chat can reload frames it missed while offline.
+    // react-use-websocket reconnects by default, but making the policy explicit
+    // (and generous) prevents a short network blip from leaving the UI detached
+    // from the stream for the rest of the session.
+    const hasOpenedRef = useRef(false);
     const { lastMessage, readyState } = useWebSocket(
         socketUrl,
-        undefined,
+        {
+            shouldReconnect: () => true,
+            reconnectAttempts: 50,
+            reconnectInterval: 1500,
+            retryOnError: true,
+            onOpen: () => {
+                if (hasOpenedRef.current) {
+                    announceWebsocketReconnected();
+                }
+                hasOpenedRef.current = true;
+            },
+        },
         socketUrl !== null,
     );
 
@@ -43,7 +63,26 @@ export function WebsocketHandlerBase({
     lastMessage: MessageEvent<any> | null
     readyState: number
 }) {
-        const { addPartialMessage, appendPartialMessage, removePartialMessage } = usePartialMessageStore()
+        // Narrow selectors instead of a whole-store subscription: subscribing to
+        // the store object itself re-rendered this handler on every streamed
+        // delta of every chat (each action reference is stable, so these
+        // subscriptions never cause a re-render at all).
+        const addPartialMessage = useAddPartialMessage()
+        const removePartialMessage = useRemovePartialMessage()
+        const appendPartialMessageAction = useAppendPartialMessage()
+
+        // Deltas are still applied one by one (the store's per-delta session/seq
+        // merge rules depend on it), but at most once per animation frame.
+        const queueRef = useRef(createPartialDeltaQueue((chatUUID, deltas, sessionId) => {
+            for (const delta of deltas) {
+                appendPartialMessageAction(chatUUID, delta, sessionId)
+            }
+        }))
+
+        useEffect(() => () => {
+            // Never drop buffered text on teardown.
+            queueRef.current.dispose()
+        }, [])
       
       
         useEffect(() => {
@@ -74,7 +113,7 @@ export function WebsocketHandlerBase({
                 ) {
                     return;
                 }
-                appendPartialMessage(chatUUID, {
+                queueRef.current.enqueue(chatUUID, {
                     text: parsedMessage?.content?.text,
                     thoughts: parsedMessage?.content?.reasoning,
                     meta_data: parsedMessage?.content?.meta_data,
@@ -93,9 +132,12 @@ export function WebsocketHandlerBase({
                 // immediately instead of waiting for the next poll.
                 void revalidateChatStates()
             }else if(parsedMessage.type === "end_partial_message"){
+                // Commit any buffered tail text before the partial is dropped.
+                queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
                 void revalidateChatStates()
             }else if(parsedMessage.type === "new_message"){
+                queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
                 // The final message changes the chat preview, state dots, pending
                 // action tasks and (for the open chat) the message list. The list

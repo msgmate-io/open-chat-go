@@ -227,7 +227,7 @@ func TestCreateChatAppliesModelConfigBackendBindingForAutomatedBot(t *testing.T)
 	}
 
 	modelCfg := map[string]interface{}{
-		"model":    "deepseek-ai/DeepSeek-V4-Flash",
+		"model":    "deepseek/deepseek-v4.1-flash-1017",
 		"backend":  "deepinfra",
 		"endpoint": "https://api.deepinfra.com/v1/openai",
 	}
@@ -235,7 +235,7 @@ func TestCreateChatAppliesModelConfigBackendBindingForAutomatedBot(t *testing.T)
 	if err := DB.Create(&database.ModelConfig{
 		Title:         "DeepSeek Flash",
 		Description:   "test",
-		ModelID:       "deepseek-ai/DeepSeek-V4-Flash",
+		ModelID:       "deepseek/deepseek-v4.1-flash-1017",
 		Configuration: modelCfgJSON,
 		IsPublic:      true,
 		IsDefault:     false,
@@ -244,7 +244,7 @@ func TestCreateChatAppliesModelConfigBackendBindingForAutomatedBot(t *testing.T)
 	}
 
 	defaultConfig := map[string]interface{}{
-		"model":    "deepseek-ai/DeepSeek-V4-Flash",
+		"model":    "deepseek/deepseek-v4.1-flash-1017",
 		"backend":  "litellm",
 		"endpoint": "https://litellm.t1m.me/v1",
 	}
@@ -267,7 +267,7 @@ func TestCreateChatAppliesModelConfigBackendBindingForAutomatedBot(t *testing.T)
 		"contact_token": botUser.ContactToken,
 		"chat_type":     "conversation",
 		"shared_config": map[string]interface{}{
-			"model": "deepseek-ai/DeepSeek-V4-Flash",
+			"model": "deepseek/deepseek-v4.1-flash-1017",
 		},
 	}
 	body, _ := json.Marshal(bodyPayload)

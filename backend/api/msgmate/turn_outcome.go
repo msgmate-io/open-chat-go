@@ -23,6 +23,10 @@ const (
 	TurnEndedCancelled         = "cancelled"
 	TurnEndedNoUsableCall      = "no_usable_tool_call"
 	TurnEndedConfirmablePause  = "confirmable_pause"
+	// TurnEndedEmptyFinalText is recorded when a turn ran tool calls but
+	// settled without any final assistant text, even after the single
+	// synthetic summary nudge (ci#1065).
+	TurnEndedEmptyFinalText = "empty_final_text"
 )
 
 // TurnOutcome records how a native coder turn ended and what its tool-call
@@ -49,6 +53,10 @@ type TurnOutcome struct {
 	// sent (ci#680), so the reader can surface it as `context_budget` metadata
 	// and the `coder_context` tool can answer with the turn's real numbers.
 	Context ContextUsageReport
+	// EmptyFinalStreak is the interaction state of ci#1065: how many turns of
+	// the interaction in a row ended without a final summary, including this
+	// one. AutoContinue reads it to report a streak instead of retrying.
+	EmptyFinalStreak int
 }
 
 // reason returns the recorded reason, or the completed default for a nil outcome.
@@ -158,6 +166,15 @@ func ResolveTerminalAssistantText(text string, toolCalls int, cancelled bool, st
 			toolCalls, guidance,
 		)
 	}
+	// A reached tool-call cap is a capacity stop, not a model failure: it must
+	// be explained as such even when the turn itself recorded no tool calls
+	// (the budget is per chat, so an earlier turn may already have spent it).
+	// Falling through would produce "could not produce a reply" and hide the
+	// actual reason and the way forward.
+	var capErr *toolCallCapError
+	if errors.As(streamErr, &capErr) {
+		return guidance
+	}
 	return "I could not produce a reply for this message. " + guidance
 }
 
@@ -203,6 +220,8 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 		return "It was stopped before it produced a final answer. The work already done is kept - send another message to continue from here."
 	case TurnEndedConfirmablePause:
 		return "It is waiting for you to confirm an action before it continues."
+	case TurnEndedEmptyFinalText:
+		return "The turn ended after tool calls without a final summary."
 	default:
 		return "The model returned no text for this turn. The work already done is kept - send another message to continue from here."
 	}
@@ -249,9 +268,19 @@ func (e *toolCallCapError) guidance() string {
 		return "It stopped because this chat's tool-call budget was exhausted. The work already done is kept - send another message to continue from here."
 	}
 	if e.kind == toolCallCapErrorKindFailed {
+		// A failed-tool cap can be reached with successful calls in between;
+		// say what already worked so the guidance stays actionable instead of
+		// reading like a total failure.
+		progress := ""
+		if e.consumedTotal > e.consumedFailed {
+			progress = fmt.Sprintf(
+				" %d of the %d tool call(s) in this chat succeeded before that.",
+				e.consumedTotal-e.consumedFailed, e.consumedTotal,
+			)
+		}
 		return fmt.Sprintf(
-			"It stopped after %d failed tool call(s), which is this chat's failed-tool budget (%d). Retry the failed step with different arguments, or send another message to continue from here - the work already done is kept.",
-			e.consumedFailed, e.max,
+			"It stopped after %d failed tool call(s), which is this chat's failed-tool budget (%d).%s Retry the failing step with different arguments (or a smaller scope), or send another message to continue from here - the work already done is kept.",
+			e.consumedFailed, e.max, progress,
 		)
 	}
 	return fmt.Sprintf(

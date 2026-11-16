@@ -48,6 +48,27 @@ blinking block in `NORMAL` and a blinking bar in `INSERT`.
 - **Pick a chat** — `p` lists your conversations and interactions (including
   chats created in the web UI) and attaches to the selected one.
 
+### Catalog commands
+
+The palette (`:`) exposes three read-only catalogs over the same short-lived
+`coder-tui` token, so the pickers work inside a forwarded coding sandbox
+without any wider credential:
+
+| Command | Route | Behaviour |
+| --- | --- | --- |
+| `:models` | `GET /api/v1/models` | pick the model used for the next turn (sent as the chat's `shared_config`) |
+| `:tools` | `GET /api/v1/tools` | inspect the tool catalog, including whether a tool needs init or confirmation |
+| `:bots` | `GET /api/v1/bots/list` | list the bots you may use and switch this interaction to the picked one; v1 stops at bots the acting user already owns or may read |
+| `:sessions` | owner session list | scroll the coding sessions you still own and attach the picked one back into this view; destroyed, expired and duplicate rows for one chat are hidden |
+
+`:models`, `:tools` and `:bots` are plain catalog reads: they cannot mutate
+remote state, and the sibling write routes (`POST /models`, `PATCH
+/bots/{identifier}`, `PUT /bots/{identifier}/config`, `POST /bots/list`) stay
+denied for this audience. `:bots` v1 deliberately stops at bots the caller
+already knows; discovering bots nobody interacted with yet is left to the web UI.
+`:sessions` reads the owner-scoped session list and only pre-selects a row:
+re-attaching the chosen session stays an explicit action.
+
 ### Keys
 
 | Key | Action |
@@ -97,6 +118,25 @@ user config directory (for example
 `~/.config/open-chat-go/tui/config.json` on Linux). Tokens are written with
 `0600` permissions on Unix, so the device stays authorized until the token
 expires. Override the location with `OPEN_CHAT_TUI_CONFIG_DIR`.
+
+### Concurrent sessions
+
+Several `open-chat code` / `open-chat tui` sessions may run side by side on one
+device. A session started by a coder integration does not use the shared
+`config.json` above: it gets its own private directory
+`<config dir>/sessions/<session id>/`, resolved by the core helper
+`SessionTUIConfigDir` (`backend/cmd/tui_session.go`) and exposed to the TUI as
+`OPEN_CHAT_TUI_CONFIG_DIR`. The `<config dir>` is `OPEN_CHAT_TUI_CONFIG_DIR` when
+the user set it, otherwise the platform user config directory; the `<session id>`
+is the chat UUID (or the endpoint/folder name) reduced to a single `[a-z0-9-]`
+path element, created with `0700` permissions because it holds bearer tokens.
+
+The consequence is that two shells never write the same file, so neither can
+fail on a lock/atomic replace nor clobber the other's active server and chat
+selection. Because the directories are per session, a plain `open-chat tui`
+(which keeps the shared device file) and a coding session see separate
+server/token lists - log in once per session directory, or point
+`OPEN_CHAT_TUI_CONFIG_DIR` at your own directory to share one.
 
 ```json
 {

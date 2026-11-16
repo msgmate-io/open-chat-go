@@ -3,6 +3,8 @@ import { MessageItem, BotMessageGroup } from "./MessageItem"
 import React, { useEffect, useState, useRef, forwardRef, useCallback, type ReactNode } from 'react';
 import { CollapseIndicator } from "../CollapseIndicator";
 import { usePartialMessageStore } from "./PartialMessages";
+import { useAddPartialMessage, usePartialMessage, useRemovePartialMessage } from "./PartialMessages.selectors";
+import { createScrollPin } from "./scrollPin";
 import { useSidePanelCollapse } from "./ChatBase";
 import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
 import { InteractionChatInfo } from "./InteractionChatInfo";
@@ -12,6 +14,7 @@ import { buildMessageGroups } from "../../lib/message-groups";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
+import { WEBSOCKET_RECONNECTED_EVENT } from "../../lib/websocket";
 import {
     buildSendMessageBody,
     type BotReplyDeliveryMode,
@@ -21,6 +24,10 @@ import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
 import { PullToRefresh } from "../PullToRefresh";
 import { Skeleton } from "../../../components/skeleton";
+import {
+    INTERACTION_STATUS_POST_SEND_FAST_WINDOW_MS,
+    interactionStatusRefreshInterval,
+} from "./interactionStatusPolling";
 
 const ScrollButton = React.memo(({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) => {
     const [shouldShow, setShouldShow] = useState(false);
@@ -90,6 +97,7 @@ export function MessagesScroll({
     chat,
     mutateMessages,
     onRefresh,
+    onMessageSent,
 }: {
     messages: any,
     chat: any,
@@ -99,9 +107,16 @@ export function MessagesScroll({
     footerSlot?: ReactNode;
     mutateMessages: any;
     onRefresh?: () => void | Promise<unknown>;
+    /** Fired after a message was accepted, so the parent can re-accelerate its status poll. */
+    onMessageSent?: () => void;
 }) {
     const [text, setText] = useState("");
-    const { partialMessages, removePartialMessage, addPartialMessage } = usePartialMessageStore()
+    // Narrow selectors only: `usePartialMessageStore()` (whole store) re-rendered
+    // this view on every streamed delta of every chat. A per-chat selector keeps
+    // a delta to chat B from touching chat A's transcript at all.
+    const partialMessage = usePartialMessage(chatUUID ?? undefined);
+    const removePartialMessage = useRemovePartialMessage();
+    const addPartialMessage = useAddPartialMessage();
     const [isSendingMessage, setIsSendingMessage] = useState(false)
 
     const scrollRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
@@ -117,35 +132,46 @@ export function MessagesScroll({
     // Hydrate a mid-stream snapshot after a page reload: while a bot reply is
     // still streaming, the DB keeps a throttled snapshot so progress is not
     // lost when the client reconnects.
-    useEffect(() => {
+    const hydrateStreamingSnapshot = useCallback(async () => {
         if (!chatUUID) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await fetch(`/api/v1/chats/${chatUUID}/messages/streaming`, {
-                    credentials: "include",
-                });
-                if (res.status === 204 || !res.ok) return;
-                const snapshot = await res.json();
-                if (cancelled || !snapshot?.session_id) return;
-                const existing = usePartialMessageStore.getState().partialMessages[chatUUID];
-                if (existing) return;
-                addPartialMessage(chatUUID, {
-                    text: snapshot.text || "",
-                    thoughts: snapshot.reasoning || [],
-                    meta_data: { partial_phase: "responding" },
-                    tool_calls: snapshot.tool_calls || [],
-                    seq: snapshot.seq || 0,
-                    session_id: snapshot.session_id,
-                }, snapshot.session_id);
-            } catch {
-                // Hydration is best-effort only.
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
+        try {
+            const res = await fetch(`/api/v1/chats/${chatUUID}/messages/streaming`, {
+                credentials: "include",
+            });
+            if (res.status === 204 || !res.ok) return;
+            const snapshot = await res.json();
+            if (!snapshot?.session_id) return;
+            const existing = usePartialMessageStore.getState().partialMessages[chatUUID];
+            if (existing) return;
+            addPartialMessage(chatUUID, {
+                text: snapshot.text || "",
+                thoughts: snapshot.reasoning || [],
+                meta_data: { partial_phase: "responding" },
+                tool_calls: snapshot.tool_calls || [],
+                seq: snapshot.seq || 0,
+                session_id: snapshot.session_id,
+            }, snapshot.session_id);
+        } catch {
+            // Hydration is best-effort only.
+        }
     }, [chatUUID, addPartialMessage]);
+
+    useEffect(() => {
+        void hydrateStreamingSnapshot();
+    }, [hydrateStreamingSnapshot]);
+
+    // ci#1105: a reconnected socket cannot replay frames emitted while it was
+    // down. Re-fetch the streaming snapshot and the transcript so a tab that
+    // lost the socket catches up instead of rendering a stale partial reply.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const onReconnected = () => {
+            void hydrateStreamingSnapshot();
+            void mutateMessages();
+        };
+        window.addEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+        return () => window.removeEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+    }, [hydrateStreamingSnapshot, mutateMessages]);
 
     const { data: integrations, mutate: mutateIntegrations } = useSWR<{ rows?: Array<{ name: string }> }>(
         shouldLoadIntegrations ? "/api/v1/integrations/list" : null,
@@ -186,13 +212,24 @@ export function MessagesScroll({
         shouldAutoScrollRef.current = true;
     }, [chatUUID]);
 
+    // One rAF-coalesced pin for the whole transcript. A streamed reply produces
+    // dozens of state updates per second; a scroll write per update forces a
+    // layout flush each time. Scheduling at most one write per animation frame
+    // keeps streaming smooth, and nothing is scheduled while the user has
+    // scrolled away from the bottom, so reading history is never interrupted.
+    const scrollPinRef = useRef<ReturnType<typeof createScrollPin> | null>(null);
+    if (scrollPinRef.current === null) {
+        scrollPinRef.current = createScrollPin({
+            getElement: () => scrollRef.current,
+            shouldPin: () => shouldAutoScrollRef.current,
+        });
+    }
+
     useEffect(() => {
-        if (!shouldAutoScrollRef.current) return;
-        const scrollElement = scrollRef.current;
-        if (!scrollElement) return;
-        const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
-        scrollElement.scrollTop = maxScroll;
-    }, [messages, partialMessages]);
+        scrollPinRef.current?.schedule();
+    }, [messages, partialMessage]);
+
+    useEffect(() => () => scrollPinRef.current?.cancel(), []);
 
     const onSendMessage = async (
         payload?: ChatUISendPayload | Array<{ file_id: string; display_name?: string }>,
@@ -255,6 +292,11 @@ export function MessagesScroll({
             // chat into the active state; refresh the derived caches so the
             // list and state dots update without waiting for the next poll.
             void revalidateChatData(chatUUID);
+
+            // ci#1089: the status poll may be backed off (the previous turn
+            // finished), so re-accelerate it instead of missing this turn's
+            // active -> inactive edge.
+            onMessageSent?.();
             
             // Clear input after successful send
             setText('');
@@ -272,9 +314,9 @@ export function MessagesScroll({
     }
     
     const hasPartialMessage = chatUUID ? (
-        partialMessages?.[chatUUID]?.text?.length > 0 || 
-        partialMessages?.[chatUUID]?.thoughts?.length > 0 ||
-        (partialMessages?.[chatUUID]?.tool_calls?.length ?? 0) > 0
+        (partialMessage?.text?.length ?? 0) > 0 ||
+        (partialMessage?.thoughts?.length ?? 0) > 0 ||
+        (partialMessage?.tool_calls?.length ?? 0) > 0
     ) : false;
 
     const isBotResponding = hasPartialMessage || Boolean((chat as any)?.status?.is_active);
@@ -424,21 +466,21 @@ export function MessagesScroll({
                         interactionState={(chat as any)?.status?.state}
                     />
                 )}
-                {chatUUID && chat && user && partialMessages?.[chatUUID] && (
+                {chatUUID && chat && user && partialMessage && (
                     <MessageItem 
                         key={`msg_${chatUUID}`} 
                         message={{
                             uuid: `partial_${chatUUID}`,
-                            text: partialMessages[chatUUID]?.text || '',
-                            thoughts: partialMessages[chatUUID]?.thoughts || [],
-                            meta_data: partialMessages[chatUUID]?.meta_data,
-                            tool_calls: partialMessages[chatUUID]?.tool_calls,
-                            is_generating: partialMessages[chatUUID]?.meta_data?.finished !== true
+                            text: partialMessage.text || '',
+                            thoughts: partialMessage.thoughts || [],
+                            meta_data: partialMessage.meta_data,
+                            tool_calls: partialMessage.tool_calls,
+                            is_generating: partialMessage.meta_data?.finished !== true
                         }} 
                         chat={chat} 
                         chatUUID={chatUUID || undefined}
                         selfIsSender={
-                            partialMessages[chatUUID]?.meta_data?.partial_sender === "user"
+                            partialMessage.meta_data?.partial_sender === "user"
                                 ? true
                                 : Boolean((chat as any)?.sender_uuid && user?.uuid === (chat as any).sender_uuid)
                         } 
@@ -639,14 +681,45 @@ export function MessagesView({
     const { data: user, error: userError, mutate: reloadUser } = useSWR(`/api/v1/user/self`, fetcher)
     const isAutomatedPartner = Boolean(chat?.partner?.is_automated || chat?.partner?.is_bot);
     const shouldPollStatus = Boolean(chatUUID && chat?.chat_type === "interaction" && isAutomatedPartner);
+    // ci#1089: keep a long session cheap. The status poll used to run at the
+    // live cadence (800ms) for the whole lifetime of the chat, and every tick
+    // re-renders the whole transcript, so a coder session got slower the longer
+    // it stayed open. Back off once the interaction finished and stop entirely
+    // while the tab is hidden (SWR revalidates on focus).
+    const [isDocumentHidden, setIsDocumentHidden] = useState<boolean>(
+        () => typeof document !== "undefined" && document.hidden,
+    );
+    // Sending a message re-accelerates the poll for a bounded window: right
+    // after a send the interaction has not flipped to active yet, so a
+    // backed-off poll would miss the active window of a short turn.
+    const [postSendFastUntil, setPostSendFastUntil] = useState(0);
+    const onMessageSent = useCallback(() => {
+        setPostSendFastUntil(Date.now() + INTERACTION_STATUS_POST_SEND_FAST_WINDOW_MS);
+    }, []);
+    useEffect(() => {
+        if (typeof document === "undefined") {
+            return;
+        }
+        const onVisibilityChange = () => setIsDocumentHidden(document.hidden);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    }, []);
     const { data: interactionStatus, mutate: mutateInteractionStatus } = useSWR(
         shouldPollStatus ? `/api/v1/chats/${chatUUID}/status` : null,
         fetcher,
         {
-            refreshInterval: 800,
+            // Called by SWR on every tick, so a status (or visibility) change
+            // takes effect on the next interval instead of restarting the timer
+            // through a setState-in-effect loop.
+            refreshInterval: () =>
+                interactionStatusRefreshInterval(interactionStatus, {
+                    documentHidden: isDocumentHidden,
+                    postSendFastUntil,
+                }),
             revalidateOnFocus: true,
         }
     );
+
     const chatWithStatus = chat ? { ...chat, status: interactionStatus } : chat;
     const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
@@ -667,6 +740,21 @@ export function MessagesView({
         document.addEventListener("visibilitychange", onVisibilityChange);
         return () => document.removeEventListener("visibilitychange", onVisibilityChange);
     }, [mutateInteractionStatus]);
+
+    // ci#1105: after a websocket reconnect, reload the transcript and status so
+    // messages that landed while the socket was down are not missed.
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+        const onReconnected = () => {
+            void mutateMessages();
+            void mutateInteractionStatus();
+            void revalidateChatData(chatUUID);
+        };
+        window.addEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+        return () => window.removeEventListener(WEBSOCKET_RECONNECTED_EVENT, onReconnected);
+    }, [chatUUID, mutateMessages, mutateInteractionStatus]);
 
     // Without a websocket the final bot message only lands in the DB once the
     // interaction becomes inactive, so refetch on the active -> inactive edge.
@@ -801,6 +889,7 @@ export function MessagesView({
                     chat={chatWithStatus}
                     mutateMessages={mutateMessages}
                     onRefresh={handlePullRefresh}
+                    onMessageSent={onMessageSent}
                 />
         </div>
     );
