@@ -26,6 +26,10 @@ type fineStreamEmitter struct {
 	sessionID  string
 	seq        func() int64
 	lastPhase  string
+	// sink is an optional test seam: when set, frames are handed to it instead
+	// of the websocket handler so the emitted frame set can be asserted without
+	// a live subscriber.
+	sink func([]byte)
 }
 
 // newFineStreamEmitter returns an emitter bound to one streaming turn. It is
@@ -55,8 +59,27 @@ func (e *fineStreamEmitter) content() wsapi.StreamEventContent {
 	return c
 }
 
+// messages returns the frame renderer of the bound websocket handler. It is
+// nil when the emitter has no handler (tests, CLI paths) or when the handler was
+// built without a renderer (a struct literal), so every emit becomes a no-op
+// instead of dereferencing a nil field. The dedupe state of status is advanced
+// before this check, so the phase tracking stays correct either way.
+func (e *fineStreamEmitter) messages() *wsapi.Messages {
+	if e == nil || e.handler == nil {
+		return nil
+	}
+	return e.handler.MessageHandler
+}
+
 func (e *fineStreamEmitter) publish(frame []byte) {
-	if e == nil || e.handler == nil || len(frame) == 0 {
+	if e == nil || len(frame) == 0 {
+		return
+	}
+	if e.sink != nil {
+		e.sink(frame)
+		return
+	}
+	if e.handler == nil {
 		return
 	}
 	e.handler.PublishFineInChannel(frame, e.senderUUID)
@@ -68,6 +91,10 @@ func (e *fineStreamEmitter) publish(frame []byte) {
 // ends it, and a call seen for the first time starts it.
 func (e *fineStreamEmitter) toolCall(toolCallID, toolName, status string, firstSeen bool, payload map[string]interface{}) {
 	if e == nil {
+		return
+	}
+	messages := e.messages()
+	if messages == nil {
 		return
 	}
 	phase := toolCallPhase(status, firstSeen)
@@ -86,7 +113,7 @@ func (e *fineStreamEmitter) toolCall(toolCallID, toolName, status string, firstS
 		}
 		c.Payload[key] = value
 	}
-	e.publish(e.handler.MessageHandler.ToolCallEvent(phase, c))
+	e.publish(messages.ToolCallEvent(phase, c))
 }
 
 // status emits a phase transition (thinking / responding / tool_call) as an
@@ -101,9 +128,13 @@ func (e *fineStreamEmitter) status(phase string) {
 		return
 	}
 	e.lastPhase = phase
+	messages := e.messages()
+	if messages == nil {
+		return
+	}
 	c := e.content()
 	c.Status = phase
-	e.publish(e.handler.MessageHandler.StatusEvent(c))
+	e.publish(messages.StatusEvent(c))
 }
 
 // reasoning emits one reasoning/thinking increment instead of re-sending the
@@ -112,9 +143,13 @@ func (e *fineStreamEmitter) reasoning(delta string) {
 	if e == nil || delta == "" {
 		return
 	}
+	messages := e.messages()
+	if messages == nil {
+		return
+	}
 	c := e.content()
 	c.Delta = delta
-	e.publish(e.handler.MessageHandler.ReasoningDeltaEvent(c))
+	e.publish(messages.ReasoningDeltaEvent(c))
 }
 
 // snapshot emits the reconcile frame. It is driven by the existing 1s
@@ -124,6 +159,10 @@ func (e *fineStreamEmitter) snapshot(text string, reasoning []string, toolCalls 
 	if e == nil {
 		return
 	}
+	messages := e.messages()
+	if messages == nil {
+		return
+	}
 	c := e.content()
 	c.Delta = text
 	if c.Payload == nil {
@@ -131,7 +170,7 @@ func (e *fineStreamEmitter) snapshot(text string, reasoning []string, toolCalls 
 	}
 	c.Payload["reasoning"] = reasoning
 	c.Payload["tool_calls"] = toolCalls
-	e.publish(e.handler.MessageHandler.PartialSnapshotEvent(c))
+	e.publish(messages.PartialSnapshotEvent(c))
 }
 
 // toolCallPhase derives the lifecycle phase of a tool call frame: a call seen
