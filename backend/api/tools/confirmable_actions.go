@@ -809,12 +809,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		resumeResult = execErr.Error()
 		resumeReason = execErr.Error()
 	}
-	if unlockRequired {
-		// The action is still pending (SSH-key unlock), so nothing has been decided
-		// yet: leave the parked generation parked so the retried approval resumes it
-		// instead of ending the turn on a transient "unlock required" error. The
-		// previous fallback behaviour is preserved for this case.
-	} else {
+	// An SSH-key-unlock-required approval is NOT a decision: the action stays
+	// pending, so leave the parked generation parked and let the retried approval
+	// resume it, instead of ending the turn on a transient error.
+	if !unlockRequired {
 		resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
 			Result:   resumeResult,
 			Approved: execErr == nil,
