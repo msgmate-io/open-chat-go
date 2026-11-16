@@ -391,6 +391,7 @@ var knownAsyncDBWriterViolations = map[string]string{
 	"backend/database/session_cleanup.go":    "session sweeper is stopped by its own stop func (cancel + <-done)",
 	"backend/database/session_lifetime.go":   "session refresh is stopped by its own stop func (cancel + <-done)",
 	"backend/database/sqlite_maintenance.go": "WAL checkpointer is stopped by StopWALCheckpointer (cancel + <-done)",
+	"backend/api/chats/LocalLink.go":         "ci#1101 local-link lease sweeper is stopped by the stop func returned by StartLocalLinkLeaseSweeper (cancel + <-done)",
 }
 
 var asyncDBGoroutinePattern = regexp.MustCompile(`^\s*go\s+\S`)
