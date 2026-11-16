@@ -596,3 +596,68 @@ func TestRegistryConflictConsumesFailedToolBudget(t *testing.T) {
 		t.Fatalf("expected the frame to carry the remedy, got %q", failedFrames[0].Result)
 	}
 }
+
+// ci1120WorkspaceMissingError is the literal canary failure from ci#1120: the
+// per-chat sandbox answers, but the workspace root it advertises does not exist,
+// so the tool body dies in the shell before doing any work.
+const ci1120WorkspaceMissingError = "coder tool api failed (400): failed to list .: sh: cd: can't cd to /workspace/coder-0012091c-4b1e-4f1a-9b62-2f1d1e1f2c3d: No such file or directory"
+
+// ci1120WorkspaceMissingPath is the root the canary error names.
+const ci1120WorkspaceMissingPath = "/workspace/coder-0012091c-4b1e-4f1a-9b62-2f1d1e1f2c3d"
+
+// TestSandboxWorkspaceMissingIsNotTransient pins the ci#1120 classification: a
+// missing workspace root is deterministic (the chat-derived path is stable), so it
+// must never be retried as a transient blip, it must be recognised as a
+// provisioning failure of the named path, and the placeholder must say so.
+func TestSandboxWorkspaceMissingIsNotTransient(t *testing.T) {
+	err := errors.New(ci1120WorkspaceMissingError)
+
+	if isTransientToolFailure(err) {
+		t.Fatal("a missing sandbox workspace root must not be treated as a transient tool failure")
+	}
+	if isSandboxCapacityFailure(err) {
+		t.Fatal("a missing workspace root is not a node-capacity rejection")
+	}
+	path, missing := isSandboxWorkspaceMissing(err)
+	if !missing {
+		t.Fatalf("expected %q to classify as a missing sandbox workspace root", ci1120WorkspaceMissingError)
+	}
+	if path != ci1120WorkspaceMissingPath {
+		t.Fatalf("missing path = %q, want %q", path, ci1120WorkspaceMissingPath)
+	}
+
+	// The bare shell error reads like a fixable blip; the placeholder must name
+	// the class, the path, and the fact that a retry cannot help.
+	placeholder := buildSandboxWorkspaceMissingToolErrorPlaceholder("coder_list", path, err)
+	for _, fragment := range []string{
+		"coder_list",
+		ci1120WorkspaceMissingPath,
+		"does not exist",
+		"never materialised",
+		"not retried",
+		"DOES count against your failed-tool budget",
+		"Do not re-issue the same call",
+		"re-select the workspace",
+	} {
+		if !strings.Contains(placeholder, fragment) {
+			t.Fatalf("expected %q to contain %q", placeholder, fragment)
+		}
+	}
+	if strings.Contains(placeholder, "does NOT count against your failed-tool budget") {
+		t.Fatalf("a deterministic workspace-missing failure must never be reported as budget-exempt, got %q", placeholder)
+	}
+	if !strings.Contains(
+		buildSandboxWorkspaceMissingToolErrorPlaceholder("coder_list", "", err),
+		"/workspace/coder-<chat_uuid>",
+	) {
+		t.Fatal("expected an unparsable path to fall back to the placeholder root")
+	}
+
+	// A nil error and an unrelated error are never workspace-missing.
+	if _, missing := isSandboxWorkspaceMissing(nil); missing {
+		t.Fatal("a nil error must not classify as workspace-missing")
+	}
+	if _, missing := isSandboxWorkspaceMissing(errors.New("connection reset by peer")); missing {
+		t.Fatal("an unrelated transient error must not classify as workspace-missing")
+	}
+}
