@@ -7,10 +7,10 @@ import (
 	"backend/sandboxsession"
 )
 
-func TestCoreCommandsPublishesSessionsAndBots(t *testing.T) {
+func TestCoreCommandsPublishesSessionsBotsAndCatalog(t *testing.T) {
 	commands := CoreCommands()
-	if len(commands) != 2 {
-		t.Fatalf("expected 2 core commands, got %d", len(commands))
+	if len(commands) != 4 {
+		t.Fatalf("expected 4 core commands, got %d", len(commands))
 	}
 	byName := map[string]Command{}
 	for _, command := range commands {
@@ -39,6 +39,26 @@ func TestCoreCommandsPublishesSessionsAndBots(t *testing.T) {
 	if !bots.RequiresChat {
 		t.Errorf(":bots switches the bot of the current interaction, so it requires a chat")
 	}
+	models, ok := byName["models"]
+	if !ok {
+		t.Fatalf("missing :models command")
+	}
+	if models.Action != ActionPickModel {
+		t.Errorf(":models action = %q, want %q", models.Action, ActionPickModel)
+	}
+	if models.RequiresChat {
+		t.Errorf(":models only browses the catalog, so it must not require a chat")
+	}
+	tools, ok := byName["tools"]
+	if !ok {
+		t.Fatalf("missing :tools command")
+	}
+	if tools.Action != ActionPickTool {
+		t.Errorf(":tools action = %q, want %q", tools.Action, ActionPickTool)
+	}
+	if tools.RequiresChat {
+		t.Errorf(":tools only browses the catalog, so it must not require a chat")
+	}
 }
 
 func TestCoreCommandsReturnsCopy(t *testing.T) {
@@ -60,11 +80,14 @@ func TestMatchCommands(t *testing.T) {
 		input string
 		want  []string
 	}{
-		{input: "", want: []string{"bots", "sessions"}},
-		{input: ":", want: []string{"bots", "sessions"}},
+		{input: "", want: []string{"bots", "models", "sessions", "tools"}},
+		{input: ":", want: []string{"bots", "models", "sessions", "tools"}},
 		{input: ":se", want: []string{"sessions"}},
 		{input: ":sess abc", want: []string{"sessions"}},
 		{input: ":bo", want: []string{"bots"}},
+		{input: ":mo", want: []string{"models"}},
+		{input: ":to", want: []string{"tools"}},
+		{input: ":tool grep", want: []string{"tools"}},
 		{input: ":attach", want: []string{"sessions"}},
 		{input: ":switch-bot", want: []string{"bots"}},
 		{input: ":nope", want: []string{}},
@@ -208,5 +231,67 @@ func TestBuildBotPicker(t *testing.T) {
 	}
 	if empty := BuildBotPicker(nil, ""); empty == nil || len(empty) != 0 {
 		t.Fatalf("BuildBotPicker(nil) = %v, want empty non-nil slice", empty)
+	}
+}
+
+func TestCatalogRoutesAreReadOnly(t *testing.T) {
+	cases := map[Action]string{
+		ActionPickBot:   "/bots/list",
+		ActionPickModel: "/models",
+		ActionPickTool:  "/tools",
+	}
+	for action, want := range cases {
+		route, ok := CatalogRoute(action)
+		if !ok || route != want {
+			t.Fatalf("CatalogRoute(%q) = %q, %v, want %q", action, route, ok, want)
+		}
+	}
+	// :sessions reads the local session store, it must not resolve to a route.
+	if route, ok := CatalogRoute(ActionPickSession); ok {
+		t.Fatalf("CatalogRoute(:sessions) = %q, want no catalog route", route)
+	}
+}
+
+func TestBuildModelPicker(t *testing.T) {
+	entries := BuildModelPicker([]ModelCandidate{
+		{ID: "gpt-4o-mini", Name: "GPT-4o mini", Provider: "openai", ContextWindow: 128000},
+		{ID: "claude-x", Provider: "anthropic"},
+		{ID: "gpt-4o-mini", Name: "duplicate"},
+		{ID: "  "},
+	}, "claude-x")
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 model rows, got %d (%+v)", len(entries), entries)
+	}
+	if entries[0].ID != "claude-x" || !entries[0].Current {
+		t.Fatalf("current model must be the first row: %+v", entries[0])
+	}
+	if entries[1].Label != "GPT-4o mini" || entries[1].Provider != "openai" || entries[1].ContextWindow != 128000 {
+		t.Fatalf("unexpected model row: %+v", entries[1])
+	}
+	if empty := BuildModelPicker(nil, ""); empty == nil || len(empty) != 0 {
+		t.Fatalf("BuildModelPicker(nil) = %v, want empty non-nil slice", empty)
+	}
+}
+
+func TestBuildToolPicker(t *testing.T) {
+	entries := BuildToolPicker([]ToolCandidate{
+		{Name: "web_search", Description: "Search the web", Category: "research"},
+		{Name: "run_code"},
+		{Name: "run_code", Description: "duplicate"},
+		{Name: ""},
+	})
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 tool rows, got %d (%+v)", len(entries), entries)
+	}
+	if entries[0].Name != "run_code" || entries[0].Label != "run_code" {
+		t.Fatalf("tool rows should be sorted by name: %+v", entries[0])
+	}
+	if entries[1].Name != "web_search" || entries[1].Category != "research" || entries[1].Description != "Search the web" {
+		t.Fatalf("unexpected tool row: %+v", entries[1])
+	}
+	if empty := BuildToolPicker(nil); empty == nil || len(empty) != 0 {
+		t.Fatalf("BuildToolPicker(nil) = %v, want empty non-nil slice", empty)
 	}
 }
