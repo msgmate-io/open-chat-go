@@ -11,6 +11,11 @@ import (
 type SelfResponse struct {
 	database.User
 	Impersonator *database.User `json:"impersonator,omitempty"`
+	// HasPassword reports whether the account can sign in with a password at
+	// all. Accounts provisioned by an OIDC/Google login start without one
+	// (ci#1111) and can attach one later through POST /user/password, so the
+	// UI needs this to offer "set" rather than "change" password.
+	HasPassword bool `json:"has_password"`
 }
 
 // Self returns the current user's details.
@@ -32,7 +37,7 @@ func (h *UserHandler) Self(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := SelfResponse{User: *user}
+	response := SelfResponse{User: *user, HasPassword: database.AccountHasPassword(user)}
 	if impersonator, ok := r.Context().Value("impersonator").(*database.User); ok && impersonator != nil {
 		response.Impersonator = impersonator
 	}
