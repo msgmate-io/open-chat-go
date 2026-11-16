@@ -3027,6 +3027,22 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/ci/scripts/ci-flows/test_auto_approve_merge_protection_preflight.py -v
 
+      # ci#1066: the preflight above reports the live protection state, but the
+      # *decision* it feeds - "is the hop unattended for the right reason, and is
+      # re-enabling the ruleset the correct next step?" - is a predicate over the
+      # effective-rules answer plus the ruleset resource. It lives in
+      # development/ci/scripts/ci-flows/promotion_hop_readiness.py so a maintainer branches on
+      # a rendered verdict instead of re-deriving it from raw API payloads. The
+      # guard pins the translation offline against a stubbed `gh`: a disabled
+      # ruleset is `masked` and never `safe_to_enable`, an `active` ruleset
+      # without an approver is `needs_approver`, a write-access approver or a
+      # bypass actor is `ready`, an unreadable API is `unknown` (never `masked`),
+      # and the credential is never rendered.
+      - name: Promotion hop readiness unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_promotion_hop_readiness.py -v
+
       # ci#1067: the promotion PR refresh PATCHed only the title, so
       # `open-chat-go#36` kept advertising an older promotion (a stale dev head
       # and a stale consolidated-ticket list) long after `dev` had moved on.
