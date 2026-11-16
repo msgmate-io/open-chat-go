@@ -73,15 +73,21 @@ func newPartialMessagePersister(chatUUID, sessionID string, senderID uint) *part
 // write per streamingSnapshotMinInterval. seq is the current partial-message
 // sequence number so clients can reconcile hydrated snapshots with
 // subsequent live deltas.
-func (p *partialMessagePersister) snapshot(seq int64, text string, reasoning []string, toolCalls []interface{}) {
+//
+// It reports whether this call actually flushed, which is what the fine
+// grained stream channel (ci#1104) uses as its reconcile floor: the existing
+// 1s persistence tick doubles as the snapshot cadence, so no second timer is
+// introduced.
+func (p *partialMessagePersister) snapshot(seq int64, text string, reasoning []string, toolCalls []interface{}) bool {
 	if p == nil {
-		return
+		return false
 	}
 	p.dirty = true
 	if time.Since(p.lastFlush) < streamingSnapshotMinInterval {
-		return
+		return false
 	}
 	p.flush(seq, text, reasoning, toolCalls)
+	return true
 }
 
 // flushNow writes the snapshot regardless of throttling.

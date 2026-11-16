@@ -48,6 +48,27 @@ blinking block in `NORMAL` and a blinking bar in `INSERT`.
 - **Pick a chat** — `p` lists your conversations and interactions (including
   chats created in the web UI) and attaches to the selected one.
 
+### Catalog commands
+
+The palette (`:`) exposes three read-only catalogs over the same short-lived
+`coder-tui` token, so the pickers work inside a forwarded coding sandbox
+without any wider credential:
+
+| Command | Route | Behaviour |
+| --- | --- | --- |
+| `:models` | `GET /api/v1/models` | pick the model used for the next turn (sent as the chat's `shared_config`) |
+| `:tools` | `GET /api/v1/tools` | inspect the tool catalog, including whether a tool needs init or confirmation |
+| `:bots` | `GET /api/v1/bots/list` | list the bots you may use and switch this interaction to the picked one; v1 stops at bots the acting user already owns or may read |
+| `:sessions` | owner session list | scroll the coding sessions you still own and attach the picked one back into this view; destroyed, expired and duplicate rows for one chat are hidden |
+
+`:models`, `:tools` and `:bots` are plain catalog reads: they cannot mutate
+remote state, and the sibling write routes (`POST /models`, `PATCH
+/bots/{identifier}`, `PUT /bots/{identifier}/config`, `POST /bots/list`) stay
+denied for this audience. `:bots` v1 deliberately stops at bots the caller
+already knows; discovering bots nobody interacted with yet is left to the web UI.
+`:sessions` reads the owner-scoped session list and only pre-selects a row:
+re-attaching the chosen session stays an explicit action.
+
 ### Keys
 
 | Key | Action |
