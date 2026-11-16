@@ -58,6 +58,101 @@ func isSandboxProvisioningTool(toolName string) bool {
 	return strings.HasPrefix(strings.TrimSpace(toolName), coderProvisioningToolPrefix)
 }
 
+// sandboxProvisioningClassMarkers are the error fragments that classify a
+// failure of a *provisioning* tool as a sandbox-provisioning problem even though
+// the scheduler accepted the sandbox. ci#1120: the per-chat sandbox exists and
+// answers, but the workspace root it advertises
+// (`/workspace/coder-<chat_uuid>`) was never materialised, so the tool body dies
+// in a shell before doing any work:
+//
+//	coder tool api failed (400): failed to list .: sh: cd: can't cd to
+//	/workspace/coder-0012091c-…: No such file or directory
+//
+// The fragments are the ones tool_failure_retry.go classifies as a deterministic
+// workspace-missing failure; they are re-registered here so the failure is
+// counted and logged as sandbox *provisioning* (with the path), which is what
+// the canary verdict classifier maps to a provisioning verdict.
+var sandboxProvisioningClassMarkers = append([]string(nil), sandboxWorkspaceMissingMarkers...)
+
+// isSandboxProvisioningFailure reports whether a failed call of toolName is a
+// sandbox-provisioning failure rather than a plain tool error: either the
+// scheduler rejected the sandbox for node capacity that has since recovered
+// (ci#691) or the sandbox's workspace root was never materialised (ci#1120).
+func isSandboxProvisioningFailure(toolName string, err error) bool {
+	if !isSandboxProvisioningTool(toolName) {
+		return false
+	}
+	if isSandboxWorkspaceMarkerFailure(err) {
+		return true
+	}
+	return isSandboxCapacityFailure(err)
+}
+
+var (
+	// sandboxProvisioningMu guards the provisioning-failure log below.
+	sandboxProvisioningMu sync.Mutex
+	// sandboxProvisioningMissingPaths records the workspace roots that a
+	// provisioning call reported as absent (ci#1120), so the count and the paths
+	// are visible in the transcript/diagnostics instead of only in a bare shell
+	// error. Bounded: only the most recent paths are kept.
+	sandboxProvisioningMissingPaths []string
+)
+
+// sandboxProvisioningMissingPathLimit bounds the recorded paths so a long-lived
+// process cannot grow this diagnostic list without bound.
+const sandboxProvisioningMissingPathLimit = 32
+
+// noteSandboxProvisioningFailure logs a provisioning failure of toolName and, for
+// a workspace-root failure, records the advertised (but absent) path and returns
+// it. It returns "" for every other failure class. Logging happens here so a
+// missing `/workspace/coder-<uuid>` is attributable in the server log even when
+// the model never reports it.
+func noteSandboxProvisioningFailure(toolName string, err error) string {
+	if !isSandboxProvisioningTool(toolName) {
+		return ""
+	}
+	if isSandboxWorkspaceMarkerFailure(err) {
+		path := sandboxWorkspacePathFromError(err.Error())
+		if path == "" {
+			path = "/workspace/coder-<unknown>"
+		}
+		logging.Errorf(
+			"sandbox provisioning failed for tool %s: workspace root %q was never materialised (ci#1120): %v",
+			strings.TrimSpace(toolName), path, err,
+		)
+		sandboxProvisioningMu.Lock()
+		sandboxProvisioningMissingPaths = append(sandboxProvisioningMissingPaths, path)
+		if len(sandboxProvisioningMissingPaths) > sandboxProvisioningMissingPathLimit {
+			sandboxProvisioningMissingPaths = sandboxProvisioningMissingPaths[len(sandboxProvisioningMissingPaths)-sandboxProvisioningMissingPathLimit:]
+		}
+		sandboxProvisioningMu.Unlock()
+		return path
+	}
+	if isSandboxCapacityFailure(err) {
+		logging.Errorf(
+			"sandbox provisioning failed for tool %s: the scheduler rejected the sandbox for capacity (ci#691): %v",
+			strings.TrimSpace(toolName), err,
+		)
+	}
+	return ""
+}
+
+// sandboxProvisioningWorkspaceMissingCount reports how many missing-workspace-root
+// provisioning failures were recorded, and the paths they named.
+func sandboxProvisioningWorkspaceMissingCount() (int, []string) {
+	sandboxProvisioningMu.Lock()
+	defer sandboxProvisioningMu.Unlock()
+	return len(sandboxProvisioningMissingPaths), append([]string(nil), sandboxProvisioningMissingPaths...)
+}
+
+// resetSandboxProvisioningFailures clears the recorded paths. It exists for
+// tests, which must not leak state into the next test.
+func resetSandboxProvisioningFailures() {
+	sandboxProvisioningMu.Lock()
+	defer sandboxProvisioningMu.Unlock()
+	sandboxProvisioningMissingPaths = nil
+}
+
 var (
 	// sandboxCapacityMu guards the process-wide capacity cooldown. The cooldown
 	// is deliberately process-wide: node capacity is shared by every interaction

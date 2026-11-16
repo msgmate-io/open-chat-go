@@ -298,3 +298,43 @@ func TestProcessStreamingResponseReaderMarksSandboxCapacityFailure(t *testing.T)
 		t.Fatalf("expected the frame to carry the capacity marker, got %+v", failedFrames[0])
 	}
 }
+
+// TestSandboxProvisioningClassCoversMissingWorkspaceRoot pins the ci#1120 half of
+// the provisioning class: a sandbox that answers but whose workspace root was
+// never materialised is a provisioning failure of that path, so it is counted and
+// logged as one (with the `/workspace/coder-<uuid>` path) instead of disappearing
+// as an anonymous shell error.
+func TestSandboxProvisioningClassCoversMissingWorkspaceRoot(t *testing.T) {
+	resetSandboxProvisioningFailures()
+	resetSandboxCapacityCooldown()
+	t.Cleanup(func() {
+		resetSandboxProvisioningFailures()
+		resetSandboxCapacityCooldown()
+	})
+
+	err := errors.New(ci1120WorkspaceMissingError)
+	if !isSandboxProvisioningFailure("coder_list", err) {
+		t.Fatal("expected a missing workspace root to classify as a provisioning failure")
+	}
+	if isSandboxProvisioningFailure("web_search", err) {
+		t.Fatal("only coder provisioning tools may be capacity/provisioning classed")
+	}
+	if !isSandboxProvisioningFailure(
+		"coder_select_workspace",
+		errors.New(ci691SandboxCapacityError),
+	) {
+		t.Fatal("expected the capacity rejection to stay in the provisioning class")
+	}
+
+	if got := noteSandboxProvisioningFailure("coder_list", err); got != ci1120WorkspaceMissingPath {
+		t.Fatalf("recorded path = %q, want %q", got, ci1120WorkspaceMissingPath)
+	}
+	if got := noteSandboxProvisioningFailure("web_search", err); got != "" {
+		t.Fatalf("expected a non-provisioning tool not to be recorded, got %q", got)
+	}
+
+	count, paths := sandboxProvisioningWorkspaceMissingCount()
+	if count != 1 || len(paths) != 1 || paths[0] != ci1120WorkspaceMissingPath {
+		t.Fatalf("provisioning failure accounting = (%d, %v), want 1 entry naming %q", count, paths, ci1120WorkspaceMissingPath)
+	}
+}
