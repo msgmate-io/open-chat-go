@@ -196,6 +196,13 @@ func StopInteractionForLocalLinkLoss(DB *gorm.DB, inspector *asynq.Inspector, ch
 	if err := StopAutoContinueForChat(DB, chat.ID, reason); err != nil {
 		logging.Errorf("ci#1101: failed to stop the auto-continuation loop of chat %s after local link loss: %v", chat.UUID, err)
 	}
+
+	// ci#1101: stopping alone leaves the operator with an interaction that
+	// silently rests in `stopped`. Surface it as a visible failure turn that
+	// carries the upstream sandboxes the interaction can be continued in, so the
+	// web UI can offer a resume instead of the interaction just going quiet.
+	ReportTuiDetached(DB, chat, tuiDetachedEventForChat(DB, chat, localLinkStopReason), time.Now())
+
 	logging.Infof("ci#1101: stopped interaction %s because its local link ended (%s)", chat.UUID, reason)
 }
 
