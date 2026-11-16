@@ -991,6 +991,10 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 						if toolCallID == "" {
 							continue
 						}
+						toolCallName, _ := toolCallMap["name"].(string)
+						if toolCallName == "" {
+							toolCallName, _ = toolCallMap["tool_name"].(string)
+						}
 
 						resultText := ""
 						switch typedResult := toolCallMap["result"].(type) {
@@ -1005,6 +1009,14 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 						if strings.TrimSpace(resultText) == "" {
 							continue
 						}
+
+						// ci#1116: a call that is still waiting for the user's
+						// confirmation stores the confirm-action payload as its
+						// result. Replay the pending-confirmation guidance
+						// instead, so a later turn knows a human is in the loop
+						// instead of re-issuing the same call (which paused
+						// again and queued yet another continuation).
+						resultText = confirmationResultForModel(toolCallName, resultText)
 
 						// ci#630: cap a stored result on the way back into the
 						// context. Rows written before the persistence cap existed

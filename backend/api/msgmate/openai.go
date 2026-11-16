@@ -291,6 +291,52 @@ func buildConfirmationSuggestion(toolName string, toolInput interface{}, continu
 	return string(encoded)
 }
 
+// buildConfirmationPauseModelResult builds the tool result the model sees for a
+// call that was paused for user confirmation (ci#1116).
+//
+// The stored result of such a call is the machine-readable confirm-action
+// payload (see buildConfirmationSuggestion), which only states
+// `"status":"pending_confirmation"`. A model that is handed that payload as its
+// tool result does not reliably understand that a human is now in the loop: it
+// re-emits the same call, which pauses again, persists another
+// "Waiting for your confirmation to run `x`." row and queues another
+// continuation - the duplicated prompts and task churn the ticket reports.
+//
+// A tool can supply its own wording (ConfirmationBlockMessage, eg coder_ask);
+// otherwise the shared guidance below is used so every tool gets an explicit
+// "this is pending, do not retry, do not fabricate" instruction.
+func buildConfirmationPauseModelResult(toolName, blockMessage string) string {
+	if trimmed := strings.TrimSpace(blockMessage); trimmed != "" {
+		return trimmed
+	}
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		name = "the requested tool"
+	} else {
+		name = "`" + name + "`"
+	}
+	return fmt.Sprintf(
+		"Confirmation pending: %s was NOT executed. The user has been shown a confirmation prompt for this call and no result exists yet. "+
+			"Do not retry or re-issue this call, and do not assume, fabricate or guess its output. "+
+			"Stop calling tools, briefly tell the user the call is waiting for their approval, and end your turn - the call runs automatically as soon as they confirm.",
+		name,
+	)
+}
+
+// confirmationResultForModel maps a stored tool result back into the text the
+// model should see. A paused call keeps the confirm-action payload on the row
+// until the user decides (or forever, if they never do), so replaying it
+// verbatim would hide the pending confirmation from later turns; it is
+// replaced by the same stable guidance the model got when the turn paused.
+// The substitution is deterministic, so the replayed prompt prefix stays
+// byte-identical between turns and the provider prompt cache still hits.
+func confirmationResultForModel(toolName, stored string) string {
+	if isConfirmActionPayload(stored) {
+		return buildConfirmationPauseModelResult(toolName, "")
+	}
+	return stored
+}
+
 func buildToolErrorPlaceholder(toolName string, runErr error) string {
 	if runErr == nil {
 		return fmt.Sprintf("Tool %s failed. Please continue without tool output.", toolName)
@@ -1975,11 +2021,11 @@ func processParsedToolCall(
 		toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 		status = ToolCallStatusPendingConfirmation
 
-		modelResult := toolResult
-		if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
-			modelResult = blockMessage
-		}
-		result.result = modelResult
+		// ci#1116: the model-facing result is the shared pending-confirmation
+		// guidance (or the tool's own block message), not the bare
+		// confirm-action payload, so the agent knows a human is in the loop
+		// instead of re-issuing the call.
+		result.result = buildConfirmationPauseModelResult(tool.GetToolName(), tool.GetConfirmationBlockMessage())
 		if tool.GetStopOnFirstConfirmableToolCall() {
 			result.stopAfterTool = true
 		}
@@ -2026,6 +2072,16 @@ func processParsedToolCall(
 				// scheduler again (ci#691).
 				noteSandboxCapacityFailure(sandboxCapacityBackoffDelay(retries + 1))
 				toolResult = buildSandboxCapacityToolErrorPlaceholder(name, runErr, retries+1)
+			} else if path, missing := isSandboxWorkspaceMissing(runErr); missing {
+				// ci#1120: the sandbox workspace root was never materialised.
+				// Deterministic like the ci#739 conflict above (excluded from
+				// isTransientToolFailure), and equally useless to retry: the
+				// path the chat derives is stable, so re-issuing the identical
+				// call re-enters the same absent directory. Count and log it as
+				// a provisioning failure of that path, and tell the model to
+				// re-select a workspace instead of replaying the call.
+				noteSandboxProvisioningFailure(name, runErr)
+				toolResult = buildSandboxWorkspaceMissingToolErrorPlaceholder(name, path, runErr)
 			} else if isSandboxRegistryConflict(runErr) {
 				// ci#739: deterministic, so never retried (isTransientToolFailure
 				// excludes it), but the bare error reads like a blip and invites
