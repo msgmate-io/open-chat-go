@@ -130,6 +130,15 @@ func latestTodoState(DB *gorm.DB, chatID uint, tail []database.Message) []Intera
 	return todos
 }
 
+// TodoStateForChat returns the newest todo list the agent wrote in one chat.
+//
+// It is the exported form of latestTodoState so callers outside this package -
+// eg the agent's own history tool (ci#1103) - reuse the exact same derivation
+// instead of re-parsing the transcript themselves.
+func TodoStateForChat(DB *gorm.DB, chatID uint) []InteractionStatusTodo {
+	return latestTodoState(DB, chatID, nil)
+}
+
 // todosFromMessages returns the todo list carried by the newest `todo_write`
 // call (newest message first, newest call last within a message). The boolean
 // reports whether such a call was found at all, so an agent that wrote an empty

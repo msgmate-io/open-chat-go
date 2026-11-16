@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"backend/api/chats"
 	"backend/database"
 
 	"gorm.io/gorm"
@@ -74,7 +75,22 @@ func selfHistoryToolDefinition() mcpToolDefinition {
 				},
 				"state": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional state filter: running, finished, waiting.",
+					"description": "Optional state filter, applied in the query (so pagination stays exact): running, finished, waiting.",
+				},
+				"view": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"history", "todos", "unfinished"},
+					"description": "Optional view. `history` (default) lists past interactions; `todos` lists only interactions " +
+						"that have an agent todo list, with that list attached; `unfinished` is `todos` restricted to " +
+						"interactions that still have open todos (what did I leave unfinished with this user?).",
+				},
+				"todo_status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional todo filter: only return interactions whose newest todo list has an entry with this status (pending, in_progress, completed, cancelled; `open` == pending or in_progress).",
+				},
+				"unfinished": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: only return interactions whose newest todo list still has open (not completed/cancelled) entries. Same as view=unfinished.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -145,6 +161,18 @@ func selfHistoryQuery(db *gorm.DB, self *database.User, acting *database.User, a
 	if until := parseSelfHistoryTime(mcpArgString(args, "until")); until != nil {
 		query = query.Where("updated_at <= ?", *until)
 	}
+	// ci#1103 slice (a): the coarse `state` filter is translated into SQL here so
+	// it is applied BEFORE LIMIT/OFFSET. Filtering it in Go after the page was
+	// read made a state-filtered page come back short (and sometimes empty).
+	if state := mcpArgString(args, "state"); state != "" {
+		query = applySelfHistoryStateFilter(query, db, state)
+	}
+	// Same reasoning for the todo filters: prune to interactions that ever
+	// carried a `todo_write` call in the query, then verify the exact newest list
+	// in Go (the newest-call parse is not expressible portably in SQL).
+	if filter := selfHistoryTodoFilterFromArgs(args); filter.active() {
+		query = query.Where("id IN (?)", selfHistoryTodoCandidateChats(db))
+	}
 	if search := mcpArgString(args, "query"); search != "" {
 		like := "%" + search + "%"
 		titleSubquery := db.Model(&database.ChatSettings{}).
@@ -159,6 +187,143 @@ func selfHistoryQuery(db *gorm.DB, self *database.User, acting *database.User, a
 		query = query.Where("(id IN (?) OR uuid IN (?) OR CAST(tags AS TEXT) LIKE ?)", titleSubquery, labelSubquery, like)
 	}
 	return query
+}
+
+// selfHistoryStateCondition maps the coarse `state` argument onto the same
+// derivation interactionState (mcp_server.go) performs in Go: "waiting" when the
+// newest message is human, "running" while an automated reply is streaming, and
+// "finished" for a completed automated reply. Terms are joined with AND on
+// purpose - the caller wraps the result in its own parentheses.
+func selfHistoryStateCondition(state string) (string, []interface{}) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "running":
+		return "latest_message_id IN (SELECT id FROM messages WHERE data_type = ? AND deleted_at IS NULL) AND " +
+				"latest_message_id IN (SELECT id FROM messages WHERE sender_id IN (SELECT id FROM users WHERE is_automated = ?) AND deleted_at IS NULL)",
+			[]interface{}{"streaming", true}
+	case "finished":
+		return "latest_message_id IN (SELECT id FROM messages WHERE data_type <> ? AND deleted_at IS NULL) AND " +
+				"latest_message_id IN (SELECT id FROM messages WHERE sender_id IN (SELECT id FROM users WHERE is_automated = ?) AND deleted_at IS NULL)",
+			[]interface{}{"streaming", true}
+	case "waiting":
+		return "latest_message_id IN (SELECT id FROM messages WHERE sender_id IN (SELECT id FROM users WHERE is_automated = ?) AND deleted_at IS NULL)",
+			[]interface{}{false}
+	default:
+		return "", nil
+	}
+}
+
+// applySelfHistoryStateFilter adds the state predicate to the query. Unknown
+// values are rejected by the caller before the query runs, so an empty condition
+// here means "no such state" and matches nothing rather than everything.
+func applySelfHistoryStateFilter(query *gorm.DB, db *gorm.DB, state string) *gorm.DB {
+	condition, values := selfHistoryStateCondition(state)
+	if condition == "" {
+		return query.Where("1 = 0")
+	}
+	// Participating automated user is the agent itself: restrict the message
+	// subselects to the pair's automated participant so a shared chat is not
+	// classified by a foreign bot.
+	return query.Where("(("+condition+"))", values...)
+}
+
+// selfHistoryTodoCandidateChats is the SQL-side prefilter for the todo views: the
+// chats whose transcript carries a `todo_write` tool call at all. The exact
+// "newest todo list still has open entries" question is answered in Go from that
+// same list (chats.TodoStateForChat), but the page is already narrowed here so
+// LIMIT/OFFSET count real candidates instead of being trimmed afterwards.
+func selfHistoryTodoCandidateChats(db *gorm.DB) *gorm.DB {
+	return db.Model(&database.Message{}).
+		Select("chat_id").
+		Where("deleted_at IS NULL").
+		Where("CAST(tool_calls AS TEXT) LIKE ?", "%todo%")
+}
+
+// selfHistoryTodoFilter is the parsed form of the todo arguments.
+type selfHistoryTodoFilter struct {
+	onlyWithTodos bool
+	unfinished    bool
+	status        string
+}
+
+func (f selfHistoryTodoFilter) active() bool {
+	return f.onlyWithTodos || f.unfinished || f.status != ""
+}
+
+// selfHistoryTodoFilterFromArgs reads `view`, `todo_status` and `unfinished`.
+func selfHistoryTodoFilterFromArgs(args map[string]interface{}) selfHistoryTodoFilter {
+	filter := selfHistoryTodoFilter{}
+	switch strings.ToLower(mcpArgString(args, "view")) {
+	case "todos":
+		filter.onlyWithTodos = true
+	case "unfinished":
+		filter.onlyWithTodos = true
+		filter.unfinished = true
+	}
+	if mcpArgBool(args, "unfinished") {
+		filter.onlyWithTodos = true
+		filter.unfinished = true
+	}
+	if status := strings.ToLower(mcpArgString(args, "todo_status")); status != "" {
+		filter.onlyWithTodos = true
+		filter.status = status
+	}
+	return filter
+}
+
+// matches reports whether the newest todo list of one chat satisfies the filter.
+func (f selfHistoryTodoFilter) matches(todos []chats.InteractionStatusTodo) bool {
+	if !f.onlyWithTodos {
+		return true
+	}
+	if len(todos) == 0 {
+		return false
+	}
+	if f.status != "" {
+		if !todoListHasStatus(todos, f.status) {
+			return false
+		}
+	}
+	if f.unfinished && !todoListHasOpenEntries(todos) {
+		return false
+	}
+	return true
+}
+
+// todoListHasOpenEntries reports whether any entry is still open (not completed
+// and not cancelled).
+func todoListHasOpenEntries(todos []chats.InteractionStatusTodo) bool {
+	for _, todo := range todos {
+		if !isClosedTodoStatus(todo.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func isClosedTodoStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "cancelled", "canceled":
+		return true
+	}
+	return false
+}
+
+// todoListHasStatus matches one entry status; "open" is a shorthand for the two
+// non-terminal statuses.
+func todoListHasStatus(todos []chats.InteractionStatusTodo, wanted string) bool {
+	for _, todo := range todos {
+		status := strings.ToLower(strings.TrimSpace(todo.Status))
+		if wanted == "open" {
+			if status == "pending" || status == "in_progress" {
+				return true
+			}
+			continue
+		}
+		if status == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func parseSelfHistoryTime(value string) *time.Time {
@@ -258,6 +423,16 @@ func buildSelfHistoryRow(db *gorm.DB, chat database.Chat) map[string]interface{}
 		summary += "Last agent reply: " + lastAgentText
 	}
 	state := interactionState(chat)
+	todos := chats.TodoStateForChat(db, chat.ID)
+	if todos == nil {
+		todos = []chats.InteractionStatusTodo{}
+	}
+	openTodos := 0
+	for _, todo := range todos {
+		if !isClosedTodoStatus(todo.Status) {
+			openTodos++
+		}
+	}
 	return map[string]interface{}{
 		"uuid":            chat.UUID,
 		"chat_type":       chat.ChatType,
@@ -271,6 +446,8 @@ func buildSelfHistoryRow(db *gorm.DB, chat database.Chat) map[string]interface{}
 		"summary":         summary,
 		"first_prompt":    firstPrompt,
 		"last_agent_text": lastAgentText,
+		"todos":           todos,
+		"open_todo_count": openTodos,
 	}
 }
 
@@ -307,28 +484,62 @@ func toolSelfHistory(db *gorm.DB, user *database.User, args map[string]interface
 	if offset < 0 {
 		offset = 0
 	}
-	stateFilter := strings.TrimSpace(mcpArgString(args, "state"))
-
-	chats := []database.Chat{}
-	if err := selfHistoryQuery(db, self, acting, args).
-		Preload("User1").
-		Preload("User2").
-		Preload("LatestMessage").
-		Preload("LatestMessage.Sender").
-		Order("updated_at desc, id desc").
-		Limit(limit).
-		Offset(offset).
-		Find(&chats).Error; err != nil {
-		return nil, fmt.Errorf("failed to load agent self history: %w", err)
+	stateFilter := mcpArgString(args, "state")
+	if stateFilter != "" {
+		stateFilter = strings.ToLower(stateFilter)
+		if condition, _ := selfHistoryStateCondition(stateFilter); condition == "" {
+			return nil, fmt.Errorf("unknown state %q: use running, finished or waiting", stateFilter)
+		}
+		// Applied in the query (applySelfHistoryStateFilter), never after
+		// LIMIT/OFFSET: post-filtering returned short pages.
+	}
+	todoFilter := selfHistoryTodoFilterFromArgs(args)
+	switch view := strings.ToLower(mcpArgString(args, "view")); view {
+	case "", "history", "todos", "unfinished":
+	default:
+		return nil, fmt.Errorf("unknown view %q: use history, todos or unfinished", view)
 	}
 
-	rows := make([]map[string]interface{}, 0, len(chats))
-	for _, chat := range chats {
-		row := buildSelfHistoryRow(db, chat)
-		if stateFilter != "" && row["state"] != stateFilter {
-			continue
+	// The todo views additionally verify the newest todo list in Go (the parse
+	// cannot be done portably in SQL), so they page over the filtered candidates
+	// by pulling rows in bounded batches instead of trimming one page after the
+	// fact.
+	rows := make([]map[string]interface{}, 0, limit)
+	scanned := 0
+	scanLimit := limit
+	if todoFilter.active() {
+		scanLimit = mcpMaxLimit
+	}
+	for {
+		chatsPage := []database.Chat{}
+		query := selfHistoryQuery(db, self, acting, args).
+			Preload("User1").
+			Preload("User2").
+			Preload("LatestMessage").
+			Preload("LatestMessage.Sender").
+			Order("updated_at desc, id desc").
+			Limit(scanLimit).
+			Offset(offset + scanned)
+		if err := query.Find(&chatsPage).Error; err != nil {
+			return nil, fmt.Errorf("failed to load agent self history: %w", err)
 		}
-		rows = append(rows, row)
+		if len(chatsPage) == 0 {
+			break
+		}
+		for _, chat := range chatsPage {
+			row := buildSelfHistoryRow(db, chat)
+			if !todoFilter.matches(chats.TodoStateForChat(db, chat.ID)) {
+				continue
+			}
+			rows = append(rows, row)
+			if len(rows) >= limit {
+				break
+			}
+		}
+		scanned += len(chatsPage)
+		if len(rows) >= limit || len(chatsPage) < scanLimit || !todoFilter.active() {
+			break
+		}
 	}
 	return map[string]interface{}{
 		"self":         identity,
