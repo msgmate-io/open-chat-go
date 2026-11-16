@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	identitySandboxDir   = "development/sandbox/identity_provider"
+	identitySandboxDir   = "development/ci/sandbox/identity_provider"
 	identityRealmFile    = "realm/open-chat-realm.json"
 	identityComposeFile  = "docker-compose.yaml"
 	identityVerifyScript = "verify_login.py"
@@ -62,6 +62,9 @@ func readIdentityRealm(t *testing.T) identityRealm {
 	path := filepath.Join(repoRoot(t), identitySandboxDir, identityRealmFile)
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("private open-chat-go-ci checkout is not materialized: %v", err)
+		}
 		t.Fatalf("read sandbox realm: %v", err)
 	}
 
@@ -77,6 +80,12 @@ func readIdentityRealm(t *testing.T) identityRealm {
 func TestIdentityProviderSandboxStack(t *testing.T) {
 	root := repoRoot(t)
 	sandbox := filepath.Join(root, identitySandboxDir)
+	if _, err := os.Stat(sandbox); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("private open-chat-go-ci checkout is not materialized: %v", err)
+		}
+		t.Fatalf("stat sandbox: %v", err)
+	}
 
 	for _, rel := range []string{identityComposeFile, identityVerifyScript, identityRealmFile} {
 		if _, err := os.Stat(filepath.Join(sandbox, rel)); err != nil {
