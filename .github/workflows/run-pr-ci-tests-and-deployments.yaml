@@ -4325,6 +4325,14 @@ jobs:
     name: Open Dev To Main Promotion PR
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
+    # ci#833/ci#1080: the merge and push events that reach this job have
+    # different top-level concurrency groups, so they can run at the same time.
+    # Two concurrent runs both saw "no open promotion PR" and each created one
+    # (open-chat-go#92 and #93 at the same second). Serialise this job so the
+    # second run always takes the refresh path and the hop stays one PR.
+    concurrency:
+      group: open-dev-to-main-promotion-pr
+      cancel-in-progress: false
     # ci#833: `main <- dev` is the ONLY PR that carries the deploy/sandbox
     # labels and the only one whose merge deploys ci.msgmate.io. A merge to
     # `dev` refreshes this PR in place (never delete/recreate: closing it would
