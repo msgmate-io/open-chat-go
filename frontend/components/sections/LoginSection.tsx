@@ -336,6 +336,26 @@ export default function LoginHero({
 }
 
 
+// The identity provider integration reports the configured preset (keycloak,
+// authentik, generic) and never the raw issuer branding, so the label is
+// derived from the preset with SSO as the neutral fallback.
+const identityProviderLabels: Record<string, string> = {
+    keycloak: "Keycloak",
+    authentik: "Authentik",
+    generic: "SSO",
+}
+
+function identityProviderLabel(config: { provider?: string; preset?: string; name?: string } | null): string {
+    const key = (config?.preset || config?.provider || "").toLowerCase()
+    if (key && identityProviderLabels[key]) {
+        return identityProviderLabels[key]
+    }
+    if (key) {
+        return key.replace(/^./, (c) => c.toUpperCase())
+    }
+    return "SSO"
+}
+
 export function LoginSection({
     sectionId = "login",
     navigateTo,
@@ -353,11 +373,12 @@ export function LoginSection({
 }) {
     const googleButtonRef = useRef<HTMLDivElement | null>(null)
     const [googleOpen, setGoogleOpen] = useState(false)
-    const [ssoConfig, setSsoConfig] = useState<{ enabled?: boolean; login_start_url?: string; provider?: string; preset?: string } | null>(null)
+    const [ssoOpen, setSsoOpen] = useState(false)
+    const [ssoConfig, setSsoConfig] = useState<{ enabled?: boolean; login_start_url?: string; provider?: string; preset?: string; name?: string } | null>(null)
 
     useEffect(() => {
         let cancelled = false
-        fetch("/api/v1/integrations/intentity_provider/config", { headers: { Accept: "application/json" } })
+        fetch("/api/v1/integrations/identity_provider/config", { headers: { Accept: "application/json" } })
             .then((res) => (res.ok ? res.json() : null))
             .then((cfg) => {
                 if (!cancelled && cfg?.enabled && cfg?.login_start_url) {
@@ -429,16 +450,26 @@ export function LoginSection({
             </Text>
         </div>
         {ssoConfig?.enabled && ssoConfig.login_start_url && (
-            <Button
-                type="button"
-                variant="outline"
-                className="mb-2 rounded-full"
-                onClick={() => {
-                    window.location.href = ssoConfig.login_start_url as string
-                }}
-            >
-                Login with {ssoConfig.preset ? ssoConfig.preset.replace(/^./, (c) => c.toUpperCase()) : "SSO"}
-            </Button>
+            <Collapsible open={ssoOpen} onOpenChange={setSsoOpen} className="mb-2 [@media(max-height:560px)]:mb-0 flex flex-col items-center">
+                <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" className="h-auto px-2 py-1 text-xs text-muted-foreground hover:text-foreground">
+                        or login with {identityProviderLabel(ssoConfig)}
+                        <ChevronDown className={`ml-1 h-3 w-3 transition-transform ${ssoOpen ? "rotate-180" : ""}`} />
+                    </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="CollapsibleContent">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        onClick={() => {
+                            window.location.href = ssoConfig.login_start_url as string
+                        }}
+                    >
+                        Continue with {identityProviderLabel(ssoConfig)}
+                    </Button>
+                </CollapsibleContent>
+            </Collapsible>
         )}
         {googleLoginEnabled && googleClientID && googleLoginRedirectURL && (
             <Collapsible open={googleOpen} onOpenChange={setGoogleOpen} className="mb-2 [@media(max-height:560px)]:mb-0 flex flex-col items-center">

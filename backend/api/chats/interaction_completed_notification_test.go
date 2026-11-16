@@ -73,6 +73,15 @@ func TestInteractionCompletedTypeAndRepoContext(t *testing.T) {
 		t.Fatalf("interactionRepoContext = (%q, %d, %q)", repo, number, subjectURL)
 	}
 
+	// A REST API issue_url stored in the post-action must be relayed as the
+	// human-browsable web URL (see ci#1027).
+	apiShared := &database.SharedChatConfig{ConfigData: json.RawMessage(`{"post_action":{"kind":"github_issue_comment","repo":"msgmate-io/open-chat-go","number":275,"issue_url":"https://api.github.com/repos/msgmate-io/open-chat-go/issues/275"}}`)}
+	apiChat := database.Chat{ChatType: "interaction", SharedConfig: apiShared}
+	_, _, apiSubjectURL := interactionRepoContext(nil, apiChat)
+	if apiSubjectURL != "https://github.com/msgmate-io/open-chat-go/issues/275" {
+		t.Fatalf("interactionRepoContext relayed %q, want the human web URL", apiSubjectURL)
+	}
+
 	noAction := database.Chat{ChatType: "interaction", Tags: database.StringSliceJSON{"repo:open-chat-go"}}
 	repo, number, _ = interactionRepoContext(nil, noAction)
 	if repo != "open-chat-go" || number != 0 {

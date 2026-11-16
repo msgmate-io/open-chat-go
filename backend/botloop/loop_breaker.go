@@ -91,9 +91,30 @@ type Decision struct {
 	Detail string
 }
 
+// coderHarnessPrefix is the bot-runtime name prefix of the native coder
+// harness bots (msgmate-coder-implement-bot, msgmate-coder-repl-bot, ...). They
+// are the one automated family known to legitimately emit many consecutive
+// turns in a single chat while working a tool round, so the consecutive-run
+// rule exempts them (ci#1026, Phase 1). Kept as a local prefix instead of an
+// import of backend/api/msgmate so the bot-reply task does not gain a cycle.
+const coderHarnessPrefix = "msgmate-coder"
+
+// IsCoderHarnessName reports whether a sender's bot-runtime name belongs to the
+// known coder harness family.
+func IsCoderHarnessName(name string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), coderHarnessPrefix)
+}
+
 // Detect inspects the trailing messages of a chat (newest first) and reports
 // whether answering would extend a bot-to-bot loop.
 func Detect(messages []database.Message, automated map[uint]bool, cfg Config, now time.Time) Decision {
+	return DetectWithNames(messages, automated, nil, cfg, now)
+}
+
+// DetectWithNames is Detect plus sender names, so the breaker can tell a known
+// coder harness bot (exempt from the consecutive-run rule) from an arbitrary
+// automated peer. A nil names map behaves exactly like Detect.
+func DetectWithNames(messages []database.Message, automated map[uint]bool, names map[uint]string, cfg Config, now time.Time) Decision {
 	if len(messages) == 0 {
 		return Decision{}
 	}
@@ -134,7 +155,15 @@ func Detect(messages []database.Message, automated map[uint]bool, cfg Config, no
 					break
 				}
 			}
-			if !singleSender || !progress {
+			// ci#1026 (Phase 1): the known coder harness bots are exempt from
+			// this rule outright. They work long tool rounds in a single chat
+			// and their in-round turns are not always text-bearing, so the
+			// progress heuristic can miss them; refusing those turns loses
+			// the very work the harness is in the middle of. A two-sender
+			// spin or a repeated-message drumbeat still trips below, which is
+			// what an actual harness loop looks like.
+			harness := singleSender && IsCoderHarnessName(names[runSender])
+			if (!singleSender || !progress) && !harness {
 				return Decision{
 					Loop:   true,
 					Reason: "consecutive_automated",
@@ -217,10 +246,25 @@ func DetectForChat(db *gorm.DB, chatID uint, cfg Config, now time.Time) Decision
 		return Decision{}
 	}
 	automated := make(map[uint]bool, len(users))
+	names := make(map[uint]string, len(users))
 	for _, user := range users {
 		automated[user.ID] = user.IsAutomated
+		if name := botRuntimeName(user); name != "" {
+			names[user.ID] = name
+		}
 	}
-	return Detect(messages, automated, cfg, now)
+	return DetectWithNames(messages, automated, names, cfg, now)
+}
+
+// botRuntimeName is the best available identifier of a sender's bot runtime.
+// Chat messages carry only a sender id, so the bot-runtime name is recovered
+// from the user's display name or username (the native coder bots are created
+// with the runtime name as both, e.g. "msgmate-coder-implement-bot").
+func botRuntimeName(user database.User) string {
+	if name := strings.TrimSpace(user.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(user.Username)
 }
 
 // normalizedText is the message text with whitespace collapsed and lowercased,

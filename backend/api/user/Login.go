@@ -254,7 +254,12 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 		return q.Error, "", false, database.User{}
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
+	// Password login is gated on "the account actually has a password", not on
+	// "it was created by password signup": an identity-only account (SSO
+	// provisioned) reports ErrAccountHasNoPassword with an actionable message
+	// until its owner attaches a password through the set-password endpoint
+	// (ci#1111).
+	err := database.VerifyUserPassword(&user, password)
 	if err != nil {
 		return err, "", false, database.User{}
 	}

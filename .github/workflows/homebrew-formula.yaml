@@ -69,6 +69,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Resolve inputs
         id: inputs
         env:
@@ -99,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          output="$(development/homebrew/render_formula.sh \
+          output="$(development/ci/homebrew/render_formula.sh \
             --tag "${RELEASE_TAG}" \
             --repo "${SOURCE_REPOSITORY}" \
             --tap-repo "${TAP_REPOSITORY}" \

@@ -71,7 +71,7 @@ func TestStreamingRequestEnablesIncludeUsage(t *testing.T) {
 	// Both OpenAI-compatible backends must request the final usage chunk; the
 	// provider's cache-hit accounting only arrives with it.
 	for _, backend := range []string{"openai", "openrouter"} {
-		body := buildStreamingRequestBody(backend, "deepseek/deepseek-v4-flash-0731", nil, nil, SamplingParams{})
+		body := buildStreamingRequestBody(backend, "deepseek/deepseek-v4.1-flash-1017", nil, nil, SamplingParams{})
 		if body["stream"] != true {
 			t.Fatalf("%s: stream flag is not set", backend)
 		}

@@ -299,6 +299,7 @@ func mcpInteractionTools() []mcpToolDefinition {
 				"chat_uuid": map[string]interface{}{"type": "string", "description": "UUID of the interaction chat."},
 			}, "chat_uuid"),
 		},
+		selfHistoryToolDefinition(),
 		{
 			Name:        "openchat_search_interaction_messages",
 			Description: "Search the requesting user's interaction messages by free text, optionally limited to one interaction or repository. Returns matching messages with their interaction.",
@@ -321,6 +322,8 @@ func runInteractionTool(db *gorm.DB, user *database.User, name string, args map[
 		return toolListInteractionMessages(db, user, args)
 	case "openchat_search_interaction_messages":
 		return toolSearchInteractionMessages(db, user, args)
+	case "openchat_self_history":
+		return toolSelfHistory(db, user, args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

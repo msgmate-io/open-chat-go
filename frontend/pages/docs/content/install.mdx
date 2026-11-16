@@ -50,7 +50,7 @@ Upgrades arrive through `apt upgrade`. `apt remove open-chat` keeps the
 database; `apt purge open-chat` removes `/var/lib/open-chat`.
 
 Maintainer documentation for building and signing packages lives in
-[`development/packaging/README.md`](https://github.com/msgmate-io/open-chat-go/blob/main/development/packaging/README.md).
+[`development/ci/packaging/README.md`](https://github.com/msgmate-io/open-chat-go-ci/blob/main/packaging/README.md).
 
 ## Linux (portable AppImage)
 
@@ -73,7 +73,7 @@ AppImage again while the server is up just reopens the UI instead of starting a
 second instance. Pass `--appimage-extract-and-run` on hosts without FUSE.
 
 Maintainer build and usage details for the AppImage live in
-[`development/packaging/appimage`](https://github.com/msgmate-io/open-chat-go/blob/main/development/packaging/appimage).
+[`development/ci/packaging/appimage`](https://github.com/msgmate-io/open-chat-go-ci/blob/main/packaging/appimage).
 
 ## macOS (Homebrew)
 
@@ -87,7 +87,7 @@ open-chat status
 
 Data and logs live under `$(brew --prefix)/var/open-chat` and
 `$(brew --prefix)/var/log`. See the Homebrew
-[maintainer guide](https://github.com/msgmate-io/open-chat-go/blob/main/development/homebrew/README.md)
+[maintainer guide](https://github.com/msgmate-io/open-chat-go-ci/blob/main/homebrew/README.md)
 for details.
 
 ## Nix / NixOS
@@ -130,7 +130,7 @@ Windows SCM. Because the service runs that copied binary, re-run
 `open-chat install --force` from an elevated shell after every
 `winget upgrade`/`scoop update` so the service picks up the new version.
 
-See the [Windows guide](https://github.com/msgmate-io/open-chat-go/blob/main/development/windows/README.md)
+See the [Windows guide](https://github.com/msgmate-io/open-chat-go-ci/blob/main/windows/README.md)
 for the full channel comparison and upgrade runbook.
 
 ## Docker

@@ -22,14 +22,162 @@ right place to pin the behaviour.
 
 ## Contributing, CI and deployment
 
-Open feature, bugfix, docs and chore pull requests against `main`. Release hops
-from `main` to `production` and the private full-build/deployment automation are
-maintainer-controlled; the public workflow files and the application code live
-here. Agent coordination and operational runbooks are maintained outside this
-repository.
+Open feature, bugfix, docs and chore pull requests against **`dev`**, the
+integration trunk - never against `main`, and never push to `dev` or `main`
+directly:
 
-Do not add agent runbooks, private integration documentation or deployment
-secrets to this repository.
+```bash
+git fetch origin dev
+git checkout -B <branch> origin/dev
+```
+
+`main` is only advanced by the automatic `[Dev promotion]` pull request
+(`dev` -> `main`); the heavy CI suites (`deploy`, `sandbox-test`, `build`,
+`e2e`, `test-core-only`, `ai-test-mock`, `ai-test-real`) run on that promotion
+PR only. An ordinary PR against `dev` carries the `test` label and runs the
+lightweight PR CI. Release hops from `main` to `production` and the private
+full-build/deployment automation are maintainer-controlled; the public workflow
+files and the application code live here.
+
+### The promotion hop is agent-closable, and verifying it is the price
+
+Merging the `[Dev promotion]` pull request is what deploys ci.msgmate.io, so
+while that merge stayed a maintainer click the loop could never close itself:
+tickets piled up as "implemented" but never "live" (ci#1055). The development
+lead may therefore merge the promotion PR on its own once **all required checks
+on it are green** - and must then verify that the deployment actually serves the
+promoted code. The two decisions are implemented once, as unit-tested
+predicates, in `development/ci/scripts/ci-flows/promotion_hop.py`:
+
+```bash
+development/ci/scripts/ci-flows/promotion_hop.sh merge                 # may the hop be merged now?
+development/ci/scripts/ci-flows/promotion_hop.sh deploy <VERSION>      # is that version live?
+```
+
+`merge` exits `0` merge, `1` wait (green not reached), `2` refuse (the PR is not
+the `dev` -> `main` hop, is a draft, has conflicts, or a required check really
+failed). Do not re-derive the rules from raw API payloads: the direct cause of
+the false-blocked promotion PRs was a *superseded* duplicate check-run - a
+`labeled` event spawns a second `pull_request` dispatch for the same SHA, the
+duplicate is cancelled by the shared `pr-ci-<pr>-<sha>` concurrency group, and
+its `always()` gate carries on to leave a FAILURE `PR Test Merge Requirement`
+on the commit while the live run's check of the same name goes green. The
+predicate collapses the check list onto the **newest** instance per
+(name, app) - the same rule the auto-approve gate applies (ci#847) - and lists
+every instance it disregarded as `ignored superseded check-run instances`, so a
+refusal is never based on a stale red and a real red is never whitewashed.
+
+`deploy` treats a merge as *not* acceptance. It fails unless the rollout
+completed, every pod is ready, and `https://ci.msgmate.io/api/v1/metrics/health`
+answers `200` with `{"status":"ok","version":"<VERSION>"}`. A host serving an
+older version - or one that only exists on unmerged branches (ci#890) - is a
+broken deployment, not a note: report it on the ticket and loop, do not close the
+ticket. A ticket with a behavioural criterion closes only after its feature has
+been observed working on ci.msgmate.io; a green promotion PR and a successful
+rollout are necessary, never sufficient.
+
+### "Green" is not "mergeable" (ci#1066)
+
+A fully green promotion PR can still be unmergeable, and that is not a
+regression: the `main` ruleset requires **one approving review from a reviewer
+with write access**. A `github.token` review does not count (it is not a
+write-access reviewer) and the promotion PR's author cannot approve its own PR,
+so without a configured approver identity the hop needs a maintainer merge even
+though every check is green.
+
+`auto-approve-consolidation.yaml` therefore *classifies* the block instead of
+failing on it, and a red auto-approve run keeps meaning "something is really
+broken":
+
+| Credential state | Behaviour |
+| --- | --- |
+| `CONSOLIDATE_APPROVER_TOKEN` unset, identity unresolvable | `token_missing`: warning, the review call stays authoritative |
+| token rejected by the API (`401` / no `/user`) | `token_rejected`: noticed, PRs reported as awaiting a maintainer merge, run stays green |
+| token accepted but `repos.permissions.push` is not `true` | `token_unprivileged`: noticed, same awaiting-report, run stays green |
+| token accepted with write access | approval posted; a ruleset refusal afterwards is classified, never retried |
+
+On the `dev` -> `main` hop only, such a block also emits a `::notice::` and
+**one** idempotent PR comment stating that the PR is green and awaiting a
+maintainer merge. Any other merge failure - an unreadable PR, conflicts, a base
+branch modified mid-flight - still fails the run.
+
+To restore the unattended hop, either issue `CONSOLIDATE_APPROVER_TOKEN` for an
+identity with write access to this repository, or register a ruleset bypass actor
+for the automation identity. Both are security configuration decisions and stay
+with the maintainer.
+
+**A green hop is not proof the approval path works.** While
+`Main (Staging) Merge Protection` (rulesets `26947244` / `26947249`) has
+`enforcement` other than `active` - i.e. no branch ruleset matches
+`refs/heads/main`, `rules/branches/main` answers `[]` - the review requirement is
+**not enforced**, so an armed `--auto` merge lands immediately and even before the
+required check has started. That state *masks* the defect above instead of fixing
+it: re-enabling the ruleset brings the original failure straight back. Never
+enable the ruleset first and then hope the approval works; the order is approver
+identity (or bypass actor) first, ruleset `active` second.
+
+Because both states are wrong for it, the `dev` -> `main` promotion step in
+`run-pr-ci-tests-and-deployments.yaml` **never arms the hop** with
+`gh pr merge --auto` (ci#1066). It refreshes the PR, then reports
+"awaiting a maintainer merge" and stops: an armed merge either can never land
+(ruleset `active`, no approver) or lands before the required check has run
+(ruleset masked), which turns a green promotion PR into a false proof that the
+approval path works. Merging is owned by `auto-approve-consolidation.yaml`, the
+only place that knows the approver identity - and, while the hop is human-merged,
+a red promotion is *not* the signal for a broken CI; a red auto-approve run is.
+
+`auto-approve-consolidation.yaml` therefore runs a read-only
+`Preflight main merge protection (ci#1066)` step before anything merges and
+reports the live protection state in the job summary:
+
+| State | Meaning |
+| --- | --- |
+| `review_required_enforced` | the `main` ruleset requires *N* approving reviews: the hop needs the approver identity / bypass actor, otherwise it awaits a maintainer merge |
+| `review_required_masked` | no approving review is enforced: the unattended hop works only because the gate is off - warning, and the ruleset must not be re-enabled before the approver is fixed |
+| `protection_unknown` | the rules API could not be read; warning, never a failure |
+
+The preflight is reporting only: it never sets an error, so a red auto-approve
+run still means a real regression. Its guard is
+`development/ci/scripts/ci-flows/test_auto_approve_merge_protection_preflight.py`.
+
+The *decision* that preflight feeds - "is the hop unattended for the right
+reason, and is re-enabling the ruleset the correct next step?" - is a pure
+predicate in `development/ci/scripts/ci-flows/promotion_hop_readiness.py`, so nobody has to
+re-derive it from raw API payloads (which is how the masked state passed for a
+healthy hop in the first place):
+
+```bash
+# live, read-only (needs a token with `rules:read`; never prints the credential)
+python3 development/ci/scripts/ci-flows/promotion_hop_readiness.py --live --repo msgmate-io/open-chat-go
+# or from a saved observation document
+python3 development/ci/scripts/ci-flows/promotion_hop_readiness.py observation.json --json
+```
+
+| Verdict | Exit | Meaning |
+| --- | --- | --- |
+| `ready_approver` | 0 | ruleset `active`, a write-access approver identity is usable: the hop can merge unattended |
+| `ready_bypass` | 0 | ruleset `active`, a bypass actor covers the automation identity: the hop can merge unattended |
+| `needs_approver` | 1 | ruleset `active`, no usable approver and no bypass actor: the hop is human-gated (the ci#1066 defect, not a regression) |
+| `masked` | 2 | the review requirement is not enforced; `safe_to_enable` says whether the approver path is already in place |
+| `unknown` | 3 | the observation is incomplete or the API could not be read - never reported as `masked` |
+
+The effective-rules answer (`rules/branches/main`) is authoritative for *whether*
+the requirement is enforced; the ruleset resource is authoritative for its
+enforcement level and bypass actors. The tool joins the two, so a ruleset that
+claims `active` while `rules/branches/main` answers `[]` is reported as `masked`.
+Its guard is `development/ci/scripts/ci-flows/test_promotion_hop_readiness.py`.
+
+Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
+its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
+section for it); `PR Test Merge Requirement` reads that and nothing else.
+GitHub cannot auto-close a cross-repository issue, so the line is both the gate
+input and the closure instruction. Agent-facing working notes - including the
+full set of PR conventions (base, draft state, labels, tracker line, truthful
+test reporting) - live in [`AGENTS.md`](AGENTS.md).
+
+Agent coordination and operational runbooks are maintained outside this
+repository. Do not add agent runbooks, private integration documentation or
+deployment secrets to this repository.
 
 ## Clone the repository
 
@@ -94,7 +242,7 @@ python3 -m venv .venv
 | Profile | Includes | Extra repos |
 | --- | --- | --- |
 | `core-only` (default) | `mcp`, `rest_api_tool`, `go_client`, `community_coder` | – |
-| `community-coder` | public coder + TUI profile | – |
+| `community-coder` | public coder + base integrations (the private `tui` client is added by the private `default` profile) | – |
 | `default` | core integrations plus deployment-provided integrations | profile setup |
 | `full` | every integration | profile setup |
 | `full-ci` | every integration plus private CI tooling | profile setup |

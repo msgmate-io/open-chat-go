@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"backend/toolbudget"
 )
@@ -158,6 +159,7 @@ func TestTerminalTextNeverEmptyOnEveryExitPath(t *testing.T) {
 		streamErr error
 		outcome   *TurnOutcome
 		wantAny   []string
+		wantNone  []string
 	}{
 		{
 			name:      "tool call cap reached",
@@ -172,6 +174,37 @@ func TestTerminalTextNeverEmptyOnEveryExitPath(t *testing.T) {
 			streamErr: newToolCallCapError(toolCallCapErrorKindFailed, 3, 7, 3),
 			outcome:   &TurnOutcome{Reason: TurnEndedFailedToolCallCap, ToolCalls: 7, FailedToolCalls: 3},
 			wantAny:   []string{"failed tool call", "budget"},
+		},
+		{
+			// ci#1026: the budget is per chat, so a turn can hit the cap before
+			// running a single tool call. The text must explain the cap instead
+			// of claiming "0 tool call(s)" or "could not produce a reply".
+			name:      "tool call cap reached with zero tool calls in this turn",
+			toolCalls: 0,
+			streamErr: newToolCallCapError(toolCallCapErrorKindTotal, 100, 100, 0),
+			outcome:   &TurnOutcome{Reason: TurnEndedToolCallCap},
+			wantAny:   []string{"tool-call budget", "send another message"},
+			wantNone:  []string{"0 tool call(s)", "could not produce a reply"},
+		},
+		{
+			// ci#1026: a failed-tool cap can be reached with successful calls in
+			// between; the guidance must stay actionable and report progress.
+			name:      "failed tool call cap with partial failures",
+			toolCalls: 9,
+			streamErr: newToolCallCapError(toolCallCapErrorKindFailed, 3, 9, 3),
+			outcome:   &TurnOutcome{Reason: TurnEndedFailedToolCallCap, ToolCalls: 9, FailedToolCalls: 3},
+			wantAny:   []string{"3 failed tool call(s)", "6 of the 9 tool call(s)", "different arguments"},
+			wantNone:  []string{"could not produce a reply"},
+		},
+		{
+			// ci#1026: a provider-backpressure stop must explain OpenChat's own
+			// admission queue, never read like a provider fault or a lost turn.
+			name:      "provider backpressure",
+			toolCalls: 6,
+			streamErr: &ProviderSaturationError{Key: "test-key", MaxConcurrency: 2, InFlight: 2, QueueWaiting: 3, Waited: 30 * time.Second},
+			outcome:   &TurnOutcome{Reason: TurnEndedProviderError, ToolCalls: 6},
+			wantAny:   []string{"6 tool call(s)", "queued for this provider key", "lower the number of concurrent requests"},
+			wantNone:  []string{"could not produce a reply", "0 tool call(s)", "switch model"},
 		},
 		{
 			name:      "provider error",
@@ -258,6 +291,11 @@ func TestTerminalTextNeverEmptyOnEveryExitPath(t *testing.T) {
 			for _, fragment := range tc.wantAny {
 				if !strings.Contains(got, fragment) {
 					t.Fatalf("expected %q to contain %q", got, fragment)
+				}
+			}
+			for _, fragment := range tc.wantNone {
+				if strings.Contains(got, fragment) {
+					t.Fatalf("expected %q NOT to contain %q", got, fragment)
 				}
 			}
 		})

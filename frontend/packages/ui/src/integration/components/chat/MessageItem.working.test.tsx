@@ -101,6 +101,34 @@ describe("BotMessageItem running affordances", () => {
     expect(html.indexOf("checking")).toBeLessThan(html.indexOf("Working"));
   });
 
+  it("keeps the live reasoning step below the streamed body (ci#1105)", () => {
+    const html = render({
+      uuid: "partial_chat-2",
+      text: "streamed answer",
+      meta_data: {
+        partial_phase: "responding",
+        timeline: [{ kind: "thought", text: "live thought" }],
+      },
+    });
+    expect(html.indexOf("streamed answer")).toBeLessThan(html.indexOf("live thought"));
+  });
+
+  it("keeps live tool calls below the streamed body (ci#1105)", () => {
+    const html = render({
+      uuid: "partial_chat-3",
+      text: "streamed answer",
+      meta_data: { finished: false },
+      tool_calls: [
+        {
+          name: "bash",
+          arguments: { command: "npm run build" },
+          status: "ongoing",
+        },
+      ],
+    });
+    expect(html.indexOf("streamed answer")).toBeLessThan(html.indexOf("npm run build"));
+  });
+
   it("renders the reasoning blocks between the tool calls when the turn has a timeline (ci#569)", () => {
     const html = render({
       uuid: "m6",

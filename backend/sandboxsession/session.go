@@ -125,6 +125,10 @@ type Request struct {
 	SandboxName string
 	// Template selects a sandbox template (optional, provider specific).
 	Template string
+	// SandboxUUID attaches to an already provisioned sandbox instead of
+	// provisioning a new one (ci#1060). Template and SandboxUUID are mutually
+	// exclusive.
+	SandboxUUID string
 	// Image overrides the sandbox image (optional, provider specific).
 	Image string
 	// Files are injected before the shell session is opened.
@@ -254,7 +258,15 @@ func Normalize(req *Request) error {
 	req.OwnerUsername = strings.TrimSpace(req.OwnerUsername)
 	req.SandboxName = strings.TrimSpace(req.SandboxName)
 	req.Template = strings.TrimSpace(req.Template)
+	req.SandboxUUID = strings.TrimSpace(req.SandboxUUID)
 	req.Image = strings.TrimSpace(req.Image)
+
+	// Attaching to an existing sandbox and provisioning a new one from a
+	// template are mutually exclusive (ci#1060): the caller either asks for a
+	// fresh sandbox or re-attaches to a known one, never both.
+	if req.Template != "" && req.SandboxUUID != "" {
+		return fmt.Errorf("%w: template and sandbox_uuid are mutually exclusive", ErrInvalidRequest)
+	}
 
 	if len(req.Shell.Command) == 0 {
 		req.Shell.Command = append([]string(nil), DefaultShellCommand...)

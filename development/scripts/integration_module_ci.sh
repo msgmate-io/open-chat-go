@@ -26,9 +26,12 @@
 #      integration closure via `openchat-integrations prepare`);
 #   2. replace the materialized integration checkout with the pull-request
 #      checkout (so the PR head is what gets compiled, not the pinned ref);
-#   3. gofmt check, `go vet ./...`, `go build ./...` and (optionally)
+#   3. report any relative `replace` target that does not resolve at
+#      WORKSPACE_PATH (ci#1075: the build depth must be the full
+#      `clients/integrations/<name>`, otherwise every target misses);
+#   4. gofmt check, `go vet ./...`, `go build ./...` and (optionally)
 #      `go test ./...` in the integration module;
-#   4. report whether the module is still coupled to `backend/...` (ci#423).
+#   5. report whether the module is still coupled to `backend/...` (ci#423).
 #
 # The module is built in ordinary module mode (`GOWORK=off`): the integration
 # `go.mod` relative replacements are the mechanism, exactly as a consumer builds
@@ -59,8 +62,21 @@ cd "$REPO_ROOT"
 # WORKSPACE_PATH (repo-relative) and the integration checkout at INTEGRATION_SRC.
 # Working purely with absolute forms makes the `cd` below a no-op and keeps the
 # "compile via the monorepo layout" contract independent of the caller's cwd.
+#
+# ci#1075: the repo-relative WORKSPACE_PATH must keep its *directory structure*.
+# Resolving it as "$REPO_ROOT/$(basename ...)" placed the module one directory
+# below the repo root instead of `clients/integrations/<name>`, i.e. three levels
+# too high for its own `replace backend => ../../../backend` (and its
+# `../<other>_integration` siblings) to resolve - every standalone integration
+# build then failed with "replacement directory ../../../backend does not exist".
+# The resolution lives in a sourced helper so it can be pinned hermetically
+# (development/scripts/tests/test_integration_workspace_path.sh).
+# shellcheck source=development/scripts/integration_workspace_path.sh disable=SC1091
+. "$REPO_ROOT/development/scripts/integration_workspace_path.sh"
+# shellcheck source=development/scripts/integration_module_path_guard.sh disable=SC1091
+. "$REPO_ROOT/development/scripts/integration_module_path_guard.sh"
 INTEGRATION_SRC="$(cd "$(dirname "${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}")" && pwd)/$(basename "${INTEGRATION_SRC}")"
-WORKSPACE_PATH="$(cd "$REPO_ROOT" && pwd)/$(basename "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
+WORKSPACE_PATH="$(integration_workspace_path "$REPO_ROOT" "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"
@@ -117,6 +133,22 @@ else
   (cd "$INTEGRATION_SRC" && tar --exclude=.git -cf - .) | (cd "$WORKSPACE_PATH" && tar -xf -)
 fi
 
+# ci#1075: surface a depth mismatch as a layout problem *before* the Go toolchain
+# reports it as `backend@v0.0.0: replacement directory ../../../backend does not
+# exist`. The module's relative `replace` targets only resolve at
+# `<workspace>/clients/integrations/<name>`; this reports which ones miss and
+# names the expected path. Report-only: a stale entry may simply be unused, so
+# this can never turn a passing module red.
+step "Module layout preflight: relative replace targets (ci#1075)"
+MISSING_REPLACES="$(integration_module_missing_replaces "$WORKSPACE_PATH")"
+if [ -n "$MISSING_REPLACES" ]; then
+  echo "::warning::the module's relative replace targets do not resolve at $WORKSPACE_PATH (ci#1075)"
+  printf 'unresolved: %s\n' "$MISSING_REPLACES"
+  integration_module_layout_hint "$WORKSPACE_PATH"
+else
+  echo "all relative replace targets resolve at $WORKSPACE_PATH"
+fi
+
 if [ "$DECOUPLED" = "true" ]; then
   # ci#423: fail fast and with a clear message when a module that still replaces
   # or imports backend/... is pushed down the decoupled path; otherwise the
@@ -157,6 +189,15 @@ echo "gofmt: clean"
 if ! go list -deps -test ./... >/dev/null 2>&1; then
   echo "--- dependency resolution failed; showing go list diagnostics" >&2
   go list -deps -test ./... >&2 || true
+  # ci#1075: a relative `replace` that misses its target is reported by Go as
+  # `replacement directory ... does not exist`, which looks like a go.mod bug.
+  # Restate it as the layout problem it is (wrong build depth).
+  MISSING_REPLACES="$(integration_module_missing_replaces "$WORKSPACE_PATH")"
+  if [ -n "$MISSING_REPLACES" ]; then
+    echo "::error::relative replace targets do not resolve at $WORKSPACE_PATH (ci#1075)" >&2
+    printf 'unresolved: %s\n' "$MISSING_REPLACES" >&2
+    integration_module_layout_hint "$WORKSPACE_PATH" >&2
+  fi
   exit 1
 fi
 

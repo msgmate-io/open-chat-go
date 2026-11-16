@@ -108,6 +108,11 @@ type providerRequestMeta struct {
 	// character budget of the outgoing conversation plus the per-tool output
 	// budgets. A zero value falls back to the compiled-in defaults.
 	Context ContextBudget
+	// EmptyFinalStreak is the interaction state the tool loop needs to decide
+	// whether an empty final round is still worth one summary nudge (ci#1065):
+	// the number of consecutive turns of this interaction that already ended
+	// without a final summary. Zero means "first occurrence".
+	EmptyFinalStreak int
 }
 
 // runProviderRequestMiddleware invokes all registered middlewares in the

@@ -33,7 +33,7 @@
 version: 1
 
 # Component ids are printed by the gate and by:
-#   python3 development/scripts/check_pin_freshness.py --root .
+#   python3 development/ci/scripts/ci-flows/check_pin_freshness.py --root .
 allow: []
 # Examples:
 #   - id: "submodule:clients/oc_python_client"

@@ -87,6 +87,14 @@ func requireAdminPassword(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "password is required", http.StatusBadRequest)
 		return false
 	}
+	// An account provisioned without a local password (identity-provider or
+	// bridge sign-in) can never match a password confirmation. Report that
+	// state explicitly instead of the misleading "invalid password", so the
+	// operator knows to set the bootstrap credentials rather than retry.
+	if strings.TrimSpace(user.PasswordHash) == "" {
+		http.Error(w, "admin account has no local password set (identity-provider sign-in); set the bootstrap admin credentials to enable password confirmation", http.StatusConflict)
+		return false
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password)); err != nil {
 		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return false

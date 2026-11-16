@@ -21,7 +21,10 @@ type Subscriber struct {
 	// ContentMode is the share content level this subscriber is allowed to
 	// see. Anything that is not an explicit "unsecure" is censored.
 	ContentMode string
-	closeSlow   func()
+	// StreamMode is the non-text stream granularity negotiated on the upgrade
+	// query (ci#1104). Legacy subscribers never receive fine grained frames.
+	StreamMode StreamMode
+	closeSlow  func()
 }
 
 type WebSocketHandler struct {
@@ -128,6 +131,51 @@ func (cs *WebSocketHandler) PublishInChatChannel(msg []byte, chatUUID string) {
 	}
 }
 
+// PublishFineInChannel delivers a fine grained non-text frame (ci#1104) to the
+// user's own sockets that negotiated `?stream=fine`. Legacy subscribers are
+// skipped, so they keep receiving exactly the historic frame set.
+func (cs *WebSocketHandler) PublishFineInChannel(msg []byte, receiverUUID string) {
+	cs.subscribersMu.Lock()
+	defer cs.subscribersMu.Unlock()
+
+	for s := range cs.subscribers {
+		if s.UserUUID == receiverUUID && s.StreamMode == StreamModeFine {
+			select {
+			case s.msgs <- msg:
+			default:
+				go s.closeSlow()
+			}
+		}
+	}
+}
+
+// PublishFineInChatChannel is the chat-channel counterpart of
+// PublishFineInChannel: it only reaches fine subscribers and applies the same
+// secret masking as the legacy chat channel. A censored share never receives
+// fine grained frames at all - the fine channel carries raw tool-call payloads
+// and reasoning deltas that the share censor does not rewrite, so a share
+// viewer stays on the legacy frame set.
+func (cs *WebSocketHandler) PublishFineInChatChannel(msg []byte, chatUUID string) {
+	cs.subscribersMu.Lock()
+	defer cs.subscribersMu.Unlock()
+
+	for s := range cs.subscribers {
+		if s.ChatUUID != chatUUID || s.StreamMode != StreamModeFine {
+			continue
+		}
+		if sharecensor.IsCensored(s.ContentMode) {
+			continue
+		}
+		// Even an "unsecure" share must never stream credentials.
+		payload := sharecensor.MaskSecretsJSON(msg)
+		select {
+		case s.msgs <- payload:
+		default:
+			go s.closeSlow()
+		}
+	}
+}
+
 func (cs *WebSocketHandler) Publish(msg []byte) {
 	cs.subscribersMu.Lock()
 	defer cs.subscribersMu.Unlock()
@@ -168,8 +216,9 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	var c *websocket.Conn
 	var closed bool
 	s := &Subscriber{
-		UserUUID: userUUID,
-		msgs:     make(chan []byte, cs.subscriberMessageBuffer),
+		UserUUID:   userUUID,
+		StreamMode: ParseStreamMode(r.URL.Query()),
+		msgs:       make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()
 			defer mu.Unlock()
@@ -221,6 +270,7 @@ func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.
 	s := &Subscriber{
 		ChatUUID:    chatUUID,
 		ContentMode: sharecensor.NormalizeContentMode(contentMode),
+		StreamMode:  ParseStreamMode(r.URL.Query()),
 		msgs:        make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()

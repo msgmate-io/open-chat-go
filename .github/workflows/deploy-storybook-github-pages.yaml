@@ -41,6 +41,12 @@ jobs:
           submodules: recursive
           token: ${{ secrets.BOT_TOKEN || github.token }}
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -121,7 +127,7 @@ jobs:
             exit 1
           fi
           DEB_DIR="$PWD/apt-debs" OUT_DIR="$PWD/site/apt" KEY_ID="$KEY_ID" \
-            development/packaging/build-apt-repo.sh
+            development/ci/packaging/build-apt-repo.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

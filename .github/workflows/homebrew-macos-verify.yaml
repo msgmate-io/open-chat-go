@@ -15,7 +15,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/homebrew-macos-verify.yaml"
-      - "development/homebrew/**"
+      - "development/ci/homebrew/**"
   schedule:
     - cron: "23 6 * * 1"
   workflow_dispatch:

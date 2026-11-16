@@ -7,7 +7,14 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("vike-react/usePageContext", () => ({ usePageContext: () => ({}) }));
 vi.mock("vike/client/router", () => ({ navigate: vi.fn() }));
 
-import { ChatDetailsPanel, CHAT_DETAILS_TABS, normalizeToolName, toolTitle } from "./ChatDetailsPanel";
+import {
+  ChatDetailsPanel,
+  CHAT_DETAILS_TABS,
+  chatTodoItems,
+  normalizeTodoStatus,
+  normalizeToolName,
+  toolTitle,
+} from "./ChatDetailsPanel";
 
 const interactionChat = {
   chat_type: "interaction",
@@ -94,6 +101,80 @@ describe("ChatDetailsPanel", () => {
     });
 
     expect(html).toContain("No tool init configured for this chat.");
+  });
+
+  // ci#1100: the chat details list grows a read-only "todos" tab that renders
+  // the todo state the coder agent maintains for the interaction run.
+  it("lists the todos tab next to the other details tabs", () => {
+    expect(CHAT_DETAILS_TABS.map((tab) => tab.id)).toContain("todos");
+
+    const html = renderPanel({ activeTab: "todos" });
+
+    expect(html).toContain("chat-details-tab-todos");
+    expect(html).toContain("chat-details-panel-todos");
+  });
+
+  it("renders the agent todo list from the interaction status", () => {
+    const html = renderPanel({
+      activeTab: "todos",
+      chat: {
+        ...interactionChat,
+        status: {
+          state: "active",
+          todos: [
+            { text: "Read the plan comment", status: "completed" },
+            { text: "Add the todos tab", status: "in_progress" },
+            { text: "Open the PR", status: "pending" },
+            { text: "Dropped idea", status: "cancelled" },
+          ],
+        },
+      },
+    });
+
+    expect(html).toContain("Read the plan comment");
+    expect(html).toContain("Add the todos tab");
+    expect(html).toContain("Open the PR");
+    expect(html).toContain("Dropped idea");
+    expect(html).toContain("1/4 completed");
+    expect(html).toContain('data-todo-status="completed"');
+    expect(html).toContain('data-todo-status="in_progress"');
+    expect(html).toContain('data-todo-status="pending"');
+    expect(html).toContain('data-todo-status="cancelled"');
+    expect(html).toContain("In progress");
+  });
+
+  it("explains an absent todo list instead of rendering an empty block", () => {
+    const html = renderPanel({ activeTab: "todos" });
+
+    expect(html).toContain("This interaction has no todo list yet.");
+    expect(html).not.toContain('data-todo-status=');
+  });
+});
+
+describe("chat todo helpers", () => {
+  it("normalizes raw todo statuses into the rendered states", () => {
+    expect(normalizeTodoStatus("in-progress")).toBe("in_progress");
+    expect(normalizeTodoStatus("Done")).toBe("completed");
+    expect(normalizeTodoStatus("canceled")).toBe("cancelled");
+    expect(normalizeTodoStatus(undefined)).toBe("pending");
+    expect(normalizeTodoStatus("whatever")).toBe("pending");
+  });
+
+  it("drops text-less todo entries and tolerates a missing list", () => {
+    expect(chatTodoItems(undefined)).toEqual([]);
+    expect(chatTodoItems("nope")).toEqual([]);
+    expect(
+      chatTodoItems([
+        { text: " keep me ", status: "pending" },
+        { text: "   ", status: "pending" },
+        { status: "pending" },
+        { content: "content fallback", status: "completed" },
+        null,
+      ]),
+    ).toEqual([
+      { text: "keep me", status: "pending" },
+      { text: "content fallback", status: "completed" },
+    ]);
   });
 });
 

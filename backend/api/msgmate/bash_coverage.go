@@ -87,7 +87,7 @@ var bashWrapperCommands = map[string]bool{
 // the steering hints (ci#514 S2) and the coverage report agree on one mapping. A
 // category without an entry is not (yet) covered by typed tools.
 var BashCategoryTypedTools = map[BashCategory][]string{
-	BashCategoryGitHub:         {"github_issue_list", "github_issue_view", "github_pr_view", "github_pr_create", "github_pr_comment", "github_run_list", "github_run_view", "github_file_read", "github_auth_status"},
+	BashCategoryGitHub:         {"github_issue_list", "github_issue_view", "github_pr_view", "github_pr_create", "github_pr_comment", "github_pr_update_branch", "github_run_list", "github_run_view", "github_file_read", "github_auth_status"},
 	BashCategoryRepoInspection: {"coder_read", "coder_list", "coder_glob", "coder_grep"},
 	BashCategoryBuildTestRun:   {"coder_run", "coder_install"},
 	BashCategoryScaffold:       {"coder_write", "coder_edit", "coder_install"},

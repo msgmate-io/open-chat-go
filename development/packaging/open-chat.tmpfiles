@@ -1,2 +1,0 @@
-d /var/lib/open-chat 0750 open-chat open-chat -
-d /etc/open-chat 0750 root open-chat -

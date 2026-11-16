@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"backend/database"
+	"backend/githublinks"
 	"backend/runtimecfg"
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
@@ -382,7 +383,7 @@ func interactionRepoContext(db *gorm.DB, chat database.Chat) (string, int, strin
 					number = typed
 				}
 				if strings.TrimSpace(repo) != "" || strings.TrimSpace(subjectURL) != "" {
-					return strings.TrimSpace(repo), number, strings.TrimSpace(subjectURL)
+					return strings.TrimSpace(repo), number, githublinks.HumanURL(subjectURL)
 				}
 			}
 		}

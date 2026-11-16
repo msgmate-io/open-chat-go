@@ -163,6 +163,55 @@ func TestResolveBrowserTokenScopeEnforcement(t *testing.T) {
 	}
 }
 
+// ci#1107: the coder-tui audience gained the read-only catalogs the new
+// palette commands need (`:models`, `:tools`, `:bots`). Verify the middleware
+// resolves the token on exactly those reads and still denies the sibling
+// routes, so the widening stays a read-only slice.
+func TestResolveCoderTUITokenCatalogReads(t *testing.T) {
+	DB := setupMiddlewareTestDB(t)
+	user := createMiddlewareTestUser(t, DB, "coder-tui-user")
+	_, raw := createAccessToken(t, DB, user, func(token *database.AccessToken) {
+		token.Audience = database.AudienceCoderTUI
+	})
+
+	allowed := []struct{ method, target string }{
+		{"GET", "/models"},
+		{"GET", "/api/v1/models"},
+		{"GET", "/tools"},
+		{"GET", "/api/v1/tools"},
+		{"GET", "/bots/list"},
+		{"GET", "/api/v1/bots/list"},
+		{"GET", "/chats/list"},
+		{"GET", "/user/self"},
+	}
+	for _, route := range allowed {
+		if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest(route.method, route.target, raw)); !ok {
+			t.Errorf("expected coder-tui token to resolve on %s %s", route.method, route.target)
+		}
+	}
+
+	denied := []struct{ method, target string }{
+		{"GET", "/models/some-model-uuid"},
+		{"POST", "/models"},
+		{"GET", "/tools/some-tool"},
+		{"GET", "/tools/typing"},
+		{"POST", "/tools"},
+		{"POST", "/bots/list"},
+		{"GET", "/bots/some-bot-uuid"},
+		{"PATCH", "/bots/some-bot-uuid"},
+		{"PUT", "/bots/some-bot-uuid/config"},
+		{"POST", "/bots"},
+		{"POST", "/chats/create"},
+		{"GET", "/contacts/list"},
+		{"GET", "/admin/users"},
+	}
+	for _, route := range denied {
+		if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest(route.method, route.target, raw)); ok {
+			t.Errorf("expected coder-tui token to be denied on %s %s", route.method, route.target)
+		}
+	}
+}
+
 func TestResolveBrowserTokenExpiryAndRevocation(t *testing.T) {
 	DB := setupMiddlewareTestDB(t)
 	user := createMiddlewareTestUser(t, DB, "expiry-user")

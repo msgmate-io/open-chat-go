@@ -94,6 +94,20 @@ on:
       - labeled
       - unlabeled
       - closed
+  # ci#1080: the `dev` -> `main` hop used to be driven only by the
+  # `pull_request: closed` event of the pull request merged into `dev`. That
+  # made the hop depend on *who* merged: GitHub raises no workflow run for
+  # events caused by the default `GITHUB_TOKEN` (`app/github-actions`), so
+  # open-chat-go#71 merging into `dev` (5257a1aa, 2026-11-14T15:09:08Z) raised
+  # no run at all and left `dev` 14 commits ahead of `main` with no
+  # `[Dev promotion]` pull request and nothing scheduled to create one. The hop
+  # is now driven by the *state* of `dev`: every push to `dev` schedules it as
+  # well, so a missed hop self-heals on the next push (the existing promotion
+  # pull request is refreshed in place, never deleted or recreated - closing it
+  # would cancel its labelled CI run).
+  push:
+    branches:
+      - dev
 
 concurrency:
   # Key pull-request runs by PR number *and* head SHA. A run that is parked
@@ -111,9 +125,14 @@ concurrency:
   # by the merge commit lets a fresh merge start immediately;
   # `cancel-superseded-merged-deployment` then cancels the stale run and the
   # per-environment dispatch job concurrency serialises the actual deploys.
+  # ci#1080: a `push` run carries no `pull_request` payload, so it needs its own
+  # group key; without this arm every push to `dev` would collapse into the
+  # shape-invalid `pr-ci--` group and cancel the run that implements the hop.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
+        || github.event_name == 'push'
+        && format('dev-push-{0}', github.event.after)
         || github.event.action == 'closed'
         && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
         || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
@@ -220,7 +239,7 @@ jobs:
           fi
 
           export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP TPL_STEP_TEST TPL_STEP_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           curl -fsSL -X PATCH \
             -H "Authorization: Bearer ${COMMENT_TOKEN}" \
@@ -717,7 +736,7 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ steps.context.outputs.should_release_android != '' && '- [ ] `(6) android release` `queued`' || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/002-progress-initial.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/002-progress-initial.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -775,7 +794,7 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ steps.context.outputs.should_release_android != '' && '- [ ] `(6) android release` `queued`' || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -819,7 +838,7 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ steps.context.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', steps.android_release_dispatch.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -1920,7 +1939,7 @@ jobs:
       # the suite to matching tests (union of all such labels).
       tags: ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_tags }}
       opencode_provider: openrouter
-      opencode_model: deepseek/deepseek-v4-flash-0731
+      opencode_model: deepseek/deepseek-v4.1-flash-1017
       sandbox_interaction_timeout: "720"
       upload_artifacts: true
       post_results: true
@@ -2074,7 +2093,7 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$({
             curl -fsSL \
@@ -2125,6 +2144,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
 
       - name: Collect failing job details
         id: failure
@@ -2180,7 +2205,7 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
         run: |
           set -euo pipefail
-          python3 development/scripts/ci_failure_relay.py relay --event "$RUNNER_TEMP/ci-failure-event.json"
+          python3 development/ci/scripts/ci_failure_relay.py relay --event "$RUNNER_TEMP/ci-failure-event.json"
 
   # ci#734: dry-run the consolidation-PR relay from the Actions UI. This job
   # performs **no** API call at all - no PR comment and no lead message - and
@@ -2193,6 +2218,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
 
       - name: Build the synthetic CI-failure event
         env:
@@ -2218,7 +2249,7 @@ jobs:
           DRY_RUN: "true"
         run: |
           set -euo pipefail
-          python3 development/scripts/ci_failure_relay.py relay \
+          python3 development/ci/scripts/ci_failure_relay.py relay \
             --event "$RUNNER_TEMP/ci-failure-event.json" --dry-run
 
   pr-test-merge-requirement:
@@ -2247,6 +2278,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
@@ -2271,8 +2308,10 @@ jobs:
         # ci#813: every feature/bugfix PR implements exactly one leaf issue in
         # the private tracker. GitHub cannot auto-close a cross-repository issue,
         # so this gate and the post-merge closure in the auto-consolidation
-        # runner own the invariant. Keep this regex in sync with
-        # nativecoder.LinkedIssueNumbers.
+        # runner own the invariant. Both read the body through the one shared
+        # parser `development/ci/scripts/ci-flows/linked_ci_issues.sh` (ci#1034); its rules
+        # are pinned by `development/ci/scripts/ci-flows/tests/test_merge_gate_verdict.sh`,
+        # which also runs from the PR CI self-test step.
         #
         # ci#862: a consolidation PR (chore/consolidate*) is exempt from the
         # whole linked-issue requirement, not just from the one-standalone-
@@ -2351,21 +2390,32 @@ jobs:
             fi
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
-          # ci#824: a closing line must be standalone, exactly like
-          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
-          # line (`[ \t]*$`). Without that anchor this pattern also matched
-          # prose such as "Fix ci#824: crash on empty config" or
-          # "Closes ci#824 and also ci#999", importing leaf issues the author
-          # never linked - while the Go parser used by the consolidation runner
-          # ignored them. The two copies are pinned together by
-          # TestWorkflowLinkedIssueGrepStaysAnchored.
-          mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
-              | sed -E 's/.*#([0-9]+).*/\1/' \
-              | sort -n -u
-          )
+          # ci#824/ci#1034: one shared helper decides which leaf issues a body
+          # closes, because the post-merge closure job below must import exactly
+          # what this gate admitted (this used to be two copies of one regex).
+          # The reference must still be a *standalone* closing line - prose such
+          # as "Fix ci#824: crash on empty config" or "Closes ci#824 and also
+          # ci#999" never imports an issue the author did not link - but a
+          # standalone line wrapped in ordinary markdown (a list bullet, bold,
+          # a table cell) or ending in sentence punctuation now counts.
+          parser=development/ci/scripts/ci-flows/linked_ci_issues.sh
+          if [ ! -f "${parser}" ]; then
+            # This job checks out the PR head, so a branch started before
+            # ci#1034 does not carry the shared parser yet. Read the base
+            # branch's copy rather than failing on a missing file - the rules
+            # stay identical to the closure job's either way.
+            curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/contents/${parser}?ref=${{ github.event.pull_request.base.ref }}" \
+              > "${parser}"
+          fi
+          mapfile -t issues < <(bash "${parser}" "${RUNNER_TEMP}/pr-body.md")
           if [ "${#issues[@]}" -eq 0 ]; then
-            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line."
+            # ci#1034: state the rule verbatim, next to the fix, so a red gate
+            # is actionable without reading the parser.
+            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line - a line whose only content is that reference, which may be wrapped in markdown (a '- ' bullet, **bold**, a | table cell |) and may end in a full stop, but may not share the line with any other prose. Add it under a '## Tracker' heading (the PR template already carries one); editing the body is enough, no new commit is needed."
             exit 1
           fi
           if [ "$consolidation" != true ] && [ "${#issues[@]}" -ne 1 ]; then
@@ -2409,7 +2459,7 @@ jobs:
       #
       # Blanket-passing the cancelled case would make an untested tree look
       # mergeable, so the cancellation is reconciled instead:
-      # development/scripts/pr_ci_superseded_reconcile.py accepts only when the
+      # development/ci/scripts/ci-flows/pr_ci_superseded_reconcile.py accepts only when the
       # commit no longer needs gating (PR closed, or a newer commit is the live PR
       # head) or when a *replacement* run for the exact same commit reached this
       # same gate job with a real verdict, whose conclusion is adopted. Everything
@@ -2435,38 +2485,63 @@ jobs:
           # the group over and reports accepted=false; the replacement run's
           # gate owns the verdict from then on.
           PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
+          # ci#1033: a run cancelled by the "Cancel superseded workflow runs for
+          # this PR" entry step of a NEWER run has no sibling attempt for its own
+          # SHA (the successor carries a different SHA), so waiting for a
+          # replacement can only burn the whole budget while holding the
+          # `pr-ci-<PR>-<SHA>` group - which is what kept the successor's gate
+          # from ever concluding on PR #9 (run 42955395696 sat in_progress here
+          # until the budget). After this short grace the reconciler defers to the
+          # newer run's gate instead of waiting.
+          PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS: ${{ vars.PR_CI_SUPERSEDED_EMPTY_GRACE_SECONDS || '30' }}
         run: |
           set -uo pipefail
           set +e
           # The reconciler lives in the checkout above. Fail closed *and loudly*
           # if it is missing: the original "can't open file" was invisible behind
           # `continue-on-error`, which is how the missing checkout went unnoticed.
-          if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
+          if [ ! -f development/ci/scripts/ci-flows/pr_ci_superseded_reconcile.py ]; then
             echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
             echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            echo "replacement_run=" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          python3 development/scripts/pr_ci_superseded_reconcile.py \
+          # Captured as well as printed so the reconciler's `replacement_run=<id>`
+          # line can be republished as a step output (ci#1069), then echoed so the
+          # log stays byte-identical to before.
+          reconcile_output="$(python3 development/ci/scripts/ci-flows/pr_ci_superseded_reconcile.py \
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}" \
             --head-sha "${{ github.event.pull_request.head.sha }}" \
-            --run-id "${{ github.run_id }}"
+            --run-id "${{ github.run_id }}")"
           reconcile_status=$?
+          printf '%s\n' "${reconcile_output}"
           set -e
+          replacement_run=""
           if [ "${reconcile_status}" -eq 0 ]; then
             accepted=true
+            # The run whose own `PR Test Merge Requirement` check owns this
+            # commit's verdict, so the gate step's notice can name a real run id
+            # instead of a vague "the replacement run".
+            replacement_run="$(printf '%s\n' "${reconcile_output}" | sed -n 's/^replacement_run=//p' | tail -n 1)"
           else
             accepted=false
           fi
           # Never fail here; the gate step below decides and prints the reason
           # next to the existing label and result checks.
           echo "accepted=${accepted}" >> "${GITHUB_OUTPUT}"
+          echo "replacement_run=${replacement_run}" >> "${GITHUB_OUTPUT}"
 
       - name: Enforce test label and passing tests
         run: |
           # ci#659: outcome of the superseded-run reconciliation step above
           # (empty when it did not run, i.e. no upstream suite was cancelled).
           superseded_accepted="${{ steps.superseded-reconcile.outputs.accepted }}"
+          # ci#1069: the run whose own `PR Test Merge Requirement` check owns this
+          # commit's verdict (empty when the acceptance carries no replacement run,
+          # e.g. the PR closed or a newer commit became the live head). It is named
+          # in the notice below so the log says *which* run took over.
+          superseded_replacement="${{ steps.superseded-reconcile.outputs.replacement_run }}"
           # A cancelled gate is only acceptable when this run was superseded: the
           # commit no longer needs gating (PR closed, or a newer commit is the live
           # PR head) or a replacement run for the exact same commit reached this same
@@ -2474,7 +2549,10 @@ jobs:
           # else keeps the gate red, so an untested tree can never look mergeable.
           accept_superseded() {
             if [ "${superseded_accepted}" = "true" ]; then
-              echo "::notice::$1 were superseded on this commit; adopting the verdict of the replacement run instead of failing the gate."
+              # ci#1069: not-red must mean this step exits 0, and the notice must
+              # name the run that now owns the commit's verdict (a yielded run's
+              # acceptance always carries one; a closed/moved PR carries none).
+              echo "::notice::$1 were superseded on this commit; adopting the verdict of replacement run ${superseded_replacement:-a newer run for the same commit} instead of failing the gate. This run reports success in order to defer to it; the replacement run's own 'PR Test Merge Requirement' check is the authoritative verdict for this commit."
               return 0
             fi
             echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red."
@@ -2508,7 +2586,13 @@ jobs:
               exit 1
               ;;
           esac
-          if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
+          # ci#1069: a cancelled suite executed nothing, so `should_test` is empty
+          # by construction and this guard would re-dye the gate red right after a
+          # supersede was adopted above. Keep it for every non-superseded run (an
+          # untested tree must never look mergeable) and skip it only when this run
+          # was accepted as superseded, i.e. a newer same-SHA run owns the verdict.
+          if [ "${superseded_accepted}" != "true" ] &&
+             cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."
             exit 1
           fi
@@ -2635,7 +2719,7 @@ jobs:
   # check output): the tracked `pin-policy.yaml` allow-list and the
   # `pin-drift-allowed` pull-request label. The check fails closed with an
   # itemised report whenever a pin cannot be determined, so it never passes
-  # silently. See `development/scripts/check_pin_freshness.py`.
+  # silently. See `development/ci/scripts/ci-flows/check_pin_freshness.py`.
   pin-freshness-gate:
     name: Pin Freshness Gate
     runs-on: ubuntu-latest
@@ -2658,13 +2742,39 @@ jobs:
           # recorded in the commit tree and compares them with `git ls-remote`.
           submodules: false
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       # ci#734: unit-test the CI-failure relay so the quiet-by-default policy
       # (comments/interactions only for consolidation PRs) and the
       # one-comment/one-message behaviour cannot silently regress.
       - name: CI failure relay unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_ci_failure_relay.py -v
+          python3 -m unittest development/ci/scripts/tests/test_ci_failure_relay.py -v
+
+      # ci#1044: the deployment-profile BOT_TOKEN capability matrix decides
+      # whether a candidate token may be written to the vault (contents:read,
+      # pull_requests:*, packages:* on the deploy repo/package, fine-grained
+      # shape). Pin it so a rotation cannot regress to the rejected token of run
+      # 42959618854, and so the credential can never leak into the report.
+      - name: BOT_TOKEN capability check unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_check_bot_token_capabilities.py -v
+
+      # ci#1044: the capability check proves a *candidate* token; this one reads a
+      # finished `[Dev promotion]` deployment run and decides whether the rotation
+      # actually landed (token source = vault, precondition green, deploy + VERSION
+      # assertions green). Pin it so the CI-secret fallback can never be reported
+      # as a completed rotation.
+      - name: Deployment BOT_TOKEN rotation verdict unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_verify_deployment_bot_token_rotation.py -v
 
       # ci#659: the superseded-run reconciliation decides whether a cancelled
       # `PR Test Merge Requirement` gate may pass, so pin its acceptance criteria
@@ -2673,7 +2783,25 @@ jobs:
       - name: Superseded PR CI run reconciliation unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_superseded_reconcile.py -v
+          # ci#1069: pin the *shipped* shells, not just the reconciler exit codes.
+          # An accepted supersede must make the gate step exit 0 (a neutral
+          # conclusion would not satisfy a required status context), while a genuine
+          # suite failure, a reconciler error, a yield without a replacement, a
+          # missing reconciler or a missing labels file all stay red. The module
+          # extracts both step shells from this workflow by anchor and fails loudly
+          # if an anchor moves.
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_gate_superseded_neutral.py -v
+
+      # ci#1033/ci#1034: the merge-gate verdict is decided by the shared
+      # linked-issue parser plus the superseded-attempt rules. Pin both end to
+      # end: a cancelled attempt is never a verdict, a still-running newer
+      # attempt reads as pending (not red), and a closing reference wrapped in
+      # a bullet/bold/table cell counts while prose does not.
+      - name: Merge gate verdict self-test
+        run: |
+          set -euo pipefail
+          bash development/ci/scripts/ci-flows/tests/test_merge_gate_verdict.sh
 
       # ci#740: unit-test the sandbox provider-failure classifier so the
       # "account failure (never retry)" vs "provider unreachable (transient
@@ -2693,6 +2821,63 @@ jobs:
         run: |
           set -euo pipefail
           bash development/scripts/tests/test_coder_sandbox_readiness.sh
+
+      # ci#1038: the coding sandbox must actually ship a Go toolchain, and the
+      # provisioning half has to be verifiable instead of narrative: the pinned
+      # version comes from backend/go.mod's `go` directive, GOTOOLCHAIN=local and
+      # a warmed module cache keep `go build ./...` offline-capable, an off-PATH
+      # toolchain is repaired rather than reinstalled, and `--check` reports
+      # `missing_cli: go` + `go: MISSING` when the sandbox cannot run local checks.
+      - name: Coder sandbox Go toolchain provisioning unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_toolchain.sh
+
+      # ci#1038 (default-PATH leg): the toolchain can be installed, in
+      # GOTOOLCHAIN=local, with a warmed module cache - and still be unreachable,
+      # because ~/.bashrc and /etc/profile.d are read by login/interactive shells
+      # only while the agent's `coder_bash` runs a non-login, non-interactive
+      # shell. That is how a sandbox reported `which: no go in (/usr/local/sbin:
+      # /usr/local/bin:...)` with the toolchain sitting in /usr/local/go/bin, and
+      # how three implementer turns passed without a single local `go test`. Pin
+      # the fix: provisioning symlinks the toolchain into a default-PATH
+      # directory, proves it from a stripped `env -i` shell, and reports
+      # `MISS go is not on the default PATH` plus a non-zero exit when the shim
+      # cannot be written, so a missing toolchain can never be rounded up into a
+      # passing report. Hermetic via a stub `go`.
+      - name: Coder sandbox default-PATH Go shim unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_default_path.sh
+
+      # ci#1062 (image half of ci#1038): provisioning at runtime is only half the
+      # story - the *published* coding image shipped go1.25.10 off PATH with no
+      # login-shell shim and no warmed module cache while backend/go.mod required
+      # go 1.26.0, so a fresh sandbox could not build anything. Pin the static
+      # drift gate: the image must derive its Go version from backend/go.mod (via
+      # install_sandbox_go_toolchain.sh) or pin one >= the directive, keep
+      # GOTOOLCHAIN=local, warm $GOMODCACHE at build time, and ship an
+      # /etc/profile.d PATH shim. The behavioural `--image` half must refuse to
+      # report success without a daemon instead of fabricating evidence.
+      - name: Coding sandbox image Go contract unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_coding_image_go.sh
+
+      # ci#1038 (acceptance line): "in a fresh `repo:open-chat-go` sandbox,
+      # `go version && go build ./...` succeeds offline after checkout". The
+      # ticket's real damage was not just a missing toolchain but an agent that
+      # could not tell "the build ran" from "I believe it would". Pin the
+      # pre-push script an implementer actually runs: no toolchain =>
+      # `missing_cli: go` + `go: MISSING` and the build is never attempted; an
+      # unmaterialised profile workspace => `go_work: MISSING` guidance (a
+      # provisioning gap, not a go.mod/go.sum hand-edit); and the build itself
+      # always runs offline (GOPROXY=off, -mod=readonly, GOTOOLCHAIN=local) in
+      # backend/ with its real status as the exit code. Hermetic via a stub `go`.
+      - name: Coder sandbox offline Go build acceptance unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_go_offline_build.sh
 
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
@@ -2736,8 +2921,8 @@ jobs:
       - name: PR CI progress-comment target unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_pr_ci_progress_comment_target.py -v
-          bash development/scripts/tests/test_upsert_pr_ci_progress_comment.sh
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_progress_comment_target.py -v
+          bash development/ci/scripts/ci-flows/tests/test_upsert_pr_ci_progress_comment.sh
 
       # Pin the mocked-AI merge-gate case so a `skipped` run that was
       # requested by the `ai-test-mock` label can never satisfy the merge
@@ -2746,7 +2931,7 @@ jobs:
       - name: PR CI mocked-AI merge gate unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_pr_ci_ai_mock_gate.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_ai_mock_gate.py -v
 
       # ci#833: `dev` is the non-deploying integration trunk, so a PR based on
       # `dev` must clear the label-derived `should_deploy` before
@@ -2756,7 +2941,7 @@ jobs:
       - name: PR CI dev-base deploy guard unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_pr_ci_dev_base_deploy_guard.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_dev_base_deploy_guard.py -v
       # ci#890: `ci.msgmate.io` was served a VERSION that existed only on
       # unmerged branches (main sat one release behind it). A PR preview must
       # never be able to claim, or leave behind, the shared CI deployment:
@@ -2770,7 +2955,7 @@ jobs:
       - name: PR CI deploy target guard (ci#890) unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_pr_ci_pr_deploy_target_guard.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_pr_ci_pr_deploy_target_guard.py -v
 
       # ci#832: the three deploy waiters (the approved-dispatch waiter plus the
       # two merged-deploy siblings) polled a run's top-level status, which GitHub
@@ -2784,7 +2969,7 @@ jobs:
       - name: Deploy waiter run-status wedge unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_deploy_waiter_run_status.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_deploy_waiter_run_status.py -v
 
       # ci#830: the auto-approve resolver's `commits/{sha}/pulls` lookup is
       # flaky on api.github.com's side (HTTP 200/500 with an empty or truncated
@@ -2798,7 +2983,7 @@ jobs:
       - name: Auto-approve flaky PR listing unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_auto_approve_flaky_pulls.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_auto_approve_flaky_pulls.py -v
 
       # ci#847: the auto-approve merge gate decided from the *raw*
       # `statusCheckRollup`, so a superseded run that GitHub reports as
@@ -2810,7 +2995,94 @@ jobs:
       - name: Auto-approve stale check-run instance unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_auto_approve_stale_check_instances.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_auto_approve_stale_check_instances.py -v
+
+      # ci#1067: the auto-approve step ended red for a fully green promotion PR
+      # whose only missing ingredient was a write-access approval, so a red run
+      # stopped meaning "something is broken". The two credential outcomes are
+      # now named (`token_rejected` exits 0 before the PR loop, `token_missing`
+      # warns and continues), a ruleset refusal is classified and never retried,
+      # and green-but-unapproved PRs are reported as "awaiting a maintainer
+      # merge" in the job summary. The guard runs the shipped shell against a
+      # stubbed `gh`/`sleep`, so exit codes, the summary and the absence of
+      # retries are asserted without a token or a network call.
+      - name: Auto-approve human-required classification unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_auto_approve_human_required.py -v
+
+      # ci#1066: the `dev` -> `main` hop looked healthy for a while *because the
+      # gate was off*. `Main (Staging) Merge Protection` was disabled
+      # (`rules/branches/main` returned `[]`), so an armed `--auto` merge landed
+      # unattended and a green promotion PR proved nothing about the
+      # write-access approval the ruleset demands once it is re-enabled. The
+      # auto-approve job now classifies the live protection state before
+      # anything merges (`review_required_enforced` / `review_required_masked` /
+      # `protection_unknown`) and reports it in the job summary. The guard runs
+      # the shipped shell against a stubbed `gh` and asserts the three states,
+      # that the reporting is never an `::error::`, and that a rules API failure
+      # cannot turn the auto-approve run red.
+      - name: Auto-approve merge protection preflight unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_auto_approve_merge_protection_preflight.py -v
+
+      # ci#1066: the preflight above reports the live protection state, but the
+      # *decision* it feeds - "is the hop unattended for the right reason, and is
+      # re-enabling the ruleset the correct next step?" - is a predicate over the
+      # effective-rules answer plus the ruleset resource. It lives in
+      # development/ci/scripts/ci-flows/promotion_hop_readiness.py so a maintainer branches on
+      # a rendered verdict instead of re-deriving it from raw API payloads. The
+      # guard pins the translation offline against a stubbed `gh`: a disabled
+      # ruleset is `masked` and never `safe_to_enable`, an `active` ruleset
+      # without an approver is `needs_approver`, a write-access approver or a
+      # bypass actor is `ready`, an unreadable API is `unknown` (never `masked`),
+      # and the credential is never rendered.
+      - name: Promotion hop readiness unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_promotion_hop_readiness.py -v
+
+      # ci#1067: the promotion PR refresh PATCHed only the title, so
+      # `open-chat-go#36` kept advertising an older promotion (a stale dev head
+      # and a stale consolidated-ticket list) long after `dev` had moved on.
+      # The refresh now re-renders title and body from live API data. The guard
+      # runs the shipped shell against stubbed `curl`/`gh` and asserts that the
+      # captured PATCH carries the live dev sha and real ticket links, that an
+      # unresolvable head falls back with a `::warning::` instead of publishing
+      # an empty body, and that the ci#1066 policy - no unattended `--auto`
+      # arming of the promotion hop - holds.
+      - name: Dev promotion PR refresh unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_dev_promotion_refresh.py -v
+
+      # ci#1055: the `main <- dev` promotion hop is what deploys ci.msgmate.io,
+      # and it used to be the one human-gated step of the loop. The lead may
+      # merge it once its required checks are green and must then verify the
+      # deployment; both decisions live in development/ci/scripts/ci-flows/promotion_hop.py
+      # as pure predicates so a stale duplicate check-run (blocker 2 of ci#1055)
+      # can never veto a green promotion, and a rollout that did not serve the
+      # promoted VERSION can never count as live.
+      - name: Promotion hop verdict unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/ci/scripts/ci-flows/test_promotion_hop.py -v
+
+      # ci#756: the dev integration-sync entrypoint restores the tracked
+      # integrations.lock.json after `prepare`/`sync`, so a non-frozen re-pin of
+      # the local checkouts does not leave the file dirty and block `git switch`
+      # in the developer's checkout.
+      - name: Integration sync entrypoint unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_integration_sync_entrypoint.py -v
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
 
       # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
       # Deployment of the CI deployment with probe_timeout_too_low,
@@ -2824,18 +3096,9 @@ jobs:
       - name: Redis probe budget contract unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
-          python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
-          python3 development/scripts/redis_compose_readiness_contract.py
-
-      # ci#756: the dev integration-sync entrypoint restores the tracked
-      # integrations.lock.json after `prepare`/`sync`, so a non-frozen re-pin of
-      # the local checkouts does not leave the file dirty and block `git switch`
-      # in the developer's checkout.
-      - name: Integration sync entrypoint unit tests
-        run: |
-          set -euo pipefail
-          python3 -m unittest development/scripts/test_integration_sync_entrypoint.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_redis_readiness_contract.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_redis_compose_readiness_contract.py -v
+          python3 development/ci/scripts/ci-flows/redis_compose_readiness_contract.py
 
       # ci#722 (continued): the live patch above is undone by the next
       # `helm upgrade`, because the private Helm chart still renders the redis
@@ -2846,19 +3109,54 @@ jobs:
       - name: Redis chart readiness contract unit tests
         run: |
           set -euo pipefail
-          python3 -m unittest development/scripts/test_redis_chart_readiness_contract.py -v
+          python3 -m unittest development/ci/scripts/ci-flows/test_redis_chart_readiness_contract.py -v
 
       - name: Redis chart readiness contract (checked-in chart template)
         run: |
           set -euo pipefail
-          python3 development/scripts/redis_chart_readiness_contract.py \
-            --chart-file development/redis-readiness/chart-redis-template.after.yaml
+          if [ ! -f development/ci/redis-readiness/chart-redis-template.after.yaml ]; then
+            echo "private open-chat-go-ci checkout does not carry redis-readiness yet; skipping"
+            exit 0
+          fi
+          python3 development/ci/scripts/ci-flows/redis_chart_readiness_contract.py \
+            --chart-file development/ci/redis-readiness/chart-redis-template.after.yaml
 
-      - name: Profile setup
-        uses: ./.github/actions/profile-setup
-        with:
-          profile: full-ci
-          token: ${{ secrets.BOT_TOKEN || github.token }}
+      # ci#1061: the deployed identity provider (the Keycloak realm behind
+      # id.msgmate.io) and the chart values that point the backend at it live in
+      # different places and are edited at different times. Their disagreement only
+      # surfaces as a browser-side `redirect_uri_mismatch` / `invalid_client` during
+      # a live login, so pin the agreement (and the no-committed-secrets rule)
+      # statically here.
+      - name: Identity provider realm/chart contract unit tests
+        run: |
+          set -euo pipefail
+          if [ ! -d development/ci/identity-provider ]; then
+            echo "private open-chat-go-ci checkout does not carry identity-provider yet; skipping"
+            exit 0
+          fi
+          python3 -m unittest development/ci/scripts/tests/test_identity_provider_realm_contract.py -v
+
+      # ci#1061: the rendered IdP Deployment/Service/Ingress/NetworkPolicy that
+      # actually serves id.msgmate.io. The YAML is a build artifact of
+      # development/ci/identity-provider/render_keycloak_manifests.py, so fail when a
+      # hand edit and the renderer disagree instead of deploying the wrong issuer.
+      - name: Identity provider deployment manifests (render freshness)
+        run: |
+          set -euo pipefail
+          if [ ! -d development/ci/identity-provider ]; then
+            echo "private open-chat-go-ci checkout does not carry identity-provider yet; skipping"
+            exit 0
+          fi
+          python3 development/ci/identity-provider/render_keycloak_manifests.py
+
+      - name: Identity provider realm/chart contract
+        run: |
+          set -euo pipefail
+          if [ ! -d development/ci/identity-provider ]; then
+            echo "private open-chat-go-ci checkout does not carry identity-provider yet; skipping"
+            exit 0
+          fi
+          python3 development/ci/scripts/identity_provider_realm_contract.py
 
       - name: Check every tracked pin against its upstream ref
         env:
@@ -2872,7 +3170,7 @@ jobs:
           if [ -x ".venv/bin/python" ]; then
             PYTHON=".venv/bin/python"
           fi
-          "$PYTHON" development/scripts/check_pin_freshness.py --root .
+          "$PYTHON" development/ci/scripts/ci-flows/check_pin_freshness.py --root .
 
       - name: Set up Go for the frozen-workspace build
         uses: actions/setup-go@v5
@@ -2934,6 +3232,12 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Cancel superseded CI deployment runs for this PR
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
@@ -2975,7 +3279,7 @@ jobs:
       # naming the CI namespace/host, and (c) a preview for a closed/merged PR.
       # Failing here means the deploy is never dispatched, so the host it would
       # have claimed is unaffected. Unit tests:
-      # development/scripts/test_pr_ci_pr_deploy_target_guard.py.
+      # development/ci/scripts/ci-flows/test_pr_ci_pr_deploy_target_guard.py.
       - name: Verify deploy dispatch target (ci#890)
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
@@ -3005,7 +3309,7 @@ jobs:
               echo "ci#890: PR #${PR_NUMBER} live state is '${PR_STATE}'."
             fi
           fi
-          PR_STATE="$PR_STATE" python3 development/scripts/pr_ci_pr_deploy_target_guard.py
+          PR_STATE="$PR_STATE" python3 development/ci/scripts/ci-flows/pr_ci_pr_deploy_target_guard.py
 
       - name: Dispatch deployment workflow in CI repository
         id: dispatch_ci_deploy
@@ -3448,10 +3752,30 @@ jobs:
               echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
               exit 1
             fi
+            # ci#1057: the dispatched CI ref can legitimately advance between the
+            # dispatch and the creation of the run - another merge to the CI
+            # repository's default branch lands in that window (observed with the
+            # ci#1054 OUT_TOKEN_FILE fix: dispatched from d6e098a, the run was
+            # created from the newer d9b803de). The previous strict equality
+            # guard then dyed the whole PR run red although the dispatch was
+            # correct and the deploy itself succeeded, and the deploy could never
+            # be observed as green. Accept the observed sha when it is the
+            # dispatched commit itself or a *descendant* of it (the CI ref only
+            # moves forward), and keep rejecting a run created from an unrelated
+            # commit, which is what this guard exists for.
             if [ -n "${DISPATCH_REF_SHA:-}" ] && [ -n "${run_sha:-}" ] && [ "$run_sha" != "$DISPATCH_REF_SHA" ]; then
-              echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA}."
-              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
-              exit 1
+              compare_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/compare/${DISPATCH_REF_SHA}...${run_sha}" || true)"
+              compare_status="$(jq -r '.status // ""' <<< "${compare_json:-"{}"}" 2>/dev/null || echo "")"
+              case "$compare_status" in
+                ahead|identical)
+                  echo "::notice::CI run $run_id was created from ${run_sha}, which is '${compare_status}' relative to the dispatched ${DISPATCH_REF} commit ${DISPATCH_REF_SHA}; the dispatched CI ref advanced after the dispatch, so this run still belongs to this dispatch."
+                  ;;
+                *)
+                  echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA} (compare status '${compare_status:-unknown}')."
+                  echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+                  exit 1
+                  ;;
+              esac
             fi
 
             if [ "$run_status" != "completed" ]; then
@@ -3640,7 +3964,7 @@ jobs:
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
           AI_TEST_BASELINE_BACKEND: openrouter
-          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4-flash-0731
+          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4.1-flash-1017
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
           AI_PROCESS_TESTS_VERBOSE: "1"
           PYTHONUNBUFFERED: "1"
@@ -3715,9 +4039,9 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
           printf '%s' "$body" > "${RUNNER_TEMP}/pr-ci-progress-comment-body.md"
-          development/scripts/upsert_pr_ci_progress_comment.sh \
+          development/ci/scripts/ci-flows/upsert_pr_ci_progress_comment.sh \
             --repo "${SOURCE_REPOSITORY}" \
             --pr "${PR_NUMBER}" \
             --body-file "${RUNNER_TEMP}/pr-ci-progress-comment-body.md" \
@@ -3761,9 +4085,9 @@ jobs:
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
           printf '%s' "$body" > "${RUNNER_TEMP}/pr-ci-progress-comment-body.md"
-          development/scripts/upsert_pr_ci_progress_comment.sh \
+          development/ci/scripts/ci-flows/upsert_pr_ci_progress_comment.sh \
             --repo "${SOURCE_REPOSITORY}" \
             --pr "${PR_NUMBER}" \
             --body-file "${RUNNER_TEMP}/pr-ci-progress-comment-body.md" \
@@ -3828,7 +4152,17 @@ jobs:
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    # ci#1080: resolved from the merge event *and* from a push to `dev`, so the
+    # `dev` -> `main` hop is driven by the state of `dev` instead of by who
+    # performed the merge. A branch-deletion push is not a hop trigger.
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'closed' &&
+       github.event.pull_request.merged == true &&
+       (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')) ||
+      (github.event_name == 'push' &&
+       github.ref_name == 'dev' &&
+       github.event.deleted != true)
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -3845,6 +4179,16 @@ jobs:
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.ref }}"
           TARGET_REF="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "null" ]; then
+            # ci#1080: a `push` run to `dev` carries no pull_request payload. The
+            # integration trunk is then the pushed ref itself, so the merge
+            # target - and with it the promotion hop - is derived from `dev`
+            # rather than from the merge event that never reached us.
+            BASE_REF="${{ github.ref_name }}"
+          fi
+          if [ -z "$TARGET_REF" ] || [ "$TARGET_REF" = "null" ]; then
+            TARGET_REF="${{ github.event.after }}"
+          fi
           if [ -z "$TARGET_REF" ] || [ "$TARGET_REF" = "null" ]; then
             TARGET_REF="$BASE_REF"
           fi
@@ -4003,6 +4347,14 @@ jobs:
     name: Open Dev To Main Promotion PR
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
+    # ci#833/ci#1080: the merge and push events that reach this job have
+    # different top-level concurrency groups, so they can run at the same time.
+    # Two concurrent runs both saw "no open promotion PR" and each created one
+    # (open-chat-go#92 and #93 at the same second). Serialise this job so the
+    # second run always takes the refresh path and the hop stays one PR.
+    concurrency:
+      group: open-dev-to-main-promotion-pr
+      cancel-in-progress: false
     # ci#833: `main <- dev` is the ONLY PR that carries the deploy/sandbox
     # labels and the only one whose merge deploys ci.msgmate.io. A merge to
     # `dev` refreshes this PR in place (never delete/recreate: closing it would
@@ -4019,7 +4371,11 @@ jobs:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
           MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
-          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          # ci#1080: the hop is also triggered by a push to `dev`, whose payload
+          # carries no merged pull request. The pushed commit is the dev head
+          # then, so the refresh below is rendered from live API data either way.
+          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha || github.event.after || github.sha }}
+          TRIGGER_SHA: ${{ github.event.after || github.sha }}
         run: |
           set -euo pipefail
           api="${GITHUB_API_URL:-https://api.github.com}"
@@ -4034,11 +4390,72 @@ jobs:
             exit 0
           fi
 
+          # ci#1067: the refresh path used to PATCH only the title, so the release
+          # PR kept advertising an older promotion - a stale dev head sha and a
+          # stale consolidated-ticket list - long after `dev` had moved on. The
+          # promotion PR is the artifact a reviewer reads to decide a merge into
+          # `main`, so title AND body are re-rendered from live API data on every
+          # run.
+          dev_head=""
+          if head_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/git/ref/heads/dev" 2>/dev/null)"; then
+            dev_head="$(jq -r '.object.sha // empty' <<< "$head_json" 2>/dev/null || true)"
+          fi
+          if [ -z "$dev_head" ]; then
+            # Fallback: the newest commit of the comparison fetched above.
+            dev_head="$(jq -r '[.commits[]? | .sha] | last // empty' <<< "$compare_json" 2>/dev/null || true)"
+          fi
+          if [ -z "$dev_head" ]; then
+            # ci#1080: last resort - the commit whose push triggered this run.
+            dev_head="${TRIGGER_SHA:-}"
+          fi
+
+          # The `ci#<n>` tickets referenced by the commits being promoted, up to
+          # 20 links; anything beyond that is summarised as a count.
+          tickets_json="$(jq -c '[ .commits[]? | (.commit.message // "") | scan("ci#[0-9]+") ] | unique' <<< "$compare_json" 2>/dev/null || echo '[]')"
+          [ -n "$tickets_json" ] || tickets_json='[]'
+          ticket_lines="$(jq -r --arg owner "${REPO_OWNER}" --arg repo "open-chat-go-ci" '
+            (.[:20] | .[] | "- [" + . + "](https://github.com/" + $owner + "/" + $repo + "/issues/" + ltrimstr("ci#") + ")"),
+            (if length > 20 then "- ... and " + ((length - 20) | tostring) + " more (see the commit list below)" else empty end)' \
+            <<< "$tickets_json" 2>/dev/null || true)"
+          if [ -z "$ticket_lines" ]; then
+            ticket_lines="- (no \`ci#\` ticket referenced in the promoted commits)"
+          fi
+
+          # Newest 10 commits of the promotion, so the PR body is never stale.
+          commit_lines="$(jq -r '
+            [ .commits[]? | { sha: (.sha // ""), title: ((.commit.message // "") | split("\n")[0]) } ]
+            | .[-10:]
+            | reverse
+            | .[]
+            | "- " + .sha[0:7] + " " + (.title | gsub("\\|"; "/"))' <<< "$compare_json" 2>/dev/null || true)"
+          if [ -z "$commit_lines" ]; then
+            commit_lines="- (the commit list could not be resolved)"
+          fi
+
+          # ci#1080: a push-triggered refresh has no merged pull request in its
+          # payload, so the trigger rows are built from whatever the trigger
+          # actually provides - never as empty table cells.
+          if [ -n "${MERGED_PR_NUMBER:-}" ]; then
+            trigger_lines="$(printf '| Latest dev merge | [#%s](%s) - %s |\n| Latest dev merge commit | `%s` |' \
+              "$MERGED_PR_NUMBER" "$MERGED_PR_URL" "$MERGED_PR_TITLE" "${DEV_HEAD_SHA:-}")"
+          else
+            trigger_lines="$(printf '| Latest push to `dev` | `%s` (added by the push trigger of ci#1080) |' \
+              "${TRIGGER_SHA:-}")"
+          fi
+
           title="[Dev promotion] Promote dev -> main - merging deploys ci.msgmate.io (ci#833)"
-          body="$(cat <<EOF
+          body=""
+          if [ -n "$dev_head" ]; then
+            dev_short="${dev_head:0:7}"
+            title="[Dev promotion] Promote dev -> main - dev @ ${dev_short} (ci#833)"
+            body="$(cat <<EOF
           <!-- open-chat-dev-promotion -->
 
-          This pull request is maintained automatically (ci#833): every merge to \`dev\` refreshes it in place.
+          This pull request is maintained automatically (ci#833; body re-rendered on every run by ci#1067): every merge to \`dev\` refreshes it in place.
 
           **Merging this PR promotes \`dev\` to \`main\` and deploys the change to [ci.msgmate.io](https://ci.msgmate.io).**
 
@@ -4046,13 +4463,30 @@ jobs:
           | --- | --- |
           | Head | \`dev\` |
           | Base | \`main\` |
+          | Dev head commit | \`${dev_head}\` |
+          | Commits ahead of \`main\` | ${ahead_by} |
+          ${trigger_lines}
           | Labels (automated, never toggled) | \`test\`, \`e2e\`, \`deploy\`, \`sandbox-test\` |
-          | Latest dev merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) - ${MERGED_PR_TITLE} |
-          | Dev commit | \`${DEV_HEAD_SHA}\` |
+
+          ### Consolidated tickets
+
+          ${ticket_lines}
+
+          ### Newest commits on \`dev\`
+
+          ${commit_lines}
 
           Label policy: feature PRs target \`dev\` with \`test\` only; consolidation PRs (\`chore/consolidate-*\`) target \`dev\` with \`test\`,\`e2e\`; this promotion PR is the only one carrying \`deploy\` and \`sandbox-test\`.
+
+          Merge policy (ci#1066): the \`main\` ruleset requires one approving review from a reviewer with write access. Only a configured \`CONSOLIDATE_APPROVER_TOKEN\` for a write-access identity (or a ruleset bypass actor for the automation identity) satisfies that automatically; without one this PR stays green while the auto-approve run reports "awaiting maintainer merge" and a maintainer merges it.
           EOF
           )"
+          else
+            echo "::warning::Could not resolve the current dev head sha; refreshing the promotion PR title only instead of publishing an empty or stale body (ci#1067)."
+          fi
+          # Title only when the head is unresolvable, title+body otherwise.
+          promotion_patch_payload="$(jq -n --arg title "$title" --arg body "$body" \
+            'if $body == "" then {title: $title} else {title: $title, body: $body} end')"
           labels_payload='{"labels":["test","e2e","deploy","sandbox-test"]}'
 
           existing_pr_number="$(
@@ -4071,7 +4505,7 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
-              -d "$(jq -n --arg title "$title" '{title: $title}')" >/dev/null
+              -d "$promotion_patch_payload" >/dev/null
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${PR_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
@@ -4079,6 +4513,19 @@ jobs:
               "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
               -d "$labels_payload" >/dev/null
             echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
+            # ci#1066: the promotion hop is deliberately NOT armed unattended.
+            # Arming `--auto` here is unsound in *both* protection states: with
+            # the `main` ruleset `active` the armed merge can never land (the
+            # ruleset demands one approving review from a reviewer with write
+            # access, which no automation identity can post without a write-
+            # access approver token or a registered bypass actor), and with the
+            # ruleset *masked* (`rules/branches/main` = `[]`) the armed merge
+            # lands immediately - before the required check even starts - so a
+            # green promotion PR would prove nothing about the approval path.
+            # Merging stays with `auto-approve-consolidation.yaml`, the only job
+            # that owns the approver identity and classifies the block.
+            echo "::notice::Promotion PR #${existing_pr_number} was refreshed but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+            echo "Promotion PR #${existing_pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
             exit 0
           fi
 
@@ -4099,6 +4546,91 @@ jobs:
             "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d "$labels_payload" >/dev/null
           echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+          # ci#1066: never arm `--auto` on the promotion hop - see the refresh
+          # path above for why it is unsound both before and after the `main`
+          # ruleset is re-enabled. `auto-approve-consolidation.yaml` owns the
+          # approval and the merge attempt for this PR.
+          echo "::notice::Promotion PR #${pr_number} was opened but is not auto-armed: the main ruleset needs one approving review from a reviewer with write access, so this hop awaits a maintainer merge until an approver token or ruleset bypass actor is configured (ci#1066)."
+          echo "Promotion PR #${pr_number}: awaiting a maintainer merge; auto-merge is not armed (ci#1066)."
+
+  # ci#1080: the `dev` -> `main` hop died silently. A merge into `dev`
+  # performed with the default `GITHUB_TOKEN` (`app/github-actions`) raised no
+  # `pull_request: closed` run at all, so no `[Dev promotion]` PR was ever
+  # opened, `dev` sat 14 commits ahead of `main` and nothing reported it. This
+  # job is the tripwire: whenever the hop is supposed to happen (a merge into
+  # `dev`, or a push to `dev` - which is now also a trigger), it asserts that a
+  # divergence actually has an open, correctly-labelled promotion PR behind it.
+  # It is deliberately scoped to the hop: `merge_target == 'dev'` can only be
+  # set by a `dev` merge or a `dev` push, so a feature PR never runs (and never
+  # blocks on) this check.
+  dev-promotion-divergence-guard:
+    name: Dev Promotion Divergence Guard
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment, open-dev-to-main-promotion-pr]
+    if: |
+      always() &&
+      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Assert a dev/main divergence has an open promotion PR
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          auth=(-H "Authorization: Bearer ${PR_TOKEN}"
+                -H "Accept: application/vnd.github+json"
+                -H "X-GitHub-Api-Version: 2022-11-28")
+
+          compare_json="$(curl -fsSL "${auth[@]}" "${api}/repos/${REPOSITORY}/compare/main...dev")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          dev_head="$(jq -r '.commits[-1].sha // ""' <<< "$compare_json")"
+
+          if [ "$ahead_by" = "0" ]; then
+            echo "dev is not ahead of main; there is no hop to promote."
+            exit 0
+          fi
+
+          pr_json="$(curl -fsSL "${auth[@]}" \
+            "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1")"
+          pr_number="$(jq -r '.[0].number // ""' <<< "$pr_json")"
+
+          promotion_job_result="${{ needs.open-dev-to-main-promotion-pr.result }}"
+
+          if [ -z "$pr_number" ]; then
+            echo "::error::Dead dev -> main hop: dev is ${ahead_by} commit(s) ahead of main (dev head ${dev_head:-unknown}) but no open [Dev promotion] PR exists. The promotion job finished as '${promotion_job_result}'. The hop must be re-opened by a push to dev - do not open the promotion PR by hand."
+            exit 1
+          fi
+
+          pr_title="$(jq -r '.[0].title // ""' <<< "$pr_json")"
+          pr_head="$(jq -r '.[0].head.sha // ""' <<< "$pr_json")"
+          pr_labels="$(jq -r '[.[0].labels[]?.name] | sort | join(",")' <<< "$pr_json")"
+
+          case "$pr_title" in
+            "[Dev promotion]"*) ;;
+            *)
+              echo "::error::The dev -> main promotion PR #${pr_number} is titled '${pr_title}', which is not a [Dev promotion] PR (ci#833)."
+              exit 1
+              ;;
+          esac
+
+          missing=()
+          for label in deploy sandbox-test; do
+            if ! jq -e --arg l "$label" '.[0].labels[]?.name | select(. == $l)' >/dev/null <<< "$pr_json"; then
+              missing+=("$label")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The [Dev promotion] PR #${pr_number} is missing the automated label(s) ${missing[*]} (labels now: ${pr_labels:-none}); only this PR may carry deploy/sandbox-test (ci#833)."
+            exit 1
+          fi
+
+          if [ -n "$dev_head" ] && [ -n "$pr_head" ] && [ "$pr_head" != "$dev_head" ]; then
+            echo "::warning::The [Dev promotion] PR #${pr_number} still advertises dev head ${pr_head} while dev is at ${dev_head}; the next push to dev refreshes it in place (ci#1067)."
+          fi
+
+          echo "Dev -> main hop is alive: dev is ${ahead_by} commit(s) ahead of main and promotion PR #${pr_number} is open with labels ${pr_labels}."
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
@@ -4135,7 +4667,7 @@ jobs:
           TPL_HELM_VALUES_FILE="$HELM_VALUES_FILE"
           TPL_APPROVAL_RUN_URL="$APPROVAL_RUN_URL"
           export TPL_DEPLOYMENT_NAME TPL_DEPLOYMENT_URL TPL_HELM_VALUES_FILE TPL_APPROVAL_RUN_URL
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/008-merged-deploy-approval-link.md)"
+          body="$(python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/008-merged-deploy-approval-link.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -5032,6 +5564,23 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true
     steps:
+      # ci#1034: the body is parsed by the same repository script the gate uses,
+      # so this job needs the workspace; the base branch is the merged tree.
+      - name: Checkout base branch for the linked-issue parser
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          # Only the parser is needed; keep the post-merge job cheap.
+          sparse-checkout: development/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Close every linked leaf issue
         env:
           LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -5042,19 +5591,11 @@ jobs:
             exit 0
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
-          # ci#824: a closing line must be standalone, exactly like
-          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
-          # line (`[ \t]*$`). Without that anchor this pattern also matched
-          # prose such as "Fix ci#824: crash on empty config" or
-          # "Closes ci#824 and also ci#999", importing leaf issues the author
-          # never linked - while the Go parser used by the consolidation runner
-          # ignored them. The two copies are pinned together by
-          # TestWorkflowLinkedIssueGrepStaysAnchored.
-          mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
-              | sed -E 's/.*#([0-9]+).*/\1/' \
-              | sort -n -u
-          )
+          # ci#824/ci#1034: same shared helper as the `PR Test Merge
+          # Requirement` gate, so this job can only close issues the gate
+          # admitted (the two anchored `grep` copies had to be kept in sync by
+          # hand, and the anchored form rejected a bullet/bold/table-cell line).
+          mapfile -t issues < <(bash development/ci/scripts/ci-flows/linked_ci_issues.sh "${RUNNER_TEMP}/pr-body.md")
           if [ "${#issues[@]}" -eq 0 ]; then
             echo "No linked CI issues in the merged PR body; nothing to close."
             exit 0

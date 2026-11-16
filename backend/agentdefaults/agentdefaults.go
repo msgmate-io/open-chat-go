@@ -44,17 +44,19 @@ func ApplyAgentDefaults(config map[string]interface{}) (map[string]interface{}, 
 // defaults.
 func ApplyAgentInteractionDefaults(config map[string]interface{}, tools, tags []string, toolInit, overrides map[string]interface{}) (map[string]interface{}, bool) {
 	if def, ok := agentDefinition(); ok && def.AgentInteractionDefaults != nil {
-		return def.AgentInteractionDefaults(config, tools, tags, toolInit, overrides), true
+		merged := def.AgentInteractionDefaults(config, tools, tags, toolInit, overrides)
+		return ReconcileTaskRepo(merged, tags, toolInit), true
 	}
-	return config, false
+	return ReconcileTaskRepo(config, tags, toolInit), false
 }
 
 // ApplyAgentChatSetup applies the integration's chat-create-time defaults.
 func ApplyAgentChatSetup(config map[string]interface{}, tags []string, toolInit map[string]interface{}) (map[string]interface{}, bool) {
 	if def, ok := agentDefinition(); ok && def.AgentChatSetup != nil {
-		return def.AgentChatSetup(config, tags, toolInit), true
+		merged := def.AgentChatSetup(config, tags, toolInit)
+		return ReconcileTaskRepo(merged, tags, toolInit), true
 	}
-	return config, false
+	return ReconcileTaskRepo(config, tags, toolInit), false
 }
 
 // ApplyAgentInteractionTags returns the tags the integration adds to an

@@ -44,13 +44,13 @@ backend/data.db-journal
 backend/.devbin/
 backend/.generated/
 kubeconfig.yaml
+kubeconfig_prod.yaml
 .playwright-mcp/
 backend/uploads/*
 backend/open-chat.json
 open-chat.json
 .open-chat.json
 # The Debian/APT package ships a tracked default conffile for /etc/open-chat.
-!development/packaging/open-chat.json
 .sandbox-results/
 .android-ci-results/
 .ci-sandbox-*.env
@@ -89,3 +89,5 @@ development/ci/
 development/helm/
 clients/gomobile/
 clients/llm_coding_agents/
+
+new-key.txt

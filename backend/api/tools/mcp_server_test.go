@@ -38,8 +38,8 @@ func TestMCPToolsList(t *testing.T) {
 	}
 	result, _ := resp.Result.(map[string]interface{})
 	tools, _ := result["tools"].([]mcpToolDefinition)
-	if len(tools) != 5 {
-		t.Fatalf("tools count = %d, want 5", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("tools count = %d, want 6", len(tools))
 	}
 	names := map[string]bool{}
 	for _, tool := range tools {
@@ -54,6 +54,7 @@ func TestMCPToolsList(t *testing.T) {
 		"openchat_get_interaction",
 		"openchat_list_interaction_messages",
 		"openchat_search_interaction_messages",
+		"openchat_self_history",
 	} {
 		if !names[want] {
 			t.Fatalf("missing tool %s", want)

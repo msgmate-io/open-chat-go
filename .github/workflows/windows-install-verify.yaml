@@ -38,7 +38,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/windows-install-verify.yaml"
-      - "development/windows/**"
+      - "development/ci/windows/**"
 
 permissions:
   contents: read
@@ -59,20 +59,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Shellcheck the Windows packaging scripts
         run: |
           shellcheck --version
           shellcheck -S warning \
-            development/windows/winget/render_manifest.sh \
-            development/windows/tests/render_manifest_test.sh
+            development/ci/windows/winget/render_manifest.sh \
+            development/ci/windows/tests/render_manifest_test.sh
 
       - name: Render manifests from the release fixture
-        run: development/windows/tests/render_manifest_test.sh
+        run: development/ci/windows/tests/render_manifest_test.sh
 
       - name: Render manifests to a directory
         run: |
-          development/windows/winget/render_manifest.sh \
-            --release-json development/windows/tests/release-fixture.json \
+          development/ci/windows/winget/render_manifest.sh \
+            --release-json development/ci/windows/tests/release-fixture.json \
             --output-dir dist/windows-packages
 
       - name: Upload rendered manifests
