@@ -79,6 +79,16 @@ var coderTUITokenRoutes = []browserTokenRoute{
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", Scope: ""},
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/reject", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/contacts/default-bot", Scope: ""},
+	// ci#1107 "Extend TUI Integration to support more :command's": catalog
+	// reads the TUI needs for new palette commands. `:models` lists the model
+	// catalog the caller may select, `:tools` the tool catalog, and `:bots` the
+	// bots readable by the acting user (v1 slice: already-known/readable bots
+	// only, no global allowlist widening - `botsHandler.List` resolves the
+	// acting user and filters by readability). All three are plain reads that
+	// cannot mutate another user's data, so they stay on the chat-scoped token.
+	{Method: http.MethodGet, Pattern: "/models", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/tools", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/bots/list", Scope: ""},
 }
 
 // mcpInteractionTokenRoutes describes the routes the read-only `mcp-interaction`
