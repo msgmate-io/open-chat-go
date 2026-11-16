@@ -1722,6 +1722,7 @@ func processParsedToolCall(
 	toolChan chan<- ToolCall,
 ) {
 	if name == "" || arguments == "" {
+		recordMalformedToolCall(result, id, name, arguments, "the tool call was truncated: the tool name or arguments are missing", toolChan)
 		return
 	}
 
@@ -1734,7 +1735,7 @@ func processParsedToolCall(
 
 	tool, exists := toolMap[name]
 	if !exists {
-		logging.Warnf("Warning: Tool '%s' not found in toolMap", name)
+		recordMalformedToolCall(result, id, name, arguments, fmt.Sprintf("the tool %q is not available", name), toolChan)
 		return
 	}
 
@@ -1752,6 +1753,7 @@ func processParsedToolCall(
 
 	toolInput, parseErr := tool.ParseArguments(arguments)
 	if parseErr != nil {
+		recordMalformedToolCall(result, id, name, arguments, fmt.Sprintf("the tool arguments were not valid JSON (%v)", parseErr), toolChan)
 		return
 	}
 
@@ -1964,6 +1966,66 @@ func processParsedToolCall(
 	// of re-executing the tool.
 	if status == ToolCallStatusSucceeded {
 		executedToolResults[contentSignature] = toolResult
+	}
+}
+
+// recordMalformedToolCall keeps a truncated or invalid tool call in the turn
+// instead of silently dropping it (ci#1098). Before this, a provider emission
+// whose arguments were cut off mid-JSON produced an empty executed-call batch,
+// which the loop interpreted as "no usable tool call" and ended the turn; the
+// agent then appeared to stop at random and needed a manual continuation.
+//
+// The failed call is fed back to the model with a concrete correction
+// instruction, so the next round can re-issue a complete call. The transcript
+// arguments are made valid JSON (the raw truncated text is preserved under
+// `_malformed_arguments`) so the next provider request is never rejected for a
+// malformed assistant tool_call.
+func recordMalformedToolCall(
+	result *toolCallResult,
+	id string,
+	name string,
+	arguments string,
+	reason string,
+	toolChan chan<- ToolCall,
+) {
+	if name == "" {
+		name = "unknown_tool"
+	}
+	transcriptArguments := arguments
+	if transcriptArguments == "" {
+		transcriptArguments = "{}"
+	} else if !json.Valid([]byte(transcriptArguments)) {
+		transcriptArguments = fmt.Sprintf("{\"_malformed_arguments\":%q}", arguments)
+	}
+	message := fmt.Sprintf(
+		"This tool call was not executed: %s. Re-issue it with complete, valid JSON arguments. Do not repeat tool calls that already succeeded.",
+		reason,
+	)
+	result.usedTool = true
+	result.id = id
+	result.toolName = name
+	result.arguments = transcriptArguments
+	result.result = message
+	result.status = ToolCallStatusFailed
+	result.error = reason
+	result.calls = append(result.calls, executedToolCall{
+		id:        id,
+		name:      name,
+		arguments: transcriptArguments,
+		result:    message,
+		status:    ToolCallStatusFailed,
+		error:     reason,
+	})
+	if toolChan != nil {
+		toolChan <- ToolCall{
+			ToolName:        name,
+			ToolInput:       nil,
+			Id:              id,
+			Result:          message,
+			Status:          ToolCallStatusFailed,
+			Error:           reason,
+			StartedAtUnixMs: time.Now().UnixMilli(),
+		}
 	}
 }
 

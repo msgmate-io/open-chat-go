@@ -14,6 +14,10 @@ generic OpenID Connect authorization-code login flow (PKCE, S256) to Open Chat,
 with optional identity-to-user bootstrap mapping. It never exposes the client
 secret.
 
+The deployment/operator assets (Keycloak realm, rendered manifests, Helm chart
+patches and local sandbox) live in the private `open-chat-go-ci` checkout and are
+consumed from `development/ci/` when that profile is materialized.
+
 ## Routes
 
 | Method | Path | Purpose |
@@ -78,7 +82,7 @@ repository.
 ## Example: Keycloak
 
 1. Create a realm (for a local trial the sandbox stack in
-   `development/sandbox/identity_provider/` does this for you).
+   `development/ci/sandbox/identity_provider/` does this for you).
 2. Create a **confidential** OIDC client, for example `open-chat`.
 3. Register the callback URL
    `https://chat.example.com/api/v1/integrations/identity_provider/login/callback`.
@@ -120,7 +124,7 @@ namespace, so neither side is rolled when the other is upgraded.
 | production | `https://msgmate.io` | `https://id.msgmate.io/realms/main` |
 | staging | `https://stage.msgmate.io` | `https://id.stage.msgmate.io/realms/main` |
 
-The realm template (`development/identity-provider/realm/msgmate-io-main-realm.json`)
+The realm template (`development/ci/identity-provider/realm/msgmate-io-main-realm.json`)
 defines the confidential `open-chat` client with the authorization-code flow, PKCE
 `S256`, direct grants and self-registration disabled, and no seeded users:
 accounts belong to the identity provider, and the backend maps an identity to a
@@ -133,9 +137,9 @@ environment (`https://msgmate.io/api/v1/integrations/identity_provider/login/cal
 and the identical callback URL is registered in the realm: a mismatch is the usual
 `redirect_uri_mismatch` at the identity provider. The operator runbook, including
 the realm import, the Secret creation, the reachability check and the rollback, is
-`development/identity-provider/README.md`.
+`development/ci/identity-provider/README.md`.
 
-`development/scripts/identity_provider_realm_contract.py` pins the agreement
+`development/ci/scripts/identity_provider_realm_contract.py` pins the agreement
 between the realm and the chart values and fails CI if a credential or a seeded
 user is ever committed there.
 
@@ -162,13 +166,13 @@ layer or environment, never in the repository.
 
 ## Local sandbox / e2e check
 
-`development/sandbox/identity_provider/` contains a Keycloak compose stack, a
+`development/ci/sandbox/identity_provider/` contains a Keycloak compose stack, a
 realm import and a scripted login check that exercises discovery, the
 authorization redirect, the code exchange and the ID-token validation without
 any LLM call:
 
 ```bash
-python3 development/sandbox/identity_provider/verify_login.py
+python3 development/ci/sandbox/identity_provider/verify_login.py
 ```
 
 The check runs the OIDC flow against a real Keycloak and asserts that the

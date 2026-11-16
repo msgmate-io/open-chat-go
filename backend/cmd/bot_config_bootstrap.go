@@ -425,8 +425,10 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 				return err
 			}
 		} else if cfg.OverwriteIfExists {
+			previousOwnerID := runtime.OwnerUserId
 			updates := map[string]interface{}{
 				"bot_user_id":           botUser.ID,
+				"owner_user_id":         owner.ID,
 				"description":           cfg.Bot.Description,
 				"default_shared_config": database.JSONRaw(configData),
 				"is_public":             isPublic,
@@ -434,6 +436,24 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			}
 			if err := tx.Model(&runtime).Updates(updates).Error; err != nil {
 				return err
+			}
+			// The config's primary_owner is authoritative. When it moves, drop the
+			// old primary owner's grant unless it is still explicitly configured
+			// as an additional owner; otherwise the stale owner keeps access and
+			// callers can never fully transfer a bot through config alone.
+			if previousOwnerID != 0 && previousOwnerID != owner.ID {
+				stillConfigured := false
+				for _, configuredOwner := range ownersByUsername {
+					if configuredOwner != nil && configuredOwner.ID == previousOwnerID {
+						stillConfigured = true
+						break
+					}
+				}
+				if !stillConfigured {
+					if err := tx.Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, previousOwnerID).Delete(&database.BotRuntimeOwner{}).Error; err != nil {
+						return err
+					}
+				}
 			}
 		}
 
