@@ -784,6 +784,13 @@ func isNonConversationalMessage(msg client.ListedMessage) bool {
 // never be replayed into the model context as an assistant turn.
 const confirmationPauseMetadataKey = "confirmation_pause"
 
+// confirmationPausePromptMetadataKey carries the human-readable "waiting for
+// your confirmation" prompt as display-only metadata (ci#1116). It used to be
+// written into the assistant message body, which made the model's own next
+// context say that it was waiting and split the transcript at the
+// confirmation boundary.
+const confirmationPausePromptMetadataKey = "confirmation_pause_prompt"
+
 // isConfirmationPauseMessage reports whether a stored message row is a
 // confirmation pause marker. Such a row still carries the paused tool calls and
 // their results (they are the model's own trajectory and must be replayed), but
@@ -1662,18 +1669,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
 			metadata["confirmable_actions"] = confirmableActions
-			// A turn that pauses on a confirmable action has no assistant text of
-			// its own. Persisting it as an empty message leaves a bare bubble for
-			// any consumer that does not resolve the chat UI extension (and its
-			// inline confirm widget), so give it a short, human-readable prompt
-			// instead.
+			// ci#1116: a turn that pauses on a confirmable action has no
+			// assistant text of its own. The synthesized prompt is display-only
+			// metadata now instead of the message body: the model never
+			// generated it, so writing it into the text both told the agent it
+			// was waiting on the next turn and split the transcript at the
+			// confirmation boundary. The row is marked as a pause marker so the
+			// context builder never replays any terminal text it may still
+			// carry, and the confirm widget keeps rendering from
+			// metadata["confirmable_actions"].
 			if strings.TrimSpace(text) == "" {
-				text = confirmableTurnPrompt(confirmableActions)
-				// ci#1116: the synthesized prompt is not model output. Mark the
-				// row so the context builder drops its text again instead of
-				// replaying a fake assistant turn after the confirmation (which
-				// shifts the prompt prefix and kills the provider prompt cache).
 				metadata[confirmationPauseMetadataKey] = true
+				metadata[confirmationPausePromptMetadataKey] = confirmableTurnPrompt(confirmableActions)
 			}
 		}
 		// ci#753: a pending coder ask call is promoted into an open_question the
