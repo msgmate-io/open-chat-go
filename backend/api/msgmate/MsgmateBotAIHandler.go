@@ -951,19 +951,15 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 							continue
 						}
 
-						resultText := ""
-						switch typedResult := toolCallMap["result"].(type) {
-						case string:
-							resultText = typedResult
-						default:
-							if encodedResult, err := json.Marshal(typedResult); err == nil {
-								resultText = string(encodedResult)
-							}
-						}
-
-						if strings.TrimSpace(resultText) == "" {
-							continue
-						}
+						// ci#1116: every call in the assistant payload needs a
+						// `tool` counterpart. Skipping the ones without a stored
+						// result (a call parked for confirmation has none yet)
+						// left a dangling tool call behind, which invalidated the
+						// whole post-confirmation history and made the agent
+						// re-issue the parked call. toolResultForContext always
+						// answers, using a stable placeholder while the pause is
+						// pending.
+						resultText := toolResultForContext(toolCallMap)
 
 						// ci#630: cap a stored result on the way back into the
 						// context. Rows written before the persistence cap existed
@@ -980,7 +976,13 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 				}
 			}
 
-			if strings.TrimSpace(msg.Text) != "" {
+			// ci#1116: the generated confirmable-pause prompt is presentation
+			// text for clients that do not render the inline confirm widget. It
+			// was replayed as a separate assistant turn between the parked tool
+			// call and its result, so approving inserted the real result ahead
+			// of an existing message and the whole cached prefix was lost (and
+			// the paused step looked finished, which queued a duplicated task).
+			if strings.TrimSpace(msg.Text) != "" && !isConfirmablePausePrompt(msg.MetaData, msg.Text) {
 				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
 			}
 		} else {
@@ -1618,6 +1620,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// instead.
 			if strings.TrimSpace(text) == "" {
 				text = confirmableTurnPrompt(confirmableActions)
+				// ci#1116: flag the generated prompt so the context builder can
+				// skip it on replay. It is presentation, not model output, and
+				// replaying it changed the message prefix the provider had
+				// cached (and made the paused step look answered).
+				metadata[ConfirmablePausePromptMetaKey] = true
 			}
 		}
 		// ci#753: a pending coder ask call is promoted into an open_question the
