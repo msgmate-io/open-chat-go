@@ -3216,6 +3216,12 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Cancel superseded CI deployment runs for this PR
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
