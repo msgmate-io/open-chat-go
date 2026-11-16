@@ -164,9 +164,9 @@ func TestLocalLinkSweepStopsExpiredLeaseOnly(t *testing.T) {
 		}
 	}
 
-	// Long after the last heartbeat of the silent chat (and past the reconnected
-	// one's deadline too) both leases have lapsed.
-	sweepAt := now.Add(DefaultLocalLinkGrace + time.Minute)
+	// Long enough that the reconnected chat's lease lapsed too: its last
+	// heartbeat was at now+grace-1s, so its deadline is now+2*grace-1s.
+	sweepAt := now.Add(2 * DefaultLocalLinkGrace)
 	if stopped := SweepExpiredLocalLinkLeases(DB, nil, sweepAt); stopped != 2 {
 		t.Fatalf("sweep stopped %d interaction(s), want 2", stopped)
 	}
