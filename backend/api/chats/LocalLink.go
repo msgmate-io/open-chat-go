@@ -234,12 +234,29 @@ func SweepExpiredLocalLinkLeases(DB *gorm.DB, inspector *asynq.Inspector, now ti
 // function is called. A non-positive interval falls back to
 // DefaultLocalLinkSweepInterval. It is safe to call with a nil DB or inspector:
 // the sweeper then only drains the registry.
+//
+// Every tick is handed to the package's registered detached-work group
+// (chatsDetachedDBWork, see detached_work.go) instead of running the sweep
+// inline in the loop goroutine: the sweep writes through the pool, so a test
+// teardown has to be able to drain an in-flight sweep before CloseTestDB closes
+// the pool and t.TempDir removes the directory (ci#811, ci#1101). The loop
+// itself only waits on the ticker and is stopped by the returned function, so it
+// never pins the drain.
 func StartLocalLinkLeaseSweeper(DB *gorm.DB, inspector *asynq.Inspector, interval time.Duration) func() {
 	if interval <= 0 {
 		interval = DefaultLocalLinkSweepInterval
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+
+	// sweep is the tracked unit of work: it is the only place that touches the
+	// pool, and it is reached through chatsDetachedDBWork.
+	sweep := func(now time.Time) {
+		if stopped := SweepExpiredLocalLinkLeases(DB, inspector, now); stopped > 0 {
+			logging.Infof("ci#1101: stopped %d interaction(s) whose local link ended", stopped)
+		}
+	}
+
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(interval)
@@ -249,9 +266,7 @@ func StartLocalLinkLeaseSweeper(DB *gorm.DB, inspector *asynq.Inspector, interva
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				if stopped := SweepExpiredLocalLinkLeases(DB, inspector, now); stopped > 0 {
-					logging.Infof("ci#1101: stopped %d interaction(s) whose local link ended", stopped)
-				}
+				GoDetachedDBWork(func() { sweep(now) })
 			}
 		}
 	}()
