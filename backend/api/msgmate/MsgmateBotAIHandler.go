@@ -777,6 +777,40 @@ func isNonConversationalMessage(msg client.ListedMessage) bool {
 	return false
 }
 
+// confirmationPauseMetadataKey marks a chat message that exists only because the
+// turn paused on a tool confirmation (ci#1116). Its text is a synthesized
+// "Waiting for your confirmation to run `x`." prompt written for consumers that
+// do not render the confirm widget - the model never generated it, so it must
+// never be replayed into the model context as an assistant turn.
+const confirmationPauseMetadataKey = "confirmation_pause"
+
+// isConfirmationPauseMessage reports whether a stored message row is a
+// confirmation pause marker. Such a row still carries the paused tool calls and
+// their results (they are the model's own trajectory and must be replayed), but
+// its display text is not model output and is dropped from the context.
+func isConfirmationPauseMessage(meta *map[string]interface{}) bool {
+	if meta == nil || *meta == nil {
+		return false
+	}
+	paused, _ := (*meta)[confirmationPauseMetadataKey].(bool)
+	return paused
+}
+
+// appendStoredAssistantText appends a bot row's own text as an assistant turn,
+// except for a confirmation pause marker (ci#1116). Keeping that synthesized
+// prompt out of the context keeps the prompt prefix stable across the
+// confirmation round-trip, so the provider's prompt cache still hits after the
+// user approves and the tool result is filled in.
+func appendStoredAssistantText(openAiMessages []map[string]interface{}, row client.ListedMessage) []map[string]interface{} {
+	if strings.TrimSpace(row.Text) == "" {
+		return openAiMessages
+	}
+	if isConfirmationPauseMessage(row.MetaData) {
+		return openAiMessages
+	}
+	return append(openAiMessages, map[string]interface{}{"role": "assistant", "content": row.Text})
+}
+
 // countConversationalMessages returns how many rows are real conversation turns.
 func countConversationalMessages(rows []client.ListedMessage) int {
 	count := 0
@@ -980,9 +1014,11 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 				}
 			}
 
-			if strings.TrimSpace(msg.Text) != "" {
-				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
-			}
+			// ci#1116: a confirmation pause row keeps its tool calls/results
+			// (replayed above) but its synthesized "Waiting for your
+			// confirmation ..." text is not model output and must not be
+			// replayed as an assistant turn.
+			openAiMessages = appendStoredAssistantText(openAiMessages, msg)
 		} else {
 			// Handle user messages with potential attachments
 			contentArray := aih.processMessageAttachments(msg.Text, attachments, backend)
@@ -1618,6 +1654,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// instead.
 			if strings.TrimSpace(text) == "" {
 				text = confirmableTurnPrompt(confirmableActions)
+				// ci#1116: the synthesized prompt is not model output. Mark the
+				// row so the context builder drops its text again instead of
+				// replaying a fake assistant turn after the confirmation (which
+				// shifts the prompt prefix and kills the provider prompt cache).
+				metadata[confirmationPauseMetadataKey] = true
 			}
 		}
 		// ci#753: a pending coder ask call is promoted into an open_question the
