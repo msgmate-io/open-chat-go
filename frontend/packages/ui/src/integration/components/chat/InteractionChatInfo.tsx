@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { cn } from "../../lib/utils";
-import { EllipsisVertical, Info, Maximize2, Server, Settings2, Wrench } from "lucide-react";
+import { EllipsisVertical, Info, List, Maximize2, Server, Settings2, Wrench } from "lucide-react";
 import {
   Badge,
   BotDisplay,
@@ -37,6 +37,9 @@ const DETAILS_MENU_ITEMS: ReadonlyArray<{
   { tab: "init", label: "Tool init", Icon: Settings2, hiddenInSharedView: true },
   { tab: "tools", label: "Browse tools", Icon: Wrench },
   { tab: "mcp", label: "MCP servers", Icon: Server },
+  // ci#1100: read-only view of the todo list the coder agent maintains for the
+  // interaction run, fed by the existing status poll.
+  { tab: "todos", label: "Todos", Icon: List },
 ];
 
 interface InteractionChatInfoProps {
