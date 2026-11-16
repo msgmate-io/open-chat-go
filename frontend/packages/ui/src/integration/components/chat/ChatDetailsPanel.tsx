@@ -20,12 +20,16 @@ import {
   TextTypes,
 } from "@open-chat-go/ui";
 import {
+  Ban,
   Check,
+  Circle,
   Copy,
   ExternalLink,
   Info,
   LayoutGrid,
   List,
+  ListTodo,
+  Loader2,
   AlignJustify,
   Search,
   Server,
@@ -33,8 +37,17 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import {
+  extractLatestTodoSnapshot,
+  todoCounts,
+  todoProgressLabel,
+  todoStatusLabel,
+  type ChatTodoItem,
+  type ChatTodoMessageRow,
+  type ChatTodoSnapshot,
+} from "./chatTodos";
 
-export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
+export type ChatDetailsTabId = "overview" | "init" | "tools" | "todos" | "mcp";
 
 /**
  * Tabs of the shared chat details surface (ci#749). The tool init payload is a
@@ -49,6 +62,7 @@ export const CHAT_DETAILS_TABS: ReadonlyArray<{
   { id: "overview", label: "Overview", description: "Model and chat configuration" },
   { id: "init", label: "Init", description: "Per-tool init payload" },
   { id: "tools", label: "Tools", description: "Browse and inspect chat tools" },
+  { id: "todos", label: "Todos", description: "Agent todo list from the coder todo tools" },
   { id: "mcp", label: "MCP servers", description: "Connected MCP integrations" },
 ];
 
@@ -753,6 +767,201 @@ function InitTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) {
   );
 }
 
+interface ChatMessagesResponse {
+  rows?: ChatTodoMessageRow[];
+  pagination?: { next_page?: number | null };
+}
+
+const TODO_STATUS_ICONS: Record<ChatTodoItem["status"], typeof Info> = {
+  pending: Circle,
+  in_progress: Loader2,
+  completed: Check,
+  cancelled: Ban,
+};
+
+const TODO_STATUS_ORDER: ReadonlyArray<ChatTodoItem["status"]> = [
+  "in_progress",
+  "pending",
+  "completed",
+  "cancelled",
+];
+
+function todoStatusTone(status: ChatTodoItem["status"]): string {
+  switch (status) {
+    case "in_progress":
+      return "text-primary";
+    case "completed":
+      return "text-emerald-500";
+    case "cancelled":
+      return "text-muted-foreground line-through";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function TodoRow({ todo }: { todo: ChatTodoItem }) {
+  const Icon = TODO_STATUS_ICONS[todo.status];
+  const text = todo.status === "in_progress" && todo.activeForm ? todo.activeForm : todo.content;
+  return (
+    <li
+      className="flex items-start gap-2 border-b border-border/40 py-1.5 last:border-b-0"
+      data-todo-status={todo.status}
+    >
+      <Icon
+        className={cn(
+          "mt-0.5 h-3.5 w-3.5 shrink-0",
+          todoStatusTone(todo.status),
+          todo.status === "in_progress" && "animate-spin",
+        )}
+        aria-hidden
+      />
+      <span className={cn("min-w-0 flex-1 break-words text-sm", todoStatusTone(todo.status))}>
+        {text}
+      </span>
+      <span className="sr-only">{todoStatusLabel(todo.status)}</span>
+      <Badge variant="outline" className="shrink-0 text-[10px]">
+        {todoStatusLabel(todo.status)}
+      </Badge>
+    </li>
+  );
+}
+
+/**
+ * Agent todos (ci#1100). The msgmate coder announces and maintains its plan
+ * through the coder todo tools (`todo_write` / `todo_read`), whose payload is
+ * persisted on the tool call of the turn that changed it. The tab therefore
+ * folds the persisted tool calls of this chat into the newest todo snapshot
+ * instead of needing a dedicated todo endpoint, and it reuses the same SWR key
+ * as the message view so both stay in sync.
+ */
+function TodosTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) {
+  const chatUUID: string | undefined = chat?.uuid;
+  const { data, isLoading, error } = useSWR<ChatMessagesResponse>(
+    chatUUID ? `/api/v1/chats/${encodeURIComponent(chatUUID)}/messages/list` : null,
+    fetcher,
+  );
+  const [hideDone, setHideDone] = useState(false);
+
+  const snapshot: ChatTodoSnapshot | null = useMemo(
+    () => extractLatestTodoSnapshot(data?.rows),
+    [data?.rows],
+  );
+  const todos = snapshot?.todos ?? [];
+  const counts = todoCounts(todos);
+  const visible = hideDone
+    ? todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled")
+    : todos;
+
+  return (
+    <div className="space-y-3">
+      <PanelCard
+        title="Agent todos"
+        hint="The plan the agent is currently working through, read from its coder todo tool calls."
+        action={
+          <Badge variant={counts.total > 0 ? "secondary" : "outline"}>{todoProgressLabel(todos)}</Badge>
+        }
+      >
+        {isLoading && !snapshot ? (
+          <Text type={TextTypes.Body7} color="muted">
+            Loading agent todos...
+          </Text>
+        ) : error ? (
+          <Text type={TextTypes.Body7} color="muted">
+            The agent todo list is not available for this chat.
+          </Text>
+        ) : counts.total === 0 ? (
+          <Text type={TextTypes.Body7} color="muted">
+            This chat has no agent todos yet. The list appears as soon as the agent records one with
+            its todo tools.
+          </Text>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Loader2 className="h-3 w-3" aria-hidden /> {counts.inProgress} in progress
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Circle className="h-3 w-3" aria-hidden /> {counts.pending} pending
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Check className="h-3 w-3" aria-hidden /> {counts.completed} completed
+              </span>
+              {counts.cancelled > 0 ? (
+                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Ban className="h-3 w-3" aria-hidden /> {counts.cancelled} cancelled
+                </span>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[11px]"
+                aria-pressed={hideDone}
+                onClick={() => setHideDone((previous) => !previous)}
+              >
+                {hideDone ? "Show finished" : "Hide finished"}
+              </Button>
+            </div>
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={counts.total}
+              aria-valuenow={counts.completed}
+              aria-label="Agent todo progress"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${counts.total > 0 ? (counts.completed / counts.total) * 100 : 0}%` }}
+              />
+            </div>
+            <Text type={TextTypes.Body7} color="muted">
+              Source: {snapshot?.toolName ?? "todo tool"}
+              {snapshot?.sendAt ? ` · updated ${snapshot.sendAt}` : ""}
+              {isSharedView ? " (read-only view)" : ""}
+            </Text>
+          </div>
+        )}
+      </PanelCard>
+
+      {visible.length > 0 ? (
+        <PanelCard title="Current list" hint="Newest recorded plan, in the agent's own order.">
+          <ul className="m-0 list-none p-0">
+            {visible.map((todo, index) => (
+              <TodoRow key={todo.id ?? `${todo.status}-${index}-${todo.content}`} todo={todo} />
+            ))}
+          </ul>
+        </PanelCard>
+      ) : null}
+
+      {snapshot && !hideDone ? (
+        <PanelCard title="Status legend" hint="Grouped counts by todo state.">
+          <div className="space-y-1">
+            {TODO_STATUS_ORDER.map((status) => {
+              const Icon = TODO_STATUS_ICONS[status];
+              const value =
+                status === "in_progress"
+                  ? counts.inProgress
+                  : status === "completed"
+                    ? counts.completed
+                    : status === "cancelled"
+                      ? counts.cancelled
+                      : counts.pending;
+              return (
+                <div key={status} className="flex items-center justify-between gap-3 text-[11px]">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <Icon className="h-3 w-3" aria-hidden /> {todoStatusLabel(status)}
+                  </span>
+                  <span className="text-foreground">{value}</span>
+                </div>
+              );
+            })}
+          </div>
+        </PanelCard>
+      ) : null}
+    </div>
+  );
+}
+
 function McpServersTab() {
   const { data, isLoading } = useSWR<MCPServersResponse>("/api/v1/tools/mcp/integrations", fetcher);
   const rows = data?.rows ?? [];
@@ -874,6 +1083,7 @@ const CHAT_DETAILS_TAB_ICONS: Record<ChatDetailsTabId, typeof Info> = {
   overview: Info,
   init: Settings2,
   tools: Wrench,
+  todos: ListTodo,
   mcp: Server,
 };
 
@@ -964,6 +1174,7 @@ export function ChatDetailsPanel({
         {activeTab === "overview" ? <OverviewTab chat={chat} user={user} /> : null}
         {activeTab === "init" ? <InitTab chat={chat} isSharedView={isSharedView} /> : null}
         {activeTab === "tools" ? <ToolsTab chat={chat} isSharedView={isSharedView} /> : null}
+        {activeTab === "todos" ? <TodosTab chat={chat} isSharedView={isSharedView} /> : null}
         {activeTab === "mcp" ? <McpServersTab /> : null}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { cn } from "../../lib/utils";
-import { EllipsisVertical, Info, Maximize2, Server, Settings2, Wrench } from "lucide-react";
+import { EllipsisVertical, Info, ListTodo, Maximize2, Server, Settings2, Wrench } from "lucide-react";
 import {
   Badge,
   BotDisplay,
@@ -36,6 +36,7 @@ const DETAILS_MENU_ITEMS: ReadonlyArray<{
   { tab: "overview", label: "Overview", Icon: Info },
   { tab: "init", label: "Tool init", Icon: Settings2, hiddenInSharedView: true },
   { tab: "tools", label: "Browse tools", Icon: Wrench },
+  { tab: "todos", label: "Agent todos", Icon: ListTodo },
   { tab: "mcp", label: "MCP servers", Icon: Server },
 ];
 
