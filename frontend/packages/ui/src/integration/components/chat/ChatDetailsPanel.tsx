@@ -34,12 +34,16 @@ import {
   X,
 } from "lucide-react";
 
-export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
+export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp" | "todos";
 
 /**
  * Tabs of the shared chat details surface (ci#749). The tool init payload is a
  * sub-section of the details now instead of a standalone dialog, and tools get
  * their own browse view with list/tile layouts and filters.
+ *
+ * ci#1100 adds a read-only "Todos" tab fed by the todo state the coder agent
+ * already maintains: it renders the `todos` list the interaction status poll
+ * carries, so it needs no extra request.
  */
 export const CHAT_DETAILS_TABS: ReadonlyArray<{
   id: ChatDetailsTabId;
@@ -50,7 +54,63 @@ export const CHAT_DETAILS_TABS: ReadonlyArray<{
   { id: "init", label: "Init", description: "Per-tool init payload" },
   { id: "tools", label: "Tools", description: "Browse and inspect chat tools" },
   { id: "mcp", label: "MCP servers", description: "Connected MCP integrations" },
+  {
+    id: "todos",
+    label: "Todos",
+    description: "Todo list the agent maintains for this run",
+  },
 ];
+
+export type ChatTodoItem = {
+  text: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+};
+
+/** Normalizes a raw todo status into one of the four rendered states (ci#1100). */
+export function normalizeTodoStatus(status: unknown): ChatTodoItem["status"] {
+  const value = typeof status === "string" ? status.trim().toLowerCase() : "";
+  switch (value) {
+    case "completed":
+    case "complete":
+    case "done":
+      return "completed";
+    case "in_progress":
+    case "in-progress":
+    case "active":
+    case "running":
+      return "in_progress";
+    case "cancelled":
+    case "canceled":
+      return "cancelled";
+    default:
+      return "pending";
+  }
+}
+
+/**
+ * Reads the agent-maintained todo list out of an interaction status payload
+ * (ci#1100). The backend derives it from the newest `todo_write` call of the
+ * interaction run, so this is a pure render of the existing status poll. Entries
+ * without text are dropped and an absent/!array value renders the empty state.
+ */
+export function chatTodoItems(value: unknown): ChatTodoItem[] {
+  if (!Array.isArray(value)) return [];
+  const items: ChatTodoItem[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const entry = raw as { text?: unknown; content?: unknown; status?: unknown };
+    const candidate =
+      typeof entry.text === "string"
+        ? entry.text
+        : typeof entry.content === "string"
+          ? entry.content
+          : "";
+    const text = candidate.trim();
+    if (!text) continue;
+    items.push({ text, status: normalizeTodoStatus(entry.status) });
+  }
+  return items;
+}
 
 export type ChatToolRow = {
   name: string;
@@ -870,11 +930,90 @@ function OverviewTab({ chat, user }: { chat: any; user?: any }) {
   );
 }
 
+const TODO_STATUS_LABELS: Record<ChatTodoItem["status"], string> = {
+  pending: "Pending",
+  in_progress: "In progress",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+/**
+ * Read-only todo list of the current interaction run (ci#1100). It renders the
+ * `todos` the interaction status poll carries, i.e. the list the coder agent
+ * maintains through its `todo_write` tool - no extra request, no editing.
+ */
+export function TodosTab({ status }: { status?: unknown }) {
+  const todos = chatTodoItems((status as { todos?: unknown } | undefined)?.todos);
+  const done = todos.filter((todo) => todo.status === "completed").length;
+
+  return (
+    <div className="space-y-3" data-testid="chat-details-todos">
+      <PanelCard
+        title="Todos"
+        hint={
+          todos.length > 0
+            ? `${done}/${todos.length} completed · maintained by the agent for this run`
+            : "Maintained by the agent for this run"
+        }
+      >
+        {todos.length === 0 ? (
+          <Text type={TextTypes.Body7} color="muted">
+            This interaction has no todo list yet. The agent fills it in as it
+            plans and works through the task.
+          </Text>
+        ) : (
+          <ul className="space-y-1.5">
+            {todos.map((todo, index) => (
+              <li
+                key={`${todo.text}-${index}`}
+                data-todo-status={todo.status}
+                className="flex items-start gap-2 text-sm"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "mt-1 h-3.5 w-3.5 shrink-0 rounded-full border",
+                    todo.status === "completed"
+                      ? "border-emerald-500/70 bg-emerald-500/20"
+                      : todo.status === "in_progress"
+                        ? "border-sky-500/70 bg-sky-500/20"
+                        : todo.status === "cancelled"
+                          ? "border-border bg-muted"
+                          : "border-border bg-transparent",
+                  )}
+                />
+                <div className="min-w-0">
+                  <span
+                    className={cn(
+                      "break-words",
+                      todo.status === "completed"
+                        ? "text-muted-foreground line-through"
+                        : todo.status === "cancelled"
+                          ? "text-muted-foreground line-through"
+                          : "text-foreground",
+                    )}
+                  >
+                    {todo.text}
+                  </span>
+                  <Text type={TextTypes.Body7} color="muted">
+                    {TODO_STATUS_LABELS[todo.status]}
+                  </Text>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </PanelCard>
+    </div>
+  );
+}
+
 const CHAT_DETAILS_TAB_ICONS: Record<ChatDetailsTabId, typeof Info> = {
   overview: Info,
   init: Settings2,
   tools: Wrench,
   mcp: Server,
+  todos: List,
 };
 
 /**
@@ -965,6 +1104,7 @@ export function ChatDetailsPanel({
         {activeTab === "init" ? <InitTab chat={chat} isSharedView={isSharedView} /> : null}
         {activeTab === "tools" ? <ToolsTab chat={chat} isSharedView={isSharedView} /> : null}
         {activeTab === "mcp" ? <McpServersTab /> : null}
+        {activeTab === "todos" ? <TodosTab status={chat?.status} /> : null}
       </div>
     </div>
   );
