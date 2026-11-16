@@ -809,17 +809,24 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		resumeResult = execErr.Error()
 		resumeReason = execErr.Error()
 	}
-	resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
-		Result:   resumeResult,
-		Approved: execErr == nil,
-		Rejected: execErr != nil,
-		Reason:   resumeReason,
-		ActionID: actionID,
-	})
-	if resumeErr != nil {
-		logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+	if unlockRequired {
+		// The action is still pending (SSH-key unlock), so nothing has been decided
+		// yet: leave the parked generation parked so the retried approval resumes it
+		// instead of ending the turn on a transient "unlock required" error. The
+		// previous fallback behaviour is preserved for this case.
+	} else {
+		resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
+			Result:   resumeResult,
+			Approved: execErr == nil,
+			Rejected: execErr != nil,
+			Reason:   resumeReason,
+			ActionID: actionID,
+		})
+		if resumeErr != nil {
+			logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+		}
+		response.ResumedTurn = resumedTurn && resumeErr == nil
 	}
-	response.ResumedTurn = resumedTurn && resumeErr == nil
 	if !response.ResumedTurn && continueAfterExecute && continuationMessageUUID != "" {
 		// No live park (expired, restarted, or continue_after_execute without a
 		// park): keep the pre-ci#1116 behaviour of queueing a fresh bot reply.
