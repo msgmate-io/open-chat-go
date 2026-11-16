@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"backend/logging"
+	"backend/suspend"
 	"bufio"
 	"bytes"
 	"context"
@@ -1011,6 +1012,41 @@ func streamChatCompletion(
 				return
 			}
 
+			// ci#1116: a round that surfaced a confirmable tool call parks this
+			// generation instead of finishing it, so the approve/reject decision
+			// is delivered back into the *same* turn - the placeholder tool
+			// result is replaced in currentMessages and the loop continues -
+			// instead of ending here and letting the handler queue a fresh bot
+			// reply. The pending signal is the placeholder result's own status,
+			// so no extra flag has to be threaded through the loop.
+			if pausedCall, pending := pendingConfirmationCall(appended); pending {
+				resumedCall, resumedMessages, resumed := parkAndAwaitConfirmation(
+					ctx, meta.ChatUUID, pausedCall, currentMessages, contextBudget.Limits,
+				)
+				if resumed {
+					currentMessages = resumedMessages
+					// Report the decision on the call row the reader already
+					// received, so the chat UI shows the executed/rejected
+					// result of the parked call rather than "waiting".
+					for i := range appended {
+						if appended[i].id == resumedCall.id {
+							appended[i] = resumedCall
+						}
+					}
+					for _, details := range toolCallDetails {
+						if id, _ := details["id"].(string); id == resumedCall.id {
+							details["status"] = resumedCall.status
+							details["result"] = resumedCall.result
+						}
+					}
+					logging.Debugf(
+						"Confirmable tool call %s resumed (status %s); continuing the same turn",
+						resumedCall.id, resumedCall.status,
+					)
+					continue
+				}
+			}
+
 			if toolCallResult.stopAfterTool {
 				logging.Debugf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
 				recordOutcome(TurnEndedConfirmablePause)
@@ -1182,6 +1218,86 @@ func appendExecutedToolCalls(
 		appended = append(appended, call)
 	}
 	return appended, messages, truncatedResults
+}
+
+// pendingConfirmationCall reports the call of a round that parked the turn on a
+// user decision. The signal is the placeholder result's own status
+// (ToolCallStatusPendingConfirmation), so the tool loop needs no extra flag
+// threaded through it to know that a round paused instead of finishing.
+func pendingConfirmationCall(calls []executedToolCall) (executedToolCall, bool) {
+	for _, call := range calls {
+		if call.status == ToolCallStatusPendingConfirmation {
+			return call, true
+		}
+	}
+	return executedToolCall{}, false
+}
+
+// parkAndAwaitConfirmation parks the enclosing generation for the confirmable
+// call (ci#1116) and blocks until the user's decision is delivered through the
+// suspension registry or the turn's context ends.
+//
+// On a decision the placeholder tool result of that call is replaced in the
+// transcript by the executed/rejected result, so the caller can continue the
+// SAME generation instead of finishing the turn and letting the confirmation
+// handler queue a fresh bot reply. It reports false when nothing could be parked
+// or the decision never arrived (expiry, stop, shutdown); the caller then keeps
+// the previous terminal behaviour.
+func parkAndAwaitConfirmation(
+	ctx context.Context,
+	chatUUID string,
+	paused executedToolCall,
+	currentMessages []map[string]interface{},
+	limits ToolResultLimits,
+) (executedToolCall, []map[string]interface{}, bool) {
+	registry := suspend.Default()
+	waiter, parked := suspend.ParkWaiter(registry, chatUUID, paused.id, "", "", paused.id)
+	if !parked {
+		return paused, currentMessages, false
+	}
+	awaitCtx, cancel := context.WithTimeout(ctx, registry.TTL())
+	defer cancel()
+
+	decision, decided := waiter.Await(awaitCtx)
+	if !decided {
+		// Expired or cancelled: drop the suspension so a late click cannot
+		// deliver into a generation that already finished, and let the caller
+		// end the turn the way it did before ci#1116.
+		registry.Forget(chatUUID, paused.id)
+		logging.Debugf(
+			"Confirmable tool call %s was not decided in time; keeping the pause behaviour",
+			paused.id,
+		)
+		return paused, currentMessages, false
+	}
+
+	resumed := paused
+	resumed.result = decision.Result
+	resumed.status = ToolCallStatusSucceeded
+	resumed.error = ""
+	if decision.Rejected {
+		resumed.status = ToolCallStatusFailed
+		resumed.error = "rejected by user"
+	}
+
+	modelResult, _ := truncateToolResultForTool(resumed.result, resumed.name, limits)
+	messages := make([]map[string]interface{}, len(currentMessages))
+	copy(messages, currentMessages)
+	for i, message := range messages {
+		if role, _ := message["role"].(string); role != "tool" {
+			continue
+		}
+		if id, _ := message["tool_call_id"].(string); id != paused.id {
+			continue
+		}
+		replaced := make(map[string]interface{}, len(message))
+		for key, value := range message {
+			replaced[key] = value
+		}
+		replaced["content"] = modelResult
+		messages[i] = replaced
+	}
+	return resumed, messages, true
 }
 
 // buildStreamingRequestBody assembles the OpenAI-compatible streaming request

@@ -5,7 +5,9 @@ import (
 	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/logging"
 	"backend/server/util"
+	"backend/suspend"
 	"backend/workqueue"
 	"context"
 	"encoding/json"
@@ -24,15 +26,21 @@ type ConfirmableActionExecuteRequest struct {
 }
 
 type ConfirmableActionExecuteResponse struct {
-	Success              bool                   `json:"success"`
-	Status               string                 `json:"status"`
-	ActionID             string                 `json:"action_id"`
-	TargetTool           string                 `json:"target_tool_name"`
-	ToolResult           string                 `json:"tool_result,omitempty"`
-	Error                string                 `json:"error,omitempty"`
-	ContinueAfterExecute bool                   `json:"continue_after_execute"`
-	ContinuationQueued   bool                   `json:"continuation_queued,omitempty"`
-	UpdatedAction        map[string]interface{} `json:"updated_action,omitempty"`
+	Success              bool   `json:"success"`
+	Status               string `json:"status"`
+	ActionID             string `json:"action_id"`
+	TargetTool           string `json:"target_tool_name"`
+	ToolResult           string `json:"tool_result,omitempty"`
+	Error                string `json:"error,omitempty"`
+	ContinueAfterExecute bool   `json:"continue_after_execute"`
+	// ResumedTurn reports that the decision was delivered back into the parked
+	// generation (ci#1116): the tool result landed in the same turn instead of a
+	// new bot reply being queued.
+	ResumedTurn bool `json:"resumed_turn"`
+	// ContinuationQueued reports that no live park was found, so the fallback
+	// queued a fresh bot reply.
+	ContinuationQueued bool                   `json:"continuation_queued"`
+	UpdatedAction      map[string]interface{} `json:"updated_action,omitempty"`
 }
 
 // ConfirmableActionRejectRequest is the body of a confirm-actions reject call.
@@ -358,8 +366,25 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 	// Resume the interaction so the model observes the rejection (recorded as the
 	// tool-call result) and can respond with a clear acknowledgement and
 	// alternative, rather than the chat being left with no reply.
+	// ci#1116: deliver the rejection back into the parked generation first, so the
+	// model observes it as the tool-call result inside the SAME turn. Queueing a
+	// fresh bot reply is only the fallback for an expired/unknown suspension.
+	// The delivery is attempted unconditionally: the parked generation must never
+	// be left to expire on its TTL, but a caller that explicitly asked for no
+	// continuation still gets no queued reply.
+	resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
+		Result:   toolResultText,
+		Rejected: true,
+		Reason:   reason,
+		ActionID: actionID,
+	})
+	if resumeErr != nil {
+		logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+	}
+	resumed := resumedTurn && resumeErr == nil
+
 	continuationQueued := false
-	if continueAfterReject && rejectionMessageUUID != "" {
+	if !resumed && continueAfterReject && rejectionMessageUUID != "" {
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
 		if clientErr == nil && inspectorErr == nil {
@@ -379,6 +404,7 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 		"status":                "rejected",
 		"action_id":             actionID,
 		"continue_after_reject": continueAfterReject,
+		"resumed_turn":          resumed,
 		"continuation_queued":   continuationQueued,
 	})
 }
@@ -767,7 +793,41 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if continueAfterExecute && continuationMessageUUID != "" {
+	// ci#1116: deliver the executed tool result back into the parked generation
+	// so it lands in the SAME turn and the generation continues with its existing
+	// currentMessages prefix. The delivery is keyed on the parked tool call, not
+	// on continue_after_execute: a caller may pass continue_after_execute=false
+	// while a generation is still parked on this call, and that generation must
+	// never be left to expire on its TTL. Only when no park is registered
+	// (expired, restarted process, or a bare continue_after_execute run without a
+	// park) do we fall back to queueing a fresh bot reply.
+	resumeResult := toolResult
+	resumeReason := ""
+	if execErr != nil {
+		// Surface the execution error as the tool result so the parked generation
+		// observes the failure and recovers on the continuation turn.
+		resumeResult = execErr.Error()
+		resumeReason = execErr.Error()
+	}
+	// An SSH-key-unlock-required approval is NOT a decision: the action stays
+	// pending, so leave the parked generation parked and let the retried approval
+	// resume it, instead of ending the turn on a transient error.
+	if !unlockRequired {
+		resumedTurn, resumeErr := resumeParkedTurn(r.Context(), chatUUID, actionID, suspend.Decision{
+			Result:   resumeResult,
+			Approved: execErr == nil,
+			Rejected: execErr != nil,
+			Reason:   resumeReason,
+			ActionID: actionID,
+		})
+		if resumeErr != nil {
+			logging.Errorf("failed to resume parked confirmable turn for action %s: %v", actionID, resumeErr)
+		}
+		response.ResumedTurn = resumedTurn && resumeErr == nil
+	}
+	if !response.ResumedTurn && continueAfterExecute && continuationMessageUUID != "" {
+		// No live park (expired, restarted, or continue_after_execute without a
+		// park): keep the pre-ci#1116 behaviour of queueing a fresh bot reply.
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
 		if clientErr == nil && inspectorErr == nil {
