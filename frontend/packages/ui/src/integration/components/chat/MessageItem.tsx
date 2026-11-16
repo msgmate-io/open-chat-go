@@ -1185,19 +1185,38 @@ export function BotMessageItem({
   // state is visible without scrolling back to the top placeholder.
   const showWorkingFooter = !metaFinished && !isQueuePending && statusIndicator === null;
 
-  const content = (
-    <>
-      {statusIndicator
-        ? CustomStatusIndicator
-          ? (
-              <CustomStatusIndicator kind={statusIndicator.kind} label={statusIndicator.label} />
-            )
-          : (
-              <BootingIndicator label={statusIndicator.label} />
-            )
-        : null}
+  const messageBody = CustomMessageBody ? (
+    <CustomMessageBody
+      messageUUID={message.uuid}
+      text={normalizedMessageText}
+      toolCalls={toolCalls}
+      meta={(message.meta_data ?? {}) as Record<string, unknown>}
+      isGenerating={!metaFinished}
+      interactionState={interactionState}
+      chatUUID={chatUUID}
+      confirmableActions={confirmableActions}
+      executionBlockedReason={executionBlockedReason}
+      onMutate={() => {
+        void revalidateChatData(chatUUID);
+      }}
+    />
+  ) : isConfirmableEvent ? (
+    <ConfirmableEventIndicator message={message} />
+  ) : providerRetryEvent ? (
+    <ProviderRetryEventWidget event={providerRetryEvent} />
+  ) : (
+    <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>
+  );
 
-      {!metaFinished && nonEmptyThoughts.length > 0 && !usesTurnSequence && !inlineThoughts ? (
+  // ci#1105: while a turn is still running, the reasoning/tool-call step must
+  // stay at the bottom of the bubble. The transcript auto-scrolls to the newest
+  // content, so a live step rendered above the growing body scrolls out of view
+  // exactly while new thought text is still arriving. Rendering it after the
+  // body keeps the newest step visible; the finished transcript keeps the
+  // established sequence order (calls first, reasoning below).
+  const liveActivity = !metaFinished ? (
+    <>
+      {nonEmptyThoughts.length > 0 && !usesTurnSequence && !inlineThoughts ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
@@ -1221,7 +1240,7 @@ export function BotMessageItem({
         )
       ) : null}
 
-      {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
+      {!CustomMessageBody && toolCalls.length > 0 && !usesTurnSequence ? (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -1234,8 +1253,24 @@ export function BotMessageItem({
             </ShinyText>
           }
         />
-      )}
+      ) : null}
 
+      {usesTurnSequence ? (
+        <TurnSequence
+          messageUUID={message.uuid}
+          thoughtBlocks={timelineThoughts}
+          toolCalls={toolCalls}
+          header={turnSequenceHeader}
+          showNarration={false}
+          terminal={false}
+          defaultOpen
+        />
+      ) : null}
+    </>
+  ) : null;
+
+  const finishedActivity = metaFinished ? (
+    <>
       {usesTurnSequence && isCancelled ? (
         <InterruptedNote toolCallCount={toolCalls.length} cancelled={isCancelled} />
       ) : null}
@@ -1246,17 +1281,13 @@ export function BotMessageItem({
           thoughtBlocks={timelineThoughts}
           toolCalls={toolCalls}
           header={turnSequenceHeader}
-          // While the turn streams, its current narration *is* the message body
-          // below, so the timeline renders only the reasoning blocks; once the
-          // turn finished the body keeps just the tail text, so the recorded
-          // narration is rendered inline in the sequence (ci#569).
-          showNarration={Boolean(metaFinished)}
-          terminal={metaFinished}
+          showNarration
+          terminal
           defaultOpen
         />
       ) : null}
 
-      {metaFinished && !usesTurnSequence && !inlineThoughts && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
+      {!usesTurnSequence && !inlineThoughts && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
@@ -1291,24 +1322,7 @@ export function BotMessageItem({
         )
       ) : null}
 
-      {CustomMessageBody ? (
-        <CustomMessageBody
-          messageUUID={message.uuid}
-          text={normalizedMessageText}
-          toolCalls={toolCalls}
-          meta={(message.meta_data ?? {}) as Record<string, unknown>}
-          isGenerating={!metaFinished}
-          interactionState={interactionState}
-          chatUUID={chatUUID}
-          confirmableActions={confirmableActions}
-          executionBlockedReason={executionBlockedReason}
-          onMutate={() => {
-            void revalidateChatData(chatUUID);
-          }}
-        />
-      ) : null}
-
-      {!CustomMessageBody && metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
+      {!CustomMessageBody && toolCalls.length > 0 && !usesTurnSequence ? (
         <>
           {/* A finished turn that ran tools without reporting any reasoning or
               narration says so, instead of leaving a bare stack of call rows
@@ -1330,7 +1344,27 @@ export function BotMessageItem({
             }
           />
         </>
-      )}
+      ) : null}
+    </>
+  ) : null;
+
+  const content = (
+    <>
+      {statusIndicator
+        ? CustomStatusIndicator
+          ? (
+              <CustomStatusIndicator kind={statusIndicator.kind} label={statusIndicator.label} />
+            )
+          : (
+              <BootingIndicator label={statusIndicator.label} />
+            )
+        : null}
+
+      {finishedActivity}
+
+      {messageBody}
+
+      {liveActivity}
 
       {!inlineConfirmableActions && chatUUID && message.uuid && confirmableActions.length > 0
         ? confirmableActions.map((action) => (
@@ -1360,13 +1394,6 @@ export function BotMessageItem({
         <p className="my-2 text-sm text-muted-foreground">Review and confirm the proposed action below.</p>
       ) : null}
 
-      {isConfirmableEvent ? (
-        <ConfirmableEventIndicator message={message} />
-      ) : providerRetryEvent ? (
-        <ProviderRetryEventWidget event={providerRetryEvent} />
-      ) : CustomMessageBody ? null : (
-        <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>
-      )}
       <FileAttachmentsList attachments={attachments} />
       {renderExtras ? (
         <ChatUIMessageExtras

@@ -5,7 +5,7 @@ package deployguard
 // The chart itself lives in the private repository
 // msgmate-io/open-chat-go-helm-chart; this repository carries the chart change
 // as a patch plus a README (the ci#667 precedent, see
-// development/helm-postgresql/). Nothing here can run `helm template`, so these
+// development/ci/helm-postgresql/). Nothing here can run `helm template`, so these
 // tests pin the invariants that make the change safe to ship before the IdP
 // exists:
 //
@@ -30,8 +30,8 @@ import (
 )
 
 const (
-	identityPatchPath  = "development/helm-identity-provider/ci-1061-identity-provider.patch"
-	identityReadmePath = "development/helm-identity-provider/README.md"
+	identityPatchPath  = "development/ci/helm-identity-provider/ci-1061-identity-provider.patch"
+	identityReadmePath = "development/ci/helm-identity-provider/README.md"
 
 	chartValuesPath        = "backend/values.yaml"
 	chartTemplatePath      = "backend/templates/backend.yaml"
@@ -90,6 +90,9 @@ func readRepoFile(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(deployRepoRoot(t), rel))
 	if err != nil {
+		if strings.HasPrefix(rel, "development/ci/") && os.IsNotExist(err) {
+			t.Skipf("private open-chat-go-ci checkout is not materialized: %v", err)
+		}
 		t.Fatalf("read %s: %v", rel, err)
 	}
 	return string(b)
