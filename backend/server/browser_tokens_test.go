@@ -110,12 +110,29 @@ func TestMatchRestrictedTokenRoute(t *testing.T) {
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals/interrupt/extra", false},
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals", false},
 
+		// ci#1107: the palette commands `:models`, `:tools` and `:bots` need
+		// the read-only catalogs, so the coder-tui audience may read them.
+		// They are plain reads scoped to the acting user, and the sibling
+		// routes stay default-deny.
+		{database.AudienceCoderTUI, http.MethodGet, "/models", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/api/v1/models", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/tools", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/bots/list", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/api/v1/bots/list", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/models/some-model-uuid", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/models", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/tools/some-tool", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/tools", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/bots/list", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/bots/some-bot-uuid", false},
+		{database.AudienceCoderTUI, http.MethodPatch, "/bots/some-bot-uuid", false},
+		{database.AudienceCoderTUI, http.MethodPut, "/bots/some-bot-uuid/config", false},
+
 		// coder-tui is still default-deny elsewhere
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/create", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/contacts/list", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/admin/users", false},
 		{database.AudienceCoderTUI, http.MethodPost, "/user/access-tokens", false},
-		{database.AudienceCoderTUI, http.MethodGet, "/bots/list", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/contact", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/list/extra", false},
 
