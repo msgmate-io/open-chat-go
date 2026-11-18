@@ -111,6 +111,53 @@ func TestPendingConfirmableActionCarriesProposedParams(t *testing.T) {
 	}
 }
 
+// TestPendingRuntimeSelectionCarriesResetAffordance pins the ci#1135 contract on
+// the action task: allow_reset is opt-out, so a selector without the key (every
+// selector persisted before ci#1135) reports allow_reset true while an explicit
+// allow_reset:false reports false.
+func TestPendingRuntimeSelectionCarriesResetAffordance(t *testing.T) {
+	cases := []struct {
+		name string
+		meta string
+		want bool
+	}{
+		{
+			name: "absent_means_allowed",
+			meta: `{"runtime_selectors":[{"id":"tc-1","status":"pending","title":"Choose runtime"}]}`,
+			want: true,
+		},
+		{
+			name: "explicit_false_forbids",
+			meta: `{"runtime_selectors":[{"id":"tc-1","status":"pending","title":"Choose runtime","allow_reset":false}]}`,
+			want: false,
+		},
+		{
+			name: "explicit_true_allows",
+			meta: `{"runtime_selectors":[{"id":"tc-1","status":"pending","title":"Choose runtime","allow_reset":true}]}`,
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			message := database.Message{MetaData: database.JSONRaw(tc.meta)}
+			actions := pendingActionsForMessage(message)
+			if len(actions) != 1 {
+				t.Fatalf("expected exactly one action, got %d (%+v)", len(actions), actions)
+			}
+			if actions[0].Kind != ActionTaskKindRuntimeSelection {
+				t.Fatalf("expected kind %q, got %q", ActionTaskKindRuntimeSelection, actions[0].Kind)
+			}
+			if actions[0].AllowReset == nil {
+				t.Fatalf("expected allow_reset to be set on the runtime-selection action")
+			}
+			if *actions[0].AllowReset != tc.want {
+				t.Fatalf("expected allow_reset %v, got %v", tc.want, *actions[0].AllowReset)
+			}
+		})
+	}
+}
+
 func TestActionTaskKeyIsStableAndNormalized(t *testing.T) {
 	first := actionTaskKey("  CHAT-UUID  ", " Message-UUID ")
 	second := actionTaskKey("chat-uuid", "message-uuid")
