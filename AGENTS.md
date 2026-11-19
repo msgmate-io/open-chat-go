@@ -5,6 +5,19 @@ details live in `DEVELOPMENT.md`; this file records the routes an agent must not
 hand-roll and the pull request conventions a change has to satisfy to be
 mergeable.
 
+## Merge/update-refs bots may never push `main` (ci#1138)
+
+`git_repo_merge_update_bot` (role `merge_update`) and
+`git_repo_migration_reconcile_bot` (role `migration_reconcile`) **may never push
+`main`, `master` or `dev`** — not directly, not force-pushed, not through a
+refspec. `gittooling.ValidatePushTarget` refuses such a push, the bot bootstrap
+`policy.push_denylist` is merged into `default_shared_config`, and an integration
+config may only narrow that denylist, never widen it. A sub-repo ref refresh goes
+through `development/scripts/update_subrepo_refs.sh` (never a hand-edited
+`.gitmodules` or gitlink); a migration reconciliation goes through
+`development/scripts/migration_reconcile.sh` and is always an explicit call.
+GitHub rulesets on `main` stay the authoritative guarantee.
+
 ## GitHub writes: prefer typed tools
 
 Prefer the typed GitHub tools (`github_pr_view`, `github_pr_edit`,
