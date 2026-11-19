@@ -111,6 +111,11 @@ export function AppSidebar({
   const hasAccountManagement = Boolean(
     integrations?.rows?.some((integration) => integration.name === "account_management"),
   );
+  // ci#1143: model management moved out of the private `admin` integration into
+  // the dedicated `model_selector` integration; prefer it when it is active.
+  const hasModelSelector = Boolean(
+    integrations?.rows?.some((integration) => integration.name === "model_selector"),
+  );
   const themeSelector = <ConnectedThemeSelector />;
 
   useEffect(() => {
@@ -132,10 +137,17 @@ export function AppSidebar({
         title: "Admin Overview",
         url: "/integrations/admin",
       });
-      profileItems.push({
-        title: "Admin Models",
-        url: "/integrations/admin/models",
-      });
+      if (hasModelSelector) {
+        profileItems.push({
+          title: "Model Management",
+          url: "/integrations/model_selector",
+        });
+      } else {
+        profileItems.push({
+          title: "Admin Models",
+          url: "/integrations/admin/models",
+        });
+      }
       profileItems.push({
         title: "Integration Settings",
         url: "/integrations/admin/settings",

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/logging"
+
 	"github.com/hibiken/asynq"
 )
 
@@ -277,4 +279,66 @@ func enqueueBotReplyWithDelivery(client *asynq.Client, inspector *asynq.Inspecto
 		info, err = enqueue(taskID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36))
 	}
 	return info, err
+}
+
+// DecideBotReplyContinuation maps the live-turn state to the enqueue decision
+// for a *continuation*: the follow-up bot turn a confirmable action asks for
+// after it was executed (or failed) and no parked generation absorbed the
+// decision (ci#1142).
+//
+// A continuation is never queued behind a live turn. The turn it would queue
+// behind is precisely the one that did not take the decision: either its
+// in-memory decision registry is gone (another instance, a restarted process,
+// an expired park) or it is about to end on its park TTL. Queueing behind it
+// starves the continuation for the whole park TTL (10 minutes) while the chat
+// keeps reporting itself as active - there is a queued reply, so every liveness
+// check stays green - and the interaction is reaped as a stall although the
+// chat is healthy and merely never got its follow-up turn.
+//
+// So the continuation always takes the base task ID: an unresponsive parked
+// turn is cancelled (its work is already persisted) and the continuation starts
+// immediately. turnLive is still a parameter so the invariant is testable for
+// both states.
+func DecideBotReplyContinuation(turnLive bool) BotReplyEnqueueDecision {
+	return BotReplyDecisionInterruptTurn
+}
+
+// EnqueueBotReplyContinuation enqueues the follow-up bot turn of a confirmable
+// action that no parked generation picked up (ci#1142).
+//
+// Unlike EnqueueBotReply it never attaches the continuation behind whatever is
+// currently running for the chat, so the follow-up turn cannot be starved by a
+// parked turn whose decision registry is gone. A nil/failed enqueue is reported
+// to the caller instead of being swallowed: the caller must be able to say out
+// loud that the chat is left without a bot turn.
+func EnqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	return enqueueBotReplyContinuation(client, inspector, payload, BotReplyIsActive(inspector, payload.ChatUUID), opts...)
+}
+
+// enqueueBotReplyContinuation is the liveness-injected core of
+// EnqueueBotReplyContinuation (same reason as enqueueBotReplyWithDelivery: a
+// queued task is pending, not active, so a test cannot otherwise reach the
+// live-turn case).
+func enqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, turnLive bool, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	if decision := DecideBotReplyContinuation(turnLive); decision != BotReplyDecisionInterruptTurn {
+		// Unreachable by construction; kept so a future change to the decision
+		// cannot silently reintroduce the ci#1142 starvation.
+		return nil, fmt.Errorf("continuation for chat %s would be queued behind a live turn (%s); refusing to starve it", payload.ChatUUID, decision)
+	}
+	if turnLive {
+		// Visible in the log on purpose: this is the ci#1142 shape, and the
+		// orphaned turn is about to be cancelled.
+		logging.Warnf(
+			"bot-reply continuation (ci#1142): chat %s still reports a live turn that did not take the confirmation decision; cancelling it so the continuation starts now",
+			payload.ChatUUID,
+		)
+	}
+	info, err := enqueueBotReplyWithDelivery(client, inspector, payload, BotReplyDeliveryInterrupt, turnLive, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to enqueue bot-reply continuation for chat %s: %w", payload.ChatUUID, err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("bot-reply continuation for chat %s was not enqueued (empty task info)", payload.ChatUUID)
+	}
+	return info, nil
 }
