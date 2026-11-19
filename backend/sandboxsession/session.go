@@ -322,6 +322,20 @@ func Open(ctx context.Context, reg *Registry, req Request) (Session, error) {
 		ref.Provider = name
 	}
 
+	// ci#1126: a provisioned sandbox whose workspace root was never materialised
+	// must fail the provision instead of being handed to a tool call (which
+	// surfaces as `can't cd to /workspace/coder-<uuid>`). Providers that satisfy
+	// the workspace root materialisation contract are asserted here; the private
+	// msgmate_coder hook is the implementation. Providers without the contract are
+	// unaffected, and when the request names no root core leaves the root to the
+	// provider's own intent.
+	if root := strings.TrimSpace(req.Shell.WorkDir); root != "" && SupportsWorkspaceRootProvisioning(provider) {
+		spec := WorkspaceRootSpec{WorkspaceUUID: ref.SandboxUUID, Root: root}
+		if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+		}
+	}
+
 	if len(req.Files) > 0 {
 		if err := provider.InjectFiles(ctx, ref, req.Files); err != nil {
 			return Session{}, fmt.Errorf("sandboxsession: %s: inject files %v: %w", name, Paths(req.Files), err)
