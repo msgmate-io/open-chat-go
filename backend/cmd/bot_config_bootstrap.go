@@ -152,29 +152,50 @@ func EffectivePushPolicy(declared BotPushPolicy) BotPushPolicy {
 }
 
 // validateIntegrationPushPolicy enforces that an integration-supplied config may
-// only narrow what a bot may push (ci#1138): it may add protected branches or
-// denylisted refs, but every default protection must survive.
+// only narrow what a bot may push (ci#1138).
+//
+// A declared policy is additive: "narrow" means the config may protect *more*
+// than the defaults, never less. A config that declares nothing, or that lists
+// only its own extra branches, therefore keeps every default and is accepted -
+// that is the normal case. Rejection is reserved for an explicit attempt to
+// replace the defaults with nothing (an empty protected_branches/push_denylist
+// list), and for a policy block that would - through a future change to the
+// merge rules - drop a default from the effective set.
 func validateIntegrationPushPolicy(cfg botBootstrapConfig, source string) error {
 	declared, err := declaredPushPolicy(cfg)
 	if err != nil {
-		return fmt.Errorf("bot config %q: %w", source, err)
+		return fmt.Errorf("bot config %q: %w; an integration config may only narrow what the bot may push", source, err)
 	}
-	declaredBranches := map[string]struct{}{}
-	for _, branch := range declared.ProtectedBranches {
-		declaredBranches[branch] = struct{}{}
+	// The declared lists are merged over the defaults, so the effective policy
+	// must still contain every default protection. Checking the merged result
+	// (instead of the raw declaration) keeps the integration guarantee
+	// independent of how exactly the merge is implemented.
+	effective := EffectivePushPolicy(declared)
+	return assertPushPolicyKeepsDefaults(effective.ProtectedBranches, effective.PushDenylist, source)
+}
+
+// assertPushPolicyKeepsDefaults rejects a candidate policy set that no longer
+// contains every default protection. It is the defence-in-depth guard behind
+// validateIntegrationPushPolicy: declaring extra branches or extra denied refs
+// is fine, dropping a default is a hard error. source names the config in the
+// error so the rejected file is obvious in the bootstrap log.
+func assertPushPolicyKeepsDefaults(protectedBranches, pushDenylist []string, source string) error {
+	presentBranches := map[string]struct{}{}
+	for _, branch := range normalizeBranchList(protectedBranches) {
+		presentBranches[branch] = struct{}{}
 	}
 	for _, branch := range normalizeBranchList(DefaultProtectedBranches()) {
-		if _, ok := declaredBranches[branch]; !ok {
-			return fmt.Errorf("bot config %q: policy.protected_branches may add branches but must keep the default protection %q; an integration config may only narrow what the bot may push", source, branch)
+		if _, ok := presentBranches[branch]; !ok {
+			return fmt.Errorf("bot config %q: policy.protected_branches dropped the default protection %q; an integration config may only narrow what the bot may push", source, branch)
 		}
 	}
-	declaredRefs := map[string]struct{}{}
-	for _, ref := range declared.PushDenylist {
-		declaredRefs[ref] = struct{}{}
+	presentRefs := map[string]struct{}{}
+	for _, ref := range normalizeRefDenylist(pushDenylist) {
+		presentRefs[ref] = struct{}{}
 	}
 	for _, ref := range normalizeRefDenylist(DefaultPushDenylist()) {
-		if _, ok := declaredRefs[ref]; !ok {
-			return fmt.Errorf("bot config %q: policy.push_denylist may add refs but must keep the default denial of %q; an integration config may only narrow what the bot may push", source, ref)
+		if _, ok := presentRefs[ref]; !ok {
+			return fmt.Errorf("bot config %q: policy.push_denylist dropped the default denial of %q; an integration config may only narrow what the bot may push", source, ref)
 		}
 	}
 	return nil

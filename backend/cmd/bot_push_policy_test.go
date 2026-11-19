@@ -55,7 +55,10 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			"name": "git_repo_merge_update_bot"
 		},
 		"policy": { "protected_branches": [] },
-		"default_shared_config": { "model": "qwen3-4b-instruct-2507_vllm" }
+		"default_shared_config": {
+			"description": "Merges pull requests and refreshes sub-repo refs; may never push main.",
+			"model": "qwen3-4b-instruct-2507_vllm"
+		}
 	}`
 
 	widenedEmptyDenylist := `{
@@ -66,10 +69,15 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			"name": "git_repo_merge_update_bot"
 		},
 		"policy": { "push_denylist": [] },
-		"default_shared_config": { "model": "qwen3-4b-instruct-2507_vllm" }
+		"default_shared_config": {
+			"description": "Merges pull requests and refreshes sub-repo refs; may never push main.",
+			"model": "qwen3-4b-instruct-2507_vllm"
+		}
 	}`
 
-	widenedMissingProtected := `{
+	// A config that declares only its own extra branch is additive: the merge
+	// keeps every default, so an integration may supply it unchanged.
+	additiveProtectedOnly := `{
 		"primary_owner": "admin",
 		"bot": {
 			"username": "git_repo_merge_update_bot",
@@ -77,10 +85,13 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			"name": "git_repo_merge_update_bot"
 		},
 		"policy": { "protected_branches": ["release"] },
-		"default_shared_config": { "model": "qwen3-4b-instruct-2507_vllm" }
+		"default_shared_config": {
+			"description": "Merges pull requests and refreshes sub-repo refs; may never push main.",
+			"model": "qwen3-4b-instruct-2507_vllm"
+		}
 	}`
 
-	widenedMissingDenylist := `{
+	additiveDenylistOnly := `{
 		"primary_owner": "admin",
 		"bot": {
 			"username": "git_repo_merge_update_bot",
@@ -88,7 +99,10 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			"name": "git_repo_merge_update_bot"
 		},
 		"policy": { "push_denylist": ["refs/heads/release"] },
-		"default_shared_config": { "model": "qwen3-4b-instruct-2507_vllm" }
+		"default_shared_config": {
+			"description": "Merges pull requests and refreshes sub-repo refs; may never push main.",
+			"model": "qwen3-4b-instruct-2507_vllm"
+		}
 	}`
 
 	bothLocations := `{
@@ -150,18 +164,20 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			wantIntegrationErr: "must name at least one ref",
 		},
 		{
-			name:               "integration config may not drop the default protected branches",
-			raw:                widenedMissingProtected,
+			// Declaring only "release" is additive, not a replacement: the merge
+			// keeps main/master/dev, so an integration may supply this config.
+			name:               "additive protected_branches without the defaults is accepted",
+			raw:                additiveProtectedOnly,
 			wantProtected:      []string{"main", "master", "dev", "release"},
 			wantDenylist:       []string{"refs/heads/main", "refs/heads/master", "refs/heads/dev"},
-			wantIntegrationErr: "may only narrow what the bot may push",
+			wantIntegrationErr: "",
 		},
 		{
-			name:               "integration config may not drop the default denylisted refs",
-			raw:                widenedMissingDenylist,
+			name:               "additive push_denylist without the defaults is accepted",
+			raw:                additiveDenylistOnly,
 			wantProtected:      []string{"main", "master", "dev"},
 			wantDenylist:       []string{"refs/heads/main", "refs/heads/master", "refs/heads/dev", "refs/heads/release"},
-			wantIntegrationErr: "may only narrow what the bot may push",
+			wantIntegrationErr: "",
 		},
 		{
 			name:          "policy declared twice is rejected",
@@ -234,6 +250,26 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 				assertStringSet(t, "merged push_denylist", mergedPolicy.PushDenylist, tc.wantDenylist)
 			}
 		})
+	}
+}
+
+// TestAssertPushPolicyKeepsDefaults covers the defence-in-depth guard behind the
+// integration check: a policy set that still carries every default is accepted,
+// one that drops a default is refused.
+func TestAssertPushPolicyKeepsDefaults(t *testing.T) {
+	defaults := EffectivePushPolicy(BotPushPolicy{})
+	if err := assertPushPolicyKeepsDefaults(defaults.ProtectedBranches, defaults.PushDenylist, "test.json"); err != nil {
+		t.Fatalf("expected the default policy to satisfy the guard, got %v", err)
+	}
+
+	if err := assertPushPolicyKeepsDefaults([]string{"dev", "master"}, defaults.PushDenylist, "test.json"); err == nil {
+		t.Fatalf("expected the guard to reject a protected-branch set without main")
+	} else if !strings.Contains(err.Error(), "may only narrow what the bot may push") {
+		t.Fatalf("unexpected guard error: %v", err)
+	}
+
+	if err := assertPushPolicyKeepsDefaults(defaults.ProtectedBranches, []string{"refs/heads/main"}, "test.json"); err == nil {
+		t.Fatalf("expected the guard to reject a denylist without refs/heads/dev")
 	}
 }
 
