@@ -455,6 +455,7 @@ const GitToolDescription = "Run a git action in the coding workspace. Every read
 	"- ls_files: returns the tracked files, optionally filtered by `pattern`. Use it to confirm a path exists before diff/blame instead of guessing.\n" +
 	"- rev_parse: returns the sha that `ref` resolves to. Use it to pin a moving ref (branch, HEAD~2, tag) before show/diff. Does not show file contents.\n" +
 	"- cat_file: returns whether `path` exists at `ref`, its object type, and with `content:true` the blob content. Use it to read a file as it was at a commit when the worktree copy has changed.\n" +
+	"- push: `<local-branch>:<remote-branch>` refspec; pushes one local branch to the remote. Refused, with the reason in the error, when the destination is a protected branch (main, master, dev), when the refspec is a force push (`+refs/...`, `--force`, `-f`), and when HEAD is detached or itself a protected branch: protected branches only ever advance through the CI promotion pull request.\n" +
 	"Mutating actions add, commit, branch, checkout, push and reset each require confirmation. Prefer `blame` over `show` when you need the commit that last touched a specific line, `show` over `diff` when you need one commit's message or patch (diff only covers uncommitted work), and `log` first when you still need a sha."
 
 // GitActionDoc returns the description bullet of one action, or "" when the
@@ -477,4 +478,109 @@ func IsGitTool(toolName string) bool {
 		return true
 	}
 	return false
+}
+
+// ProtectedBranches returns the branches the coder git tooling never writes to.
+// GitHub rulesets on `main` are the authoritative guarantee; this list is the
+// in-process defence in depth and is mirrored into every bot's effective push
+// policy (ci#1138).
+func ProtectedBranches() []string {
+	return []string{"main", "master", "dev"}
+}
+
+// DefaultPushDenylist returns the ref destinations a push may never target.
+func DefaultPushDenylist() []string {
+	return []string{"refs/heads/main", "refs/heads/master", "refs/heads/dev"}
+}
+
+// normalizeBranchRef collapses `+refs/heads/x`, `refs/heads/x` and `x` to `x`.
+func normalizeBranchRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "+")
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+	ref = strings.TrimPrefix(ref, "refs/")
+	return ref
+}
+
+// IsProtectedBranch reports whether branch is in protectedBranches (nil means
+// ProtectedBranches()). Short names and refs/heads/ refs are equivalent.
+func IsProtectedBranch(branch string, protectedBranches []string) bool {
+	if len(protectedBranches) == 0 {
+		protectedBranches = ProtectedBranches()
+	}
+	candidate := normalizeBranchRef(branch)
+	if candidate == "" {
+		return false
+	}
+	for _, entry := range protectedBranches {
+		if candidate == normalizeBranchRef(entry) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidatePushTarget refuses a push whose destination is a protected branch, a
+// force push (`+refspec`, `--force`, `-f`) and a bare push (which can update the
+// current branch's upstream implicitly). protectedBranches == nil means
+// ProtectedBranches().
+func ValidatePushTarget(refspec string, protectedBranches []string) error {
+	if len(protectedBranches) == 0 {
+		protectedBranches = ProtectedBranches()
+	}
+	fields := strings.Fields(strings.ReplaceAll(strings.TrimSpace(refspec), ",", " "))
+	if len(fields) == 0 {
+		return fmt.Errorf("push requires an explicit refspec `<local-branch>:<remote-branch>`: a bare push can update the current branch's upstream implicitly")
+	}
+	for _, field := range fields {
+		switch {
+		case field == "--force" || field == "-f" || field == "--force-with-lease" || strings.HasPrefix(field, "--force-with-lease="):
+			return fmt.Errorf("refusing to force-push (%s): a force push rewrites history and is never allowed from the coder tools", field)
+		case strings.HasPrefix(field, "-"):
+			return fmt.Errorf("refusing to push with option %q: only an explicit `<local-branch>:<remote-branch>` refspec is accepted", field)
+		case strings.HasPrefix(field, "+"):
+			return fmt.Errorf("refusing to force-push %q: a `+` refspec rewrites the destination ref", field)
+		}
+		if err := validatePushDestination(field, protectedBranches); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePushDestination(refspec string, protectedBranches []string) error {
+	destination := refspec
+	if idx := strings.Index(refspec, ":"); idx >= 0 {
+		destination = refspec[idx+1:]
+	}
+	if strings.TrimSpace(destination) == "" {
+		return fmt.Errorf("push refspec %q has no destination branch", refspec)
+	}
+	if IsProtectedBranch(destination, protectedBranches) {
+		return fmt.Errorf("refusing to push to protected branch %q: %s are only advanced by the CI promotion pull request; push a feature branch and open a PR against dev",
+			normalizeBranchRef(destination), strings.Join(protectedBranches, ", "))
+	}
+	return nil
+}
+
+// ValidatePushHead refuses a push from a detached HEAD or from a protected
+// branch, where a push would be an implicit protected-branch write.
+func ValidatePushHead(headRef string, protectedBranches []string) error {
+	head := normalizeBranchRef(headRef)
+	if head == "" || head == "HEAD" || strings.HasPrefix(strings.TrimSpace(headRef), "HEAD~") || strings.HasPrefix(strings.TrimSpace(headRef), "HEAD^") {
+		return fmt.Errorf("refusing to push from a detached HEAD: check out a feature branch first")
+	}
+	if IsProtectedBranch(head, protectedBranches) {
+		return fmt.Errorf("refusing to push from protected branch %q: commit on a feature branch and open a pull request", head)
+	}
+	return nil
+}
+
+// ValidatePush is the guard the push tool path calls: destination, force-push
+// and HEAD checks in that order, so the error names the first violation.
+func ValidatePush(refspec, headRef string, protectedBranches []string) error {
+	if err := ValidatePushTarget(refspec, protectedBranches); err != nil {
+		return err
+	}
+	return ValidatePushHead(headRef, protectedBranches)
 }
