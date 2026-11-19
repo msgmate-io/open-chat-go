@@ -69,6 +69,8 @@ catalog is the single source of truth for the trigger wiring and applies to
 | `development` | `msgmate-coder-bot` | coding |
 | `review` | `git_repo_review_bot` | review |
 | `lead` | `git_repo_development_lead_bot` | coordination (hive-mind) |
+| `merge_update` | `git_repo_merge_update_bot` | merge queue + sub-repo ref refresh (no push to `main`) |
+| `migration_reconcile` | `git_repo_migration_reconcile_bot` | explicit migration-conflict reconciliation (no push to `main`) |
 
 Notes on the collection:
 
@@ -111,5 +113,36 @@ one-click **Apply default bots** button.
 An integration that wants the same behaviour declares its bots in its
 `Definition.BotBootstrapConfigs`; the core applies them at startup and surfaces
 them as `default_bots` on `GET /api/v1/integrations/{integration_name}/overview`.
+
+### Merge and update-refs bots (ci#1138)
+
+The `merge_update` and `migration_reconcile` roles are the two "housekeeping"
+agents of a repository. They are deliberately separate bots:
+
+| Role | Bot | What it does | What it must never do |
+| --- | --- | --- | --- |
+| `merge_update` | `git_repo_merge_update_bot` | Merges a PR into the integration branch, then refreshes the sub-repo gitlinks through `development/scripts/update_subrepo_refs.sh`. | Push, force-push or merge into `main`, `master` or `dev`. |
+| `migration_reconcile` | `git_repo_migration_reconcile_bot` | Reconciles conflicting Django migrations on a PR branch through `development/scripts/migration_reconcile.sh`. | Delete a migration that `main` already owns, or commit the deletion to `main`. |
+
+- The migration reconcile is an **explicit** call, never an automatic follow-up
+  of a ref update: deleting a migration rewrites an environment's history and
+  always needs a human-visible dispatch.
+- The ref refresh has exactly one owner,
+  `development/scripts/update_subrepo_refs.sh`. Nothing hand-edits `.gitmodules`
+  or a gitlink: the script resolves, per gitlink, whether the pin is the
+  sub-repo `main` tip (no-op), belongs to an open sub-repo PR branch (refresh
+  that branch against its `main`), or is simply behind (fast-forward), then
+  stages only the moved gitlinks and refreshes `integrations.lock.json`.
+- Both bots carry a push policy in their bootstrap config: a
+  `policy.protected_branches` / `policy.push_denylist` block that may only
+  *narrow* what they are allowed to push. `default_shared_config.policy`
+  receives the merged effective list, and `gittooling.ValidatePushTarget` refuses
+  a refspec, a `--force` or a `+refspec` targeting a protected branch. GitHub
+  rulesets on `main` remain the authoritative guarantee; the in-repo validator
+  is defence in depth.
+- The protected default set is `main`, `master`, `dev`. Bot YAMLs for these
+  roles live in the deployment environment (`ADD_BOT_FROM_CONFIG`), not in the
+  public repo defaults.
+
 See [Integrations & Tools](/docs#integrations) and
 [Integration Development](/docs#integration-development).
