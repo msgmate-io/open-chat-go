@@ -45,6 +45,23 @@ const (
 	runtimeSelectorContextForwardedKey = "context_forwarded"
 )
 
+// Selector meta keys that back the reset affordance (ci#1135).
+const (
+	// runtimeSelectorAllowResetKey is the optional per-selector knob the
+	// proposing tool (git_propose_interaction_runtime) sets to false to forbid
+	// resetting the selector. Absent means allowed, so selectors persisted
+	// before ci#1135 keep the reset affordance.
+	runtimeSelectorAllowResetKey = "allow_reset"
+
+	// runtimeSelectorResetHistoryKey archives the runs a reset abandoned so the
+	// interaction identifiers of an already started run are not lost.
+	runtimeSelectorResetHistoryKey = "reset_history"
+
+	// runtimeSelectorResetCountKey counts how often a selector was reset. It is
+	// observability only: resets are not capped.
+	runtimeSelectorResetCountKey = "reset_count"
+)
+
 // RuntimeSelectorRequireForwardedMessageEnvKey gates the fail-closed
 // validation added in ci#1131. It is OFF by default so the core-side rule and
 // the trigger-owner emitter (the git integration, which must actually emit
@@ -444,8 +461,8 @@ func (h *ChatsHandler) ResolveRuntimeSelector(w http.ResponseWriter, r *http.Req
 	}
 	req.SelectorID = strings.TrimSpace(req.SelectorID)
 	decision := strings.ToLower(strings.TrimSpace(req.Decision))
-	if decision != "started" && decision != "cancelled" {
-		http.Error(w, "decision must be started or cancelled", http.StatusBadRequest)
+	if decision != "started" && decision != "cancelled" && decision != "reset" {
+		http.Error(w, "decision must be started, cancelled or reset", http.StatusBadRequest)
 		return
 	}
 
@@ -489,6 +506,11 @@ func (h *ChatsHandler) ResolveRuntimeSelector(w http.ResponseWriter, r *http.Req
 			logging.Warnf("runtime selector %s: %s trigger envelope on hand-off, allowed because %s is off (chat=%s message=%s)",
 				req.SelectorID, forwardingState, RuntimeSelectorRequireForwardedMessageEnvKey, chat.UUID, message.UUID)
 		}
+	}
+
+	if decision == "reset" {
+		resolveRuntimeSelectorReset(w, DB, user, message, meta, selectors, selector, statusValue)
+		return
 	}
 
 	if decision == "cancelled" {
@@ -567,6 +589,80 @@ func isResolvableStartedInteraction(DB *gorm.DB, user *database.User, chatUUID s
 		return false
 	}
 	return isInteractionChatType(startedChat.ChatType)
+}
+
+// runtimeSelectorAllowsReset reports whether a selector may be reset. The
+// proposing tool sets allow_reset:false to forbid it; a missing key means
+// allowed so every selector persisted before ci#1135 keeps the affordance.
+func runtimeSelectorAllowsReset(selector map[string]interface{}) bool {
+	if selector == nil {
+		return true
+	}
+	switch typed := selector[runtimeSelectorAllowResetKey].(type) {
+	case bool:
+		return typed
+	case string:
+		// Toleration for emitters that send the flag as a string.
+		return !strings.EqualFold(strings.TrimSpace(typed), "false")
+	default:
+		return true
+	}
+}
+
+// runtimeSelectorResetCount returns how often a selector was already reset.
+func runtimeSelectorResetCount(selector map[string]interface{}) int {
+	return actionTaskIntField(selector, runtimeSelectorResetCountKey)
+}
+
+// resolveRuntimeSelectorReset moves a confirmed selector back to pending so the
+// user can pick a runtime again (ci#1135). The previous run is archived instead
+// of dropped, and clearing claim_id invalidates any tab still holding the
+// pre-reset claim: its late second phase can no longer record an interaction.
+func resolveRuntimeSelectorReset(w http.ResponseWriter, DB *gorm.DB, user *database.User, message database.Message, meta map[string]interface{}, selectors []map[string]interface{}, selector map[string]interface{}, statusValue string) {
+	// Only a confirmed selector has a run to abandon. Pending selectors have
+	// nothing to reset (the widget should just cancel) and cancelled stays
+	// terminal, so both are conflicts instead of a silent no-op.
+	if statusValue != RuntimeSelectorConfirmed {
+		http.Error(w, "Runtime selector is not confirmed", http.StatusConflict)
+		return
+	}
+	if !runtimeSelectorAllowsReset(selector) {
+		http.Error(w, "Reset is not allowed for this selector", http.StatusConflict)
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	startedChatUUID := actionTaskStringField(selector, "started_chat_uuid")
+	startedURL := actionTaskStringField(selector, "started_interaction_url")
+	if startedChatUUID != "" || startedURL != "" {
+		history := []interface{}{}
+		if existing, ok := selector[runtimeSelectorResetHistoryKey].([]interface{}); ok {
+			history = existing
+		}
+		entry := map[string]interface{}{
+			"chat_uuid": startedChatUUID,
+			"reset_by":  user.UUID,
+			"reset_at":  now,
+		}
+		if startedURL != "" {
+			entry["interaction_url"] = startedURL
+		}
+		selector[runtimeSelectorResetHistoryKey] = append(history, entry)
+	}
+	delete(selector, "started_chat_uuid")
+	delete(selector, "started_interaction_url")
+	delete(selector, "claim_id")
+	delete(selector, "decided_by")
+	delete(selector, "decided_at")
+	selector["status"] = RuntimeSelectorPending
+	selector[runtimeSelectorResetCountKey] = runtimeSelectorResetCount(selector) + 1
+	if err := persistRuntimeSelectorMeta(DB, message, meta, selectors); err != nil {
+		logging.Warnf("runtime selector reset failed to persist (chat=%s message=%s): %v",
+			message.UUID, message.UUID, err)
+		http.Error(w, "Failed to update runtime selector", http.StatusInternalServerError)
+		return
+	}
+	writeRuntimeSelectorResolved(w, selector)
 }
 
 // writeRuntimeSelectorResolved emits the successful resolve response for a
