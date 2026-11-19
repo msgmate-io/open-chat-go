@@ -419,7 +419,22 @@ func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, er
 		return file.botBootstrapConfig, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
 	}
 	cfg := file.botBootstrapConfig
-	if file.Policy != nil {
+
+	// Read the ci#1138 top-level `policy` block from the raw bytes instead of
+	// trusting file.Policy: botBootstrapConfigFile embeds botBootstrapConfig,
+	// which aliases the integration-interface type. When that type (or the
+	// alias) carries its own UnmarshalJSON, the promoted method decodes the
+	// whole document and silently drops the ci-specific `policy` key, leaving
+	// file.Policy nil and bypassing the "declare it once" guard below.
+	declaredPolicy, err := decodeTopLevelPushPolicy(raw)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+	}
+	policy := file.Policy
+	if declaredPolicy != nil {
+		policy = declaredPolicy
+	}
+	if policy != nil {
 		if _, exists := cfg.DefaultSharedConfig[PolicySharedConfigKey]; exists {
 			return cfg, fmt.Errorf("bot config %q: declare the push policy either as the top-level %q block or as default_shared_config.%s, not both", source, PolicySharedConfigKey, PolicySharedConfigKey)
 		}
@@ -427,11 +442,32 @@ func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, er
 			cfg.DefaultSharedConfig = map[string]interface{}{}
 		}
 		cfg.DefaultSharedConfig[PolicySharedConfigKey] = map[string]interface{}{
-			"protected_branches": file.Policy.ProtectedBranches,
-			"push_denylist":      file.Policy.PushDenylist,
+			"protected_branches": policy.ProtectedBranches,
+			"push_denylist":      policy.PushDenylist,
 		}
 	}
 	return validateBotBootstrapConfig(cfg, source)
+}
+
+// decodeTopLevelPushPolicy extracts the ci#1138 top-level `policy` block from a
+// raw bot config. It returns nil when the document declares no such block. The
+// block itself is decoded strictly so a typo inside `policy` still fails.
+func decodeTopLevelPushPolicy(raw []byte) (*BotPushPolicy, error) {
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	rawPolicy, exists := fields[PolicySharedConfigKey]
+	if !exists || len(bytes.TrimSpace(rawPolicy)) == 0 || bytes.Equal(bytes.TrimSpace(rawPolicy), []byte("null")) {
+		return nil, nil
+	}
+	var policy BotPushPolicy
+	decoder := json.NewDecoder(bytes.NewReader(rawPolicy))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&policy); err != nil {
+		return nil, fmt.Errorf("invalid %s block: %w", PolicySharedConfigKey, err)
+	}
+	return &policy, nil
 }
 
 func loadBotBootstrapConfigsFromSpec(spec string) ([]botBootstrapConfig, error) {

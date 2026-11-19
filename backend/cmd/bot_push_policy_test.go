@@ -196,19 +196,22 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.wantDecodeErr) {
 					t.Fatalf("expected decode error containing %q, got %v", tc.wantDecodeErr, err)
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected decode error: %v", err)
-				}
-				// The identity a catalog listing renders must stay usable: a bot
-				// without a name or a description cannot be shown or dispatched.
-				if strings.TrimSpace(cfg.Bot.Name) == "" {
-					t.Fatalf("expected a non-empty bot.name")
-				}
-				description, _ := cfg.DefaultSharedConfig["description"].(string)
-				if strings.TrimSpace(description) == "" {
-					t.Fatalf("expected a non-empty default_shared_config.description")
-				}
+				// A config the decoder rejects never reaches the integration
+				// check, dispatch or the effective-policy assertions below
+				// (which describe configs that are actually accepted).
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected decode error: %v", err)
+			}
+			// The identity a catalog listing renders must stay usable: a bot
+			// without a name or a description cannot be shown or dispatched.
+			if strings.TrimSpace(cfg.Bot.Name) == "" {
+				t.Fatalf("expected a non-empty bot.name")
+			}
+			description, _ := cfg.DefaultSharedConfig["description"].(string)
+			if strings.TrimSpace(description) == "" {
+				t.Fatalf("expected a non-empty default_shared_config.description")
 			}
 
 			integrationErr := validateIntegrationPushPolicy(cfg, "test.json")
@@ -251,6 +254,51 @@ func TestBotBootstrapConfigPushPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDecodeTopLevelPushPolicyBlock is the focused regression test for the
+// decoder bug that let a config declare `policy` twice: botBootstrapConfigFile
+// promotes the integration-interface UnmarshalJSON, which decodes the whole
+// document and drops the ci#1138 top-level `policy` key, leaving file.Policy
+// nil. The block is therefore read from the raw bytes; this test asserts that
+// path actually sees it.
+func TestDecodeTopLevelPushPolicyBlock(t *testing.T) {
+	policy, err := decodeTopLevelPushPolicy([]byte(`{"primary_owner":"admin","policy":{"protected_branches":[" release "]}}`))
+	if err != nil {
+		t.Fatalf("decodeTopLevelPushPolicy failed: %v", err)
+	}
+	if policy == nil {
+		t.Fatalf("expected the top-level policy block to be decoded, got nil")
+	}
+	if len(policy.ProtectedBranches) != 1 || strings.TrimSpace(policy.ProtectedBranches[0]) != "release" {
+		t.Fatalf("expected the declared protected_branches to be decoded, got %v", policy.ProtectedBranches)
+	}
+
+	absent, err := decodeTopLevelPushPolicy([]byte(`{"primary_owner":"admin"}`))
+	if err != nil {
+		t.Fatalf("decodeTopLevelPushPolicy on a config without a policy block failed: %v", err)
+	}
+	if absent != nil {
+		t.Fatalf("expected no declared policy, got %v", absent)
+	}
+
+	// The end-to-end consequence: a config whose only policy declaration is the
+	// top-level block must still reach the merge, otherwise the bot would run
+	// with defaults the config never asked for.
+	cfg, err := decodePolicyTestConfig(t, `{
+		"primary_owner": "admin",
+		"bot": {"username": "git_repo_merge_update_bot", "password": "BotPass1!", "name": "git_repo_merge_update_bot"},
+		"policy": {"protected_branches": ["release"]},
+		"default_shared_config": {"description": "Merges pull requests and refreshes sub-repo refs."}
+	}`)
+	if err != nil {
+		t.Fatalf("unexpected decode error: %v", err)
+	}
+	declared, err := declaredPushPolicy(cfg)
+	if err != nil {
+		t.Fatalf("declaredPushPolicy failed: %v", err)
+	}
+	assertStringSet(t, "protected_branches", EffectivePushPolicy(declared).ProtectedBranches, []string{"main", "master", "dev", "release"})
 }
 
 // TestAssertPushPolicyKeepsDefaults covers the defence-in-depth guard behind the
