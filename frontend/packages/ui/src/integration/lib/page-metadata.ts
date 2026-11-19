@@ -19,6 +19,17 @@ export function getPageMetadata(pathname: string): PageMetadata {
   if (path === "/integrations/admin/models" || path === "/integrations/admin/models/") {
     return { pageName: "Admin: Models", sidebarTitle: "Admin" };
   }
+  // ci#1143: model management may live in the dedicated `model_selector`
+  // integration instead of the private `admin` integration. Both routes must
+  // resolve to the same page metadata so the extraction cannot regress titles.
+  if (
+    path === "/integrations/model_selector" ||
+    path === "/integrations/model_selector/" ||
+    path === "/integrations/model_selector/models" ||
+    path === "/integrations/model_selector/models/"
+  ) {
+    return { pageName: "Models: Management", sidebarTitle: "Models" };
+  }
   if (path === "/integrations/admin/settings" || path === "/integrations/admin/settings/") {
     return { pageName: "Admin: Integration Settings", sidebarTitle: "Admin" };
   }
