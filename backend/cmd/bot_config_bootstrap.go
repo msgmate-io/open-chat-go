@@ -18,6 +18,189 @@ import (
 type botIdentityConfig = extiface.BotIdentityConfig
 type botBootstrapConfig = extiface.BotBootstrapConfig
 
+// PolicySharedConfigKey is the default_shared_config key carrying the effective
+// push policy of a bot (ci#1138).
+const PolicySharedConfigKey = "policy"
+
+// BotPushPolicy is the ci#1138 push policy of a bot. The merge/update-refs bots
+// (`git_repo_merge_update_bot`, role `merge_update`, and
+// `git_repo_migration_reconcile_bot`, role `migration_reconcile`) carry it so
+// every dispatch inherits the same protected-branch list instead of relying on
+// the prompt alone. GitHub rulesets on `main` remain the authoritative
+// guarantee; this in-repo policy is defence in depth.
+type BotPushPolicy struct {
+	// ProtectedBranches are branch short names a push may never target.
+	ProtectedBranches []string `json:"protected_branches,omitempty"`
+	// PushDenylist are ref destinations (refs/heads/...) a push may never
+	// target.
+	PushDenylist []string `json:"push_denylist,omitempty"`
+}
+
+// botBootstrapConfigFile is the on-disk shape of a bot config: the shared
+// integration-interface bootstrap config plus the optional ci#1138 `policy`
+// block. A separate wrapper is required because botBootstrapConfig aliases the
+// integration-interface type, which cannot grow a ci-specific field.
+type botBootstrapConfigFile struct {
+	botBootstrapConfig
+	Policy *BotPushPolicy `json:"policy,omitempty"`
+}
+
+// DefaultProtectedBranches is the protected list every bot inherits when it
+// declares no policy of its own. Mirrors gittooling.ProtectedBranches().
+func DefaultProtectedBranches() []string { return []string{"main", "master", "dev"} }
+
+// DefaultPushDenylist is the ref-destination denylist every bot inherits.
+func DefaultPushDenylist() []string {
+	return []string{"refs/heads/main", "refs/heads/master", "refs/heads/dev"}
+}
+
+func normalizeBranchList(branches []string) []string {
+	out := make([]string, 0, len(branches))
+	seen := map[string]struct{}{}
+	for _, branch := range branches {
+		normalized := strings.TrimSpace(branch)
+		normalized = strings.TrimPrefix(normalized, "refs/heads/")
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func normalizeRefDenylist(refs []string) []string {
+	out := make([]string, 0, len(refs))
+	seen := map[string]struct{}{}
+	for _, ref := range refs {
+		normalized := strings.TrimSpace(ref)
+		normalized = strings.TrimPrefix(normalized, "refs/heads/")
+		normalized = "refs/heads/" + normalized
+		if normalized == "refs/heads/" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+// normalizeBotPushPolicy trims, de-duplicates and canonicalises a declared
+// policy. A declared-but-empty list is an error: it would silently drop the
+// protections instead of inheriting them.
+func normalizeBotPushPolicy(policy BotPushPolicy) (BotPushPolicy, error) {
+	normalized := BotPushPolicy{}
+	if policy.ProtectedBranches != nil {
+		normalized.ProtectedBranches = normalizeBranchList(policy.ProtectedBranches)
+		if len(normalized.ProtectedBranches) == 0 {
+			return normalized, fmt.Errorf("policy.protected_branches must name at least one branch: an empty list would drop the protected branches instead of inheriting them")
+		}
+	}
+	if policy.PushDenylist != nil {
+		normalized.PushDenylist = normalizeRefDenylist(policy.PushDenylist)
+		if len(normalized.PushDenylist) == 0 {
+			return normalized, fmt.Errorf("policy.push_denylist must name at least one ref: an empty list would drop the denylist instead of inheriting it")
+		}
+	}
+	return normalized, nil
+}
+
+// declaredPushPolicy reads the policy a config declares, either as the
+// top-level `policy` block or as default_shared_config.policy.
+func declaredPushPolicy(cfg botBootstrapConfig) (BotPushPolicy, error) {
+	raw, ok := cfg.DefaultSharedConfig[PolicySharedConfigKey]
+	if !ok || raw == nil {
+		return BotPushPolicy{}, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return BotPushPolicy{}, fmt.Errorf("invalid %s block: %w", PolicySharedConfigKey, err)
+	}
+	var policy BotPushPolicy
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&policy); err != nil {
+		return BotPushPolicy{}, fmt.Errorf("invalid %s block: %w", PolicySharedConfigKey, err)
+	}
+	return normalizeBotPushPolicy(policy)
+}
+
+// EffectivePushPolicy merges a declared policy over the defaults: a config can
+// only add to the protected set, never remove from it.
+func EffectivePushPolicy(declared BotPushPolicy) BotPushPolicy {
+	effective := BotPushPolicy{
+		ProtectedBranches: normalizeBranchList(DefaultProtectedBranches()),
+		PushDenylist:      normalizeRefDenylist(DefaultPushDenylist()),
+	}
+	if len(declared.ProtectedBranches) > 0 {
+		merged := append([]string{}, effective.ProtectedBranches...)
+		merged = append(merged, declared.ProtectedBranches...)
+		effective.ProtectedBranches = normalizeBranchList(merged)
+	}
+	if len(declared.PushDenylist) > 0 {
+		merged := append([]string{}, effective.PushDenylist...)
+		merged = append(merged, declared.PushDenylist...)
+		effective.PushDenylist = normalizeRefDenylist(merged)
+	}
+	return effective
+}
+
+// validateIntegrationPushPolicy enforces that an integration-supplied config may
+// only narrow what a bot may push (ci#1138): it may add protected branches or
+// denylisted refs, but every default protection must survive.
+func validateIntegrationPushPolicy(cfg botBootstrapConfig, source string) error {
+	declared, err := declaredPushPolicy(cfg)
+	if err != nil {
+		return fmt.Errorf("bot config %q: %w", source, err)
+	}
+	declaredBranches := map[string]struct{}{}
+	for _, branch := range declared.ProtectedBranches {
+		declaredBranches[branch] = struct{}{}
+	}
+	for _, branch := range normalizeBranchList(DefaultProtectedBranches()) {
+		if _, ok := declaredBranches[branch]; !ok {
+			return fmt.Errorf("bot config %q: policy.protected_branches may add branches but must keep the default protection %q; an integration config may only narrow what the bot may push", source, branch)
+		}
+	}
+	declaredRefs := map[string]struct{}{}
+	for _, ref := range declared.PushDenylist {
+		declaredRefs[ref] = struct{}{}
+	}
+	for _, ref := range normalizeRefDenylist(DefaultPushDenylist()) {
+		if _, ok := declaredRefs[ref]; !ok {
+			return fmt.Errorf("bot config %q: policy.push_denylist may add refs but must keep the default denial of %q; an integration config may only narrow what the bot may push", source, ref)
+		}
+	}
+	return nil
+}
+
+// withEffectivePushPolicy writes the effective policy (defaults merged with the
+// declared one) into default_shared_config so every dispatch of the bot
+// inherits the full protected set. A config that declares nothing keeps its
+// shared config untouched: the process-wide defaults already apply there.
+func withEffectivePushPolicy(cfg botBootstrapConfig, source string) (botBootstrapConfig, error) {
+	raw, ok := cfg.DefaultSharedConfig[PolicySharedConfigKey]
+	if !ok || raw == nil {
+		return cfg, nil
+	}
+	declared, err := declaredPushPolicy(cfg)
+	if err != nil {
+		return cfg, fmt.Errorf("bot config %q: %w", source, err)
+	}
+	effective := EffectivePushPolicy(declared)
+	cfg.DefaultSharedConfig[PolicySharedConfigKey] = map[string]interface{}{
+		"protected_branches": effective.ProtectedBranches,
+		"push_denylist":      effective.PushDenylist,
+	}
+	return cfg, nil
+}
+
 func normalizeOwnerUsernames(cfg botBootstrapConfig) []string {
 	ordered := []string{}
 	seen := map[string]struct{}{}
@@ -81,6 +264,10 @@ func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBoots
 	cfg.AllowedModelBackends = normalizedBackends
 	if cfg.InheritDefaultBotModels && len(cfg.AllowedModelBackends) > 0 {
 		return cfg, fmt.Errorf("bot config %q: inherit_default_bot_models and allowed_model_backends are mutually exclusive", source)
+	}
+
+	if _, err := declaredPushPolicy(cfg); err != nil {
+		return cfg, fmt.Errorf("bot config %q: %w", source, err)
 	}
 
 	return cfg, nil
@@ -197,18 +384,31 @@ func syncBotsInheritingDefaultModelAccess(DB *gorm.DB, defaultBotUsername string
 }
 
 func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, error) {
-	var cfg botBootstrapConfig
+	var file botBootstrapConfigFile
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+	if err := decoder.Decode(&file); err != nil {
+		return file.botBootstrapConfig, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
 	}
 	var trailing interface{}
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return cfg, fmt.Errorf("invalid bot config JSON in %q: unexpected trailing JSON", source)
+			return file.botBootstrapConfig, fmt.Errorf("invalid bot config JSON in %q: unexpected trailing JSON", source)
 		}
-		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+		return file.botBootstrapConfig, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+	}
+	cfg := file.botBootstrapConfig
+	if file.Policy != nil {
+		if _, exists := cfg.DefaultSharedConfig[PolicySharedConfigKey]; exists {
+			return cfg, fmt.Errorf("bot config %q: declare the push policy either as the top-level %q block or as default_shared_config.%s, not both", source, PolicySharedConfigKey, PolicySharedConfigKey)
+		}
+		if cfg.DefaultSharedConfig == nil {
+			cfg.DefaultSharedConfig = map[string]interface{}{}
+		}
+		cfg.DefaultSharedConfig[PolicySharedConfigKey] = map[string]interface{}{
+			"protected_branches": file.Policy.ProtectedBranches,
+			"push_denylist":      file.Policy.PushDenylist,
+		}
 	}
 	return validateBotBootstrapConfig(cfg, source)
 }
@@ -494,6 +694,10 @@ func applyBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBoo
 		if err != nil {
 			return err
 		}
+		validated, err = withEffectivePushPolicy(validated, sourcePath)
+		if err != nil {
+			return err
+		}
 		if suppressGeneratedPasswordLog {
 			password := strings.TrimSpace(validated.Bot.Password)
 			if password != "" && password != "random" {
@@ -526,5 +730,17 @@ func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength 
 }
 
 func applyIntegrationBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBootstrapConfig, validateStrength bool) error {
+	// ci#1138: an integration-supplied config may only narrow what its bots may
+	// push. Reject the whole batch before any bot is written so a single widened
+	// config cannot half-apply.
+	for cfgIdx, cfg := range configs {
+		sourcePath := sourcePrefix
+		if len(configs) > 1 {
+			sourcePath = fmt.Sprintf("%s[%d]", sourcePrefix, cfgIdx)
+		}
+		if err := validateIntegrationPushPolicy(cfg, sourcePath); err != nil {
+			return err
+		}
+	}
 	return applyBotBootstrapConfigs(DB, sourcePrefix, configs, validateStrength, true)
 }
