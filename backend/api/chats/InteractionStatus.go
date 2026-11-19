@@ -750,12 +750,17 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 				if status != "" && status != RuntimeSelectorPending {
 					continue
 				}
+				// ci#1135: carry the reset affordance so the widget can hide
+				// the button without an extra fetch. Only an explicit
+				// allow_reset:false reports false; a missing key means allowed.
+				allowReset := runtimeSelectorAllowsReset(selector)
 				actions = append(actions, ActionTaskAction{
 					Kind:        ActionTaskKindRuntimeSelection,
 					ActionId:    actionTaskStringField(selector, "id"),
 					Title:       actionTaskFirstNonEmpty(actionTaskStringField(selector, "title"), "Runtime selection"),
 					Description: actionTaskFirstNonEmpty(actionTaskStringField(selector, "description"), actionTaskStringField(selector, "reasoning")),
 					Reason:      actionTaskFirstNonEmpty(actionTaskStringField(selector, "recommended"), actionTaskStringField(selector, "source")),
+					AllowReset:  &allowReset,
 				})
 			}
 		}
