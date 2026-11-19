@@ -825,18 +825,42 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		}
 		response.ResumedTurn = resumedTurn && resumeErr == nil
 	}
-	if !response.ResumedTurn && continueAfterExecute && continuationMessageUUID != "" {
-		// No live park (expired, restarted, or continue_after_execute without a
-		// park): keep the pre-ci#1116 behaviour of queueing a fresh bot reply.
+	// ci#1132: every path that ends the request without a bot turn is now
+	// reported. Before this, an approval that found no live park (the parked
+	// generation's wait is TTL-bounded, the process restarted, or the park was
+	// registered on another backend instance) finished with the
+	// executed/failed event as the newest message of the chat, no continuation
+	// queued and nothing in the log distinguishing "the chat is fine" from "the
+	// chat is stalled" - exactly the shape of the coder sandbox stalls.
+	if !response.ResumedTurn && !unlockRequired && continuationMessageUUID == "" {
+		logging.Errorf(
+			"confirmable action %s in chat %s: no parked turn to resume and no continuation was requested (continue_after_execute=false); the chat is left without a bot turn",
+			actionID, chatUUID,
+		)
+	}
+	if !response.ResumedTurn && continuationMessageUUID != "" {
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
-		if clientErr == nil && inspectorErr == nil {
-			if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+		if clientErr != nil || inspectorErr != nil {
+			// Swallowing this hid the ci#1132 stall completely: no bot turn was
+			// queued and nothing in the log said the interaction was left hanging.
+			logging.Errorf(
+				"confirmable action %s: no parked turn to resume and the queue handles are unavailable (client=%v inspector=%v); the chat is left without a bot turn",
+				actionID, clientErr, inspectorErr,
+			)
+		} else {
+			_, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
 				ChatUUID:    chatUUID,
 				MessageUUID: continuationMessageUUID,
 				BotUserID:   botUserID,
-			}); enqueueErr == nil {
+			})
+			if enqueueErr == nil {
 				response.ContinuationQueued = true
+			} else {
+				logging.Errorf(
+					"confirmable action %s: no parked turn to resume and queueing the continuation failed: %v",
+					actionID, enqueueErr,
+				)
 			}
 		}
 	}
