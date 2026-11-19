@@ -111,6 +111,12 @@ type ActionTaskAction struct {
 	Rerunnable bool   `json:"rerunnable,omitempty"`
 	RerunOf    string `json:"rerun_of,omitempty"`
 	RerunCount int    `json:"rerun_count,omitempty"`
+	// ci#1135: AllowReset carries the selector's reset affordance into the
+	// runtime-selection action task so the widget can hide its reset button
+	// without an extra fetch. It is a pointer because absent and false mean
+	// different things: absent (nil, every other action kind) is "not
+	// applicable", false is an explicit "this selector may not be reset".
+	AllowReset *bool `json:"allow_reset,omitempty"`
 }
 
 // ActionTaskPartner is the compact partner identity returned with a task.

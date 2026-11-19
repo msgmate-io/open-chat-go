@@ -460,6 +460,20 @@ func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
 				selector["id"] = toolCallID
 			}
 		}
+		// ci#1135: allow_reset is opt-out. Only an explicit false is written
+		// onto the selector; an absent field (and every payload emitted
+		// before ci#1135) leaves the key out so the reset affordance stays on.
+		if rawAllowReset, ok := selector["allow_reset"]; ok {
+			if allowReset, isBool := rawAllowReset.(bool); isBool {
+				if !allowReset {
+					selector["allow_reset"] = false
+				} else {
+					delete(selector, "allow_reset")
+				}
+			} else {
+				delete(selector, "allow_reset")
+			}
+		}
 		selectors = append(selectors, selector)
 	}
 	return selectors
