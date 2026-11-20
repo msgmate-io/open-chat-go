@@ -25,6 +25,52 @@ type ConfirmableActionExecuteRequest struct {
 	ContinueAfterExecute *bool                  `json:"continue_after_execute,omitempty"`
 }
 
+// continuation_outcome* label how a card-originated confirmable action continues
+// the chat. They are the wording of the single decision line the handler logs
+// (ci#1147): before it, "the chat is fine" and "the chat is stalled" looked the
+// same in the log.
+const (
+	continuationOutcomeUnlockRequired = "unlock_required"
+	continuationOutcomeResumedTurn    = "resumed_turn"
+	continuationOutcomeQueued         = "continuation_queued"
+	continuationOutcomeMissing        = "no_continuation"
+)
+
+// confirmableContinuationMessageUUID decides which event message a card-originated
+// approval keys its follow-up bot turn on.
+//
+// ci#1147: the continuation is armed for EVERY decision that is not an
+// unlock-required hold, not only when the model asked for it with
+// continue_after_execute. That flag describes the model's preference; the user
+// approving a card still deserves a follow-up turn, and a model-emitted action
+// that omitted the flag (or a round with several confirmable calls, where only
+// one of them can be parked at a time) otherwise ended with zero bot turns.
+// Unlock-required actions keep waiting for the user and get no continuation.
+func confirmableContinuationMessageUUID(eventMessageUUID string, unlockRequired bool) string {
+	if unlockRequired {
+		return ""
+	}
+	return eventMessageUUID
+}
+
+// classifyConfirmableContinuation reports how the approval continues the chat.
+// A live parked generation absorbs the decision first (resumed_turn); otherwise
+// the approval is queued as a fresh continuation; an unlock-required hold and a
+// decision without an arming event (which the handler treats as an error) are
+// the remaining two cases.
+func classifyConfirmableContinuation(resumedTurn, unlockRequired bool, continuationMessageUUID string) string {
+	switch {
+	case unlockRequired:
+		return continuationOutcomeUnlockRequired
+	case resumedTurn:
+		return continuationOutcomeResumedTurn
+	case continuationMessageUUID == "":
+		return continuationOutcomeMissing
+	default:
+		return continuationOutcomeQueued
+	}
+}
+
 type ConfirmableActionExecuteResponse struct {
 	Success              bool   `json:"success"`
 	Status               string `json:"status"`
@@ -713,9 +759,16 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			// it failed: otherwise the bot is left hanging with no final reply (the
 			// failure event becomes the latest message and the model never sees the
 			// error). Unlock-required actions still wait for the user.
-			if continueAfterExecute && !unlockRequired {
-				continuationMessageUUID = eventRequestedMessage.UUID
-			}
+			//
+			// ci#1147: the continuation is armed for EVERY card-originated
+			// approval that is a real decision, not only when
+			// continue_after_execute is truthy. That flag is what the *model*
+			// asked for; the user approving a card still deserves a follow-up
+			// turn, and a model-emitted action that omitted the flag (or a round
+			// with several confirmable calls) otherwise ended with zero bot
+			// turns. A live parked generation still absorbs the decision first;
+			// the queued continuation is the fallback when there is none.
+			continuationMessageUUID = confirmableContinuationMessageUUID(eventRequestedMessage.UUID, unlockRequired)
 
 			if unlockRequired {
 				return nil
@@ -830,20 +883,37 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		}
 		response.ResumedTurn = resumedTurn && resumeErr == nil
 	}
-	// ci#1132: every path that ends the request without a bot turn is now
-	// reported. Before this, an approval that found no live park (the parked
-	// generation's wait is TTL-bounded, the process restarted, or the park was
-	// registered on another backend instance) finished with the
-	// executed/failed event as the newest message of the chat, no continuation
-	// queued and nothing in the log distinguishing "the chat is fine" from "the
-	// chat is stalled" - exactly the shape of the coder sandbox stalls.
-	if !response.ResumedTurn && !unlockRequired && continuationMessageUUID == "" {
-		logging.Errorf(
-			"confirmable action %s in chat %s: no parked turn to resume and no continuation was requested (continue_after_execute=false); the chat is left without a bot turn",
+	// ci#1132: every path that ends the request without a bot turn is reported.
+	// Before this, an approval that found no live park (the parked generation's
+	// wait is TTL-bounded, the process restarted, or the park was registered on
+	// another backend instance) finished with the executed/failed event as the
+	// newest message of the chat, no continuation queued and nothing in the log
+	// distinguishing "the chat is fine" from "the chat is stalled" - exactly the
+	// shape of the coder sandbox stalls.
+	//
+	// ci#1147: the decision is logged in ONE line on every path, so "resumed",
+	// "continuation queued" and "left without a turn" can be told apart from the
+	// log alone.
+	switch classifyConfirmableContinuation(response.ResumedTurn, unlockRequired, continuationMessageUUID) {
+	case continuationOutcomeUnlockRequired:
+		logging.Infof(
+			"confirmable action %s in chat %s: continuation=unlock_required (the action stays pending and is retried after the unlock)",
 			actionID, chatUUID,
 		)
-	}
-	if !response.ResumedTurn && continuationMessageUUID != "" {
+	case continuationOutcomeResumedTurn:
+		logging.Infof(
+			"confirmable action %s in chat %s: continuation=resumed_turn (the parked generation continues, nothing queued)",
+			actionID, chatUUID,
+		)
+	case continuationOutcomeMissing:
+		// Unreachable for a decision now that the continuation is armed
+		// unconditionally above; kept so a future change cannot silently
+		// reintroduce a chat that is left without a bot turn.
+		logging.Errorf(
+			"confirmable action %s in chat %s: resumed_turn=false and no continuation was armed; the chat is left without a bot turn",
+			actionID, chatUUID,
+		)
+	default:
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
 		if clientErr != nil || inspectorErr != nil {
@@ -860,6 +930,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			BotUserID:   botUserID,
 		}); enqueueErr == nil {
 			response.ContinuationQueued = true
+			logging.Infof(
+				"confirmable action %s in chat %s: continuation=continuation_queued (event %s)",
+				actionID, chatUUID, continuationMessageUUID,
+			)
 		} else {
 			logging.Errorf(
 				"confirmable action %s: no parked turn to resume and queueing the continuation failed: %v; the chat is left without a bot turn",
