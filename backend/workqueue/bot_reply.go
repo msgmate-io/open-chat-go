@@ -409,6 +409,26 @@ func enqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspecto
 	if info == nil {
 		return nil, fmt.Errorf("bot-reply continuation for chat %s was not enqueued (empty task info)", payload.ChatUUID)
 	}
+	// ci#1163: the dispatch-side line of the continuation. The decision log above
+	// only proves the enqueue was *attempted*. The private-sandbox stalls showed a
+	// chat that kept reporting itself active with a queued continuation and no bot
+	// turn for the whole reap window, which cannot be told apart from "the worker
+	// never consumed the task" without the queue, state and type the task actually
+	// landed in.
+	logging.Infof(
+		"bot-reply continuation (ci#1163): chat %s event %s queued task_id=%s queue=%s type=%s state=%s",
+		payload.ChatUUID, payload.MessageUUID, info.ID, info.Queue, info.Type, info.State,
+	)
+	// ci#1163: a continuation that lands in a queue the embedded worker does not
+	// consume is indistinguishable, from the chat's point of view, from one the
+	// worker never got to: the chat stays "active" with no bot turn until the
+	// harness reaps it. Warn on the mismatch so the next stall names its cause.
+	if queue := info.Queue; queue != "" && queue != QueueDefault {
+		logging.Warnf(
+			"bot-reply continuation (ci#1163): chat %s task %s landed in queue %q instead of %q; the embedded worker does not consume that queue, so the chat would stay active without a bot turn",
+			payload.ChatUUID, info.ID, queue, QueueDefault,
+		)
+	}
 	if info.ID != taskID {
 		// asynq rejected the event-keyed ID (an archived/finished task still
 		// holds it) and the enqueue fell back to a unique ID. Logged because it
