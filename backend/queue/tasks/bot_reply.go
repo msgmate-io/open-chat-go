@@ -82,6 +82,22 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
 	}
 
+	// ci#1153: a continuation turn that is queued but never reaches the agent
+	// leaves the chat stalled with nothing in the log that separates "the task
+	// was never dequeued" from "the handler ran and dropped the turn". The
+	// confirmable-action side already logs the enqueue (ci#1147); this is the
+	// matching consumer-side line, keyed to the task ID and the source message,
+	// so a relayed stall is attributable from the log alone.
+	//
+	// asynq.Task carries no ID (the ID lives in the handler context), so read it
+	// from the context; a handler invoked without one still logs the turn.
+	taskID, hasTaskID := asynq.GetTaskID(ctx)
+	logging.Infof(
+		"bot-reply task start: chat=%s task=%s task_id_known=%v message=%s sender_automated=%v continuation=%v",
+		payload.ChatUUID, taskID, hasTaskID, incomingMessage.UUID, senderUser.IsAutomated,
+		strings.Contains(taskID, ":continuation"),
+	)
+
 	// ci#747 RC-8: refuse to add another turn to a bot-to-bot loop. Only an
 	// automated peer can loop, so the check is gated on that; a long
 	// all-automated run, a run of identical messages, or a burst of turns

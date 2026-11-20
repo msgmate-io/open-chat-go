@@ -39,6 +39,11 @@ export function WebsocketHandler() {
                     announceWebsocketReconnected();
                 }
                 hasOpenedRef.current = true;
+                // ci#1157: the chat list cache may have been populated before
+                // the socket was up (or by a stale reload), so refresh it on
+                // every open - including reconnects - so a newly created chat
+                // shows up without a manual page reload.
+                void revalidateChatData();
             },
         },
         socketUrl !== null,
@@ -136,6 +141,13 @@ export function WebsocketHandlerBase({
                 queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
                 void revalidateChatStates()
+            }else if(parsedMessage.type === "tool_call_started" || parsedMessage.type === "tool_call_updated" || parsedMessage.type === "tool_call_ended"){
+                // ci#1157: consume the fine grained tool frames. A running tool
+                // call refreshes the chat so the tool run is visible while it
+                // streams, and the terminal frame reloads the persisted
+                // messages so the tool result renders as a result instead of
+                // staying stuck as plain text.
+                void revalidateChatData(chatUUID)
             }else if(parsedMessage.type === "new_message"){
                 queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
