@@ -21,15 +21,29 @@ func TestCurrentTimeConfirmedToolHasDistinctFunctionName(t *testing.T) {
 		t.Fatalf("confirmable time tool shares Name %q with the non-confirmable one", CurrentTimeToolDef.Name)
 	}
 
-	// Mirror the registration done in setupTools: the two keys must stay
-	// distinct so neither tool overwrites the other in toolMap.
+	// Mirror the registration done in setupTools, which keys toolMap by the
+	// tool name AND by the effective function name (BaseTool falls back to the
+	// tool name when no explicit function name is set). With the old colliding
+	// function name both tools wrote "get_current_time", the plain one won and
+	// the pending confirmation had no tool to resolve back to.
 	toolMap := map[string]string{}
-	toolMap[CurrentTimeToolDef.Name] = "plain"
-	toolMap[CurrentTimeConfirmedToolDef.Name] = "confirmed"
-	toolMap[CurrentTimeConfirmedToolDef.FunctionName] = "confirmed"
+	for _, def := range []struct {
+		def    ToolDefinition
+		key    string
+		marker string
+	}{
+		{CurrentTimeToolDef, effectiveFunctionKey(CurrentTimeToolDef), "plain"},
+		{CurrentTimeConfirmedToolDef, effectiveFunctionKey(CurrentTimeConfirmedToolDef), "confirmed"},
+	} {
+		toolMap[def.def.Name] = def.marker
+		toolMap[def.key] = def.marker
+	}
 
-	if got := toolMap[CurrentTimeConfirmedToolDef.FunctionName]; got != "confirmed" {
-		t.Fatalf("confirmable function name resolved to %q, want confirmed", got)
+	if got := toolMap[CurrentTimeConfirmedToolDef.Name]; got != "confirmed" {
+		t.Fatalf("confirmable tool name resolved to %q, want confirmed (entry was shadowed)", got)
+	}
+	if got := toolMap[effectiveFunctionKey(CurrentTimeConfirmedToolDef)]; got != "confirmed" {
+		t.Fatalf("confirmable function name resolved to %q, want confirmed (confirmation result cannot be routed back)", got)
 	}
 	if got := toolMap[CurrentTimeToolDef.Name]; got != "plain" {
 		t.Fatalf("plain tool entry was overwritten by %q", got)
@@ -37,4 +51,13 @@ func TestCurrentTimeConfirmedToolHasDistinctFunctionName(t *testing.T) {
 	if len(toolMap) != 2 {
 		t.Fatalf("expected 2 distinct toolMap keys, got %d", len(toolMap))
 	}
+}
+
+// effectiveFunctionKey mirrors BaseTool.GetToolFunctionName: the explicit
+// function name when set, otherwise the tool name.
+func effectiveFunctionKey(def ToolDefinition) string {
+	if def.FunctionName != "" {
+		return def.FunctionName
+	}
+	return def.Name
 }
