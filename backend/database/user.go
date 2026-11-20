@@ -48,6 +48,69 @@ func EnsureUniqueRandomUsername(DB *gorm.DB) (string, error) {
 	return "", fmt.Errorf("failed to generate unique username")
 }
 
+// maxSlugUsernameLength bounds a slug-derived username so the deterministic
+// collision suffix still fits the `users.username` column (size:160).
+const maxSlugUsernameLength = 100
+
+// SlugifyUsername turns a display name into a lowercase ASCII username
+// candidate: runs of characters outside [a-z0-9] collapse into a single dash and
+// leading/trailing dashes are dropped. It returns "" when nothing usable is left
+// (a name that is entirely non-ASCII, punctuation or whitespace), so callers can
+// fall back to a generated username instead of persisting an empty one.
+//
+// `users.username` is a unique column, so every write path must persist a
+// non-empty value (open-chat-go-ci#1149/#1158).
+func SlugifyUsername(raw string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+		} else if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+		if b.Len() >= maxSlugUsernameLength {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// EnsureUniqueUsername derives a non-empty, currently unused username from
+// preferred. The slug of preferred is used as the base and a deterministic
+// numeric suffix ("-2", "-3", ...) is appended on collision; when preferred has
+// no usable characters at all it falls back to a random `usr_…` username. It
+// never returns "" with a nil error, which is what keeps a bot-creation write
+// from tripping the `users.username` unique index on the second bot
+// (open-chat-go-ci#1158).
+func EnsureUniqueUsername(DB *gorm.DB, preferred string) (string, error) {
+	if DB == nil {
+		return "", fmt.Errorf("db is required")
+	}
+	base := SlugifyUsername(preferred)
+	if base == "" {
+		return EnsureUniqueRandomUsername(DB)
+	}
+	for attempt := 0; attempt < 50; attempt++ {
+		candidate := base
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s-%d", base, attempt+1)
+		}
+		var count int64
+		// Unscoped: the unique index also covers soft-deleted rows, so a
+		// soft-deleted user still occupies its username.
+		if err := DB.Unscoped().Model(&User{}).Where("username = ?", candidate).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return candidate, nil
+		}
+	}
+	return EnsureUniqueRandomUsername(DB)
+}
+
 type PublicProfile struct {
 	Model
 	UserId      uint            `json:"user_id" gorm:"index"`
