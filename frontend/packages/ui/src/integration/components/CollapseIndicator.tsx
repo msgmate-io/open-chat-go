@@ -13,8 +13,15 @@ export const CollapseIndicator = ({
         <button
             type="button"
             aria-label={leftPannelCollapsed ? "Show sidebar" : "Hide sidebar"}
+            title={leftPannelCollapsed ? "Show sidebar" : "Hide sidebar"}
+            data-sidebar-collapsed={leftPannelCollapsed ? "true" : "false"}
             className={cn(
-                "flex cursor-pointer rounded-xl p-2 text-foreground hover:bg-muted hover:text-foreground",
+                // ci#1157: keep the collapse handle a visible, comfortably
+                // clickable target (>=36px hit area) in both states. When the
+                // sidebar is collapsed the handle used to shrink to the 24px
+                // icon and disappeared against the card background.
+                "flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl text-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                leftPannelCollapsed && "border border-border/60 bg-background/80 shadow-sm",
                 className,
             )}
             onClick={onToggleCollapse}

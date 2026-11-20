@@ -180,10 +180,17 @@ export default function Page() {
   }, [bot, hasInitializedFromBot]);
 
   const availableModels = useMemo(() => {
-    const ids = uniq((models?.rows ?? []).map((row) => row.model_id));
+    // ci#1157: a bot may pin a custom model ID that is not part of the model
+    // catalogue returned by /api/v1/models. Merge the bot's own selection into
+    // the option list so a custom ID still renders as a selected option instead
+    // of silently looking unselected in the picker.
+    const ids = uniq([
+      ...(models?.rows ?? []).map((row) => row.model_id),
+      ...selectedModels,
+    ]).filter((id) => Boolean(id));
     ids.sort((a, b) => a.localeCompare(b));
     return ids;
-  }, [models?.rows]);
+  }, [models?.rows, selectedModels]);
 
   const suggestedBackends = useMemo(() => {
     const values = (models?.rows ?? [])
