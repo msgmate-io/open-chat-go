@@ -39,8 +39,13 @@ type ConfirmableActionExecuteResponse struct {
 	ResumedTurn bool `json:"resumed_turn"`
 	// ContinuationQueued reports that no live park was found, so the fallback
 	// queued a fresh bot reply.
-	ContinuationQueued bool                   `json:"continuation_queued"`
-	UpdatedAction      map[string]interface{} `json:"updated_action,omitempty"`
+	ContinuationQueued bool `json:"continuation_queued"`
+	// ContinuationError reports that no live park was found *and* the fallback
+	// continuation could not be queued (ci#1142). The decision was persisted,
+	// but nothing will produce the follow-up bot turn: the caller is told out
+	// loud instead of the chat silently staying active forever.
+	ContinuationError string                 `json:"continuation_error,omitempty"`
+	UpdatedAction     map[string]interface{} `json:"updated_action,omitempty"`
 }
 
 // ConfirmableActionRejectRequest is the body of a confirm-actions reject call.
@@ -848,20 +853,19 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				"confirmable action %s: no parked turn to resume and the queue handles are unavailable (client=%v inspector=%v); the chat is left without a bot turn",
 				actionID, clientErr, inspectorErr,
 			)
+			response.ContinuationError = fmt.Sprintf("queue handles unavailable (client=%v inspector=%v)", clientErr, inspectorErr)
+		} else if _, enqueueErr := workqueue.EnqueueBotReplyContinuation(queueClient, queueInspector, workqueue.BotReplyPayload{
+			ChatUUID:    chatUUID,
+			MessageUUID: continuationMessageUUID,
+			BotUserID:   botUserID,
+		}); enqueueErr == nil {
+			response.ContinuationQueued = true
 		} else {
-			_, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
-				ChatUUID:    chatUUID,
-				MessageUUID: continuationMessageUUID,
-				BotUserID:   botUserID,
-			})
-			if enqueueErr == nil {
-				response.ContinuationQueued = true
-			} else {
-				logging.Errorf(
-					"confirmable action %s: no parked turn to resume and queueing the continuation failed: %v",
-					actionID, enqueueErr,
-				)
-			}
+			logging.Errorf(
+				"confirmable action %s: no parked turn to resume and queueing the continuation failed: %v; the chat is left without a bot turn",
+				actionID, enqueueErr,
+			)
+			response.ContinuationError = enqueueErr.Error()
 		}
 	}
 
