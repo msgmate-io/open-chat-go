@@ -336,6 +336,12 @@ const (
 	// on the provider request for metrics; the turn itself finishes normally
 	// with a short answer carrying the "stopped: repeated output detected" note.
 	FailureReasonRepetitionLoop = "repetition_loop"
+	// FailureReasonToolCallBudget marks a turn stopped because this chat's
+	// tool-call budget was reached (ci#747, ci#1164). A budget stop is a
+	// deliberate, resumable pause - the work already done is kept and the user
+	// can continue with another message - so it must never be reported as an
+	// internal error or a provider fault.
+	FailureReasonToolCallBudget = "tool_call_budget_exhausted"
 )
 
 // GenerationFailureClassification is the outcome of classifying a failed
@@ -373,6 +379,14 @@ func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 	// kept and how to continue (ci#562).
 	if errors.Is(err, errLeakedCompactionTranscript) {
 		return GenerationFailureClassification{Reason: FailureReasonLeakedCompaction}
+	}
+	// A reached tool-call budget (ci#747, ci#1164) is a deliberate resumable
+	// pause of the turn, not a fault: matching it before the provider/internal
+	// fallbacks keeps it out of "internal_error" so the chat never shows an
+	// internal-error reply or an error flag for a cap stop.
+	var capErr *toolCallCapError
+	if errors.As(err, &capErr) {
+		return GenerationFailureClassification{Reason: FailureReasonToolCallBudget}
 	}
 	if errors.As(err, &providerSaturationErrorType) {
 		// ci#909: provider admission saturation (the per-key slot cap was
