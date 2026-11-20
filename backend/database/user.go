@@ -83,12 +83,10 @@ func (u *User) AddContact(
 }
 
 func (u *User) AfterCreate(tx *gorm.DB) error {
-	permission := Permission{UserId: u.ID, Permission: PermissionCreateAPITokens}
-	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
+	if err := EnsurePermission(tx, u.ID, PermissionCreateAPITokens); err != nil {
 		return err
 	}
-	createBotsPermission := Permission{UserId: u.ID, Permission: PermissionCreateBots}
-	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateBots).FirstOrCreate(&createBotsPermission).Error; err != nil {
+	if err := EnsurePermission(tx, u.ID, PermissionCreateBots); err != nil {
 		return err
 	}
 	if err := EnsureAccountStateRowForUser(tx, u); err != nil {
