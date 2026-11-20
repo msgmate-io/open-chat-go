@@ -334,6 +334,13 @@ func botReplyFailureMessage(err error) string {
 		return "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
 	case msgmate.FailureReasonTimeout:
 		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
+	case msgmate.FailureReasonToolCallBudget:
+		// ci#1160: a reached tool-call cap is a capacity stop, not an internal
+		// fault - the server ended the turn exactly as designed. Reporting it
+		// as "internal error" told the user (and the agent self-check) the
+		// server broke when it actually protected itself; the cap guidance
+		// explains the stop and how to continue.
+		return "It stopped because this chat's tool-call budget was exhausted. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
 	}
 
 	if isProviderReachabilityError(err) {
