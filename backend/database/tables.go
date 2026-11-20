@@ -164,12 +164,10 @@ func (GrantDefaultPermissionsMigration) Migrate(db *gorm.DB) error {
 		return err
 	}
 	for _, user := range users {
-		permission := Permission{UserId: user.ID, Permission: PermissionCreateAPITokens}
-		if err := db.Where("user_id = ? AND permission = ?", user.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
+		if err := EnsurePermission(db, user.ID, PermissionCreateAPITokens); err != nil {
 			return err
 		}
-		createBotsPermission := Permission{UserId: user.ID, Permission: PermissionCreateBots}
-		if err := db.Where("user_id = ? AND permission = ?", user.ID, PermissionCreateBots).FirstOrCreate(&createBotsPermission).Error; err != nil {
+		if err := EnsurePermission(db, user.ID, PermissionCreateBots); err != nil {
 			return err
 		}
 		if err := EnsureDefaultAccessTokenForUser(db, user.ID); err != nil {
