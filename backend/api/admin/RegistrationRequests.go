@@ -134,8 +134,23 @@ func decisionRegistrationRequest(w http.ResponseWriter, r *http.Request, targetS
 				return err
 			}
 
+			// ci#1158: `users.username` is a unique column, so approving a
+			// registration request must not insert a row with an empty handle -
+			// the second such approval would trip the unique index. Derive a
+			// non-empty, unused username from the display name (falling back to
+			// the email local part) and let the helper suffix it on collision.
+			usernameSource := regRequest.Name
+			if strings.TrimSpace(usernameSource) == "" {
+				usernameSource = regRequest.Email
+			}
+			approvedUsername, usernameErr := database.EnsureUniqueUsername(tx, usernameSource)
+			if usernameErr != nil {
+				return usernameErr
+			}
+
 			newUser := database.User{
 				Name:         regRequest.Name,
+				Username:     approvedUsername,
 				Email:        regRequest.Email,
 				PasswordHash: regRequest.PasswordHash,
 				IsAdmin:      false,
