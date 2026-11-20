@@ -239,15 +239,14 @@ an Open Chat server and the session **reuses** it instead of failing on the busy
 port; when the port is free the session binds it itself, and when another
 program holds it the boot still fails fast with `port … is already in use by
 another process`. Concurrent sessions also get their own TUI config directory,
-so they never share (or clobber) one `config.json` - see
-[Terminal UI §Configuration](/docs#tui).
+so they never share (or clobber) one `config.json`.
 
 ## `open-chat tui`
 
-Launches the terminal UI when the `tui` integration is part of the build. All
-arguments after the command name are forwarded to the TUI, so its own flags
-(for example `--bot`, `--where` and `--version`) work through `open-chat tui`.
-See [Terminal UI](/docs#tui) for usage and configuration.
+Launches the terminal UI. All arguments after the command name are forwarded to
+the TUI, so its own flags (for example `--bot`, `--where` and `--version`) work
+through `open-chat tui`. The TUI is available when the private `tui` integration
+is part of the build; see its integration docs for usage and configuration.
 
 ## Linking text files into the config
 
