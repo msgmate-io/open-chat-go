@@ -42,6 +42,13 @@ generation settings, for example:
 Bots can be **public** (discoverable and usable by other users) or **private**
 to their owner. Public bots are listed for all authenticated users.
 
+Every bot owns a user account, and `POST /api/v1/bots` accepts an optional
+`username` for it. When the field is omitted or blank — as the dashboard does —
+the handle is derived from the bot name (slugified, with a deterministic numeric
+suffix when the slug is already taken, and a generated `usr_…` fallback when the
+name has no usable characters), so a bot user never persists an empty
+`users.username`.
+
 ## Tools and agents
 
 Bots select from the registered tools exposed by
