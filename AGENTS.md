@@ -308,3 +308,40 @@ feature or consolidation PR:
   `PR Test Merge Requirement` decide;
 - the authoritative verdict for a commit is its **newest** run per check name,
   the same collapse `development/ci/scripts/ci-flows/promotion_hop.sh merge` performs.
+
+## Soft-deletable models + plain unique indexes: upsert, never `FirstOrCreate` (ci#1154)
+
+Every model embedding `database.Model` is soft-deletable, but the composite
+`uniqueIndex:` tags (`idx_user_integration_access`, `idx_bot_runtime_owner`,
+`idx_action_task_dismissal`, `idx_product_landing_page_integration_slug`, ...) do **not**
+include `deleted_at`. A soft-deleted row therefore stays invisible to a normal
+`First`/`FirstOrCreate` lookup while still occupying the index, so the insert
+that `FirstOrCreate` falls back to dies with
+
+```
+ERROR: duplicate key value violates unique constraint "idx_..."
+(SQLSTATE 23505)
+```
+
+When that happens inside a boot migration
+(`SetupDatabase` -> `FunctionMigration`), the whole migration pass aborts and
+the process panic-loops - that is exactly what ci#1154 was.
+
+So: any "ensure this row exists" path must upsert and revive the tombstone
+instead of insert-if-missing:
+
+```go
+db.Clauses(clause.OnConflict{
+    Columns: []clause.Column{{Name: "user_id"}, {Name: "integration_name"}},
+    DoUpdates: clause.Assignments(map[string]interface{}{
+        "deleted_at": nil,
+        "updated_at": time.Now(),
+    }),
+}).Create(&record)
+```
+
+`EnsureIntegrationAccess`, `EnsurePermission`, `EnsureBotRuntimeOwner`,
+`EnsureActionTaskDismissal` and `upsertProductLandingPageConfigRow` are the
+reference implementations; follow them whenever you add a uniqueness-checked
+ensure path, and cover it with a test that soft-deletes the row and then re-runs
+the ensure path (`backend/database/tombstone_revive_test.go`).

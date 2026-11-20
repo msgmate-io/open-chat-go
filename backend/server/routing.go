@@ -149,6 +149,57 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 	}
 }
 
+// ci#1150: account creation is not a core page. The `/sign-up` route is
+// contributed as a frontend page by the account_management integration, so on a
+// server without that integration nothing registers it and the request used to
+// fall through to `/404`. Instead we now serve the *tracked landing shell* from
+// the index route and let the client pick the register tab from the pathname
+// (see frontend/lib/accountManagement.ts + LandingPage), which is what turns
+// /sign-up into a real "this server has no account creation" page.
+const signUpLandingShellPath = "/sign-up"
+
+// signUpLandingShellMapping maps a `/sign-up` request onto the files of the
+// index (landing) route. It returns ok=false for every other path and for
+// requests whose route was actually registered by an integration, so this is a
+// pure fallback decision and is unit-testable without an embedded frontend.
+func signUpLandingShellMapping(requestPath string) (route string, pathEnding string, ok bool) {
+	isPageContext := strings.HasSuffix(requestPath, ".pageContext.json")
+	logicalPath := requestPath
+	if isPageContext {
+		logicalPath = strings.TrimSuffix(logicalPath, ".pageContext.json")
+		logicalPath = strings.TrimSuffix(logicalPath, "/index")
+	}
+	if len(logicalPath) > 1 {
+		logicalPath = strings.TrimSuffix(logicalPath, "/")
+	}
+	if logicalPath != signUpLandingShellPath {
+		return "", "", false
+	}
+	// Route "/" makes serveFrontendRouteFile resolve files relative to the
+	// frontend root, i.e. index.html / index.pageContext.json of the landing page.
+	if isPageContext {
+		return "/", "index.pageContext.json", true
+	}
+	return "/", "index.html", true
+}
+
+// serveSignUpLandingShell answers `/sign-up` (and its Vike pageContext request)
+// with the tracked landing shell when no integration contributes an account
+// creation page, i.e. when /sign-up is absent from the resolved frontend route
+// table. It is only reached from the SPA fallback handler, after the regular
+// route resolution (including every integration-contributed Root route) had no
+// match.
+func serveSignUpLandingShell(integrationFrontendRoutes map[string]struct{}, w http.ResponseWriter, r *http.Request) bool {
+	route, pathEnding, ok := signUpLandingShellMapping(r.URL.Path)
+	if !ok {
+		return false
+	}
+	if _, contributed := integrationFrontendRoutes[signUpLandingShellPath]; contributed {
+		return false
+	}
+	return serveFrontendRouteFile(route, pathEnding, map[string]string{}, w, r)
+}
+
 func pathValuesFromRoute(route string, r *http.Request) map[string]string {
 	regMatch := regexp.MustCompile(`{(.*?)}`)
 	pathValues := make(map[string]string)
@@ -770,6 +821,10 @@ func BackendRouting(
 			if r.URL.Path == "/" {
 				ServeFrontendRoute("/", "index.html")(w, r)
 			} else if tryServeFrontendPageContext(routes, w, r) {
+				return
+			} else if serveSignUpLandingShell(integrationFrontendRoutes, w, r) {
+				// ci#1150: no integration contributes /sign-up on this server, so
+				// the tracked landing shell takes over instead of /404.
 				return
 			} else if tryServeFrontendHTMLRoute(routes, w, r) {
 				return

@@ -295,6 +295,19 @@ on `FrontendPage`/`FrontendRoute` to mount a first-party route elsewhere; the
 server serves the embedded page there and reserves it (core page routes that
 collide are de-registered in favour of the integration page).
 
+#### `/sign-up` is only as available as the account creation integration
+
+Account creation is **not** a core page: `/sign-up` exists only while an
+integration (today: `account_management`) contributes a `Root: true` route for
+it. When no integration contributes that route and `/sign-up` is not part of the
+core page tree, the server answers `/sign-up` with the tracked landing page shell
+instead of the 404 page; the landing page then picks the register tab from the
+pathname and renders the "account creation is not available on this server"
+placeholder, or the closed-beta placeholder when the integration is deployed but
+`signup_enabled` is `false`. A single integration therefore controls the whole
+account creation surface — there is no separate core sign-up page to keep in
+sync.
+
 ### Integration documentation pages
 
 An integration can publish documentation pages whose React code lives in the

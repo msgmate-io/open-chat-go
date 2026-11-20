@@ -73,6 +73,29 @@ func TestBotReplyFailureMessage(t *testing.T) {
 	}
 }
 
+// TestBotReplyTurnStartLogHelpersFallBackOutsideWorker pins the ci#1163
+// consume-side log helpers: a handler invoked directly (unit tests, admin
+// replays) has no asynq task context, and the turn-start line must still be
+// emitted with placeholder values instead of panicking or logging empty fields.
+func TestBotReplyTurnStartLogHelpersFallBackOutsideWorker(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"background": context.Background(),
+		"nil":        nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := asynqTaskID(ctx); got != "-" {
+				t.Fatalf("asynqTaskID = %q, want %q", got, "-")
+			}
+			if got := asynqQueueName(ctx); got != "-" {
+				t.Fatalf("asynqQueueName = %q, want %q", got, "-")
+			}
+			if got := asynqRetryCount(ctx); got != 0 {
+				t.Fatalf("asynqRetryCount = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestBotReplyFailureMessageUnclassifiedDoesNotMentionCreditsOrOutage(t *testing.T) {
 	got := botReplyFailureMessage(errors.New("unexpected decoder failure"))
 	gotLower := strings.ToLower(got)

@@ -21,7 +21,7 @@ var CurrentTimeToolDef = ToolDefinition{
 
 var CurrentTimeConfirmedToolDef = ToolDefinition{
 	Name:                           "get_current_time_confirmed",
-	FunctionName:                   "get_current_time",
+	FunctionName:                   "get_current_time_confirmed",
 	Description:                    "Return the current server time in RFC3339 format.",
 	RequiresInit:                   false,
 	RequiresConfirmation:           true,
