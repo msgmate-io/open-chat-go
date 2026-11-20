@@ -326,6 +326,12 @@ const (
 	FailureReasonTransientNetwork     = "transient_network_error"
 	FailureReasonTimeout              = "turn_timeout"
 	FailureReasonInternal             = "internal_error"
+	// FailureReasonToolCallBudget marks a turn stopped because this chat's
+	// tool-call budget was exhausted (ci#1160). A reached cap is a capacity
+	// stop, not a fault: the server ended the turn exactly as designed, so it
+	// must never be classified or rendered as an internal error, and its
+	// guidance tells the user the work done so far is kept and how to continue.
+	FailureReasonToolCallBudget = "tool_call_budget_exhausted"
 	// FailureReasonLeakedCompaction marks a turn whose assistant output was only
 	// a leaked context-compaction transcript (ci#562): the model volunteered its
 	// own bookkeeping instead of an answer, twice in a row, so the turn is
@@ -408,6 +414,15 @@ func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 			Reason:           FailureReasonTransientNetwork,
 			ProviderAttempts: attempts,
 		}
+	}
+	// A turn stopped by this chat's tool-call budget is a capacity stop, not an
+	// internal fault (ci#1160): the cap is enforced by the server exactly as
+	// designed, so classifying it as internal_error made a healthy stop look
+	// like a defect. Its own reason lets the chat show the cap guidance and
+	// keeps error reporting honest.
+	var capErr *toolCallCapError
+	if errors.As(err, &capErr) {
+		return GenerationFailureClassification{Reason: FailureReasonToolCallBudget}
 	}
 	return GenerationFailureClassification{Reason: FailureReasonInternal, ProviderAttempts: attempts}
 }
