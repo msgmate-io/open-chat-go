@@ -259,6 +259,27 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 	metadata["error_detail"] = streamErr.Error()
 }
 
+// wrapTerminalResponseAlreadySent marks a turn that already persisted its own
+// final message as ErrResponseAlreadySent.
+//
+// ci#1169: the terminal error must stay reachable for classification, because
+// the queue task re-classifies it (failure text, and whether the turn settles as
+// completed or failed). Re-wrapping with %v - the historic form - flattened the
+// typed *toolCallCapError into a plain string, so a budget stop that the server
+// performed by design reached the task as an opaque error and was classified
+// (and settled) as an internal failure even though the turn is resumable.
+//
+// A cap error is therefore wrapped with %w so errors.As keeps matching it
+// through the "response already sent" marker; every other error keeps the exact
+// historic wrapping and wording, so no unrelated classification changes.
+func wrapTerminalResponseAlreadySent(err error) error {
+	var capErr *toolCallCapError
+	if errors.As(err, &capErr) {
+		return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
+	}
+	return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
+}
+
 // toolCallCapError is the typed terminal error of a turn that hit its per-chat
 // tool-call budget. It keeps the historic error wording (other components match
 // on it) and adds the structured counters and human-readable guidance, so the
