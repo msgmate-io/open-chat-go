@@ -36,12 +36,59 @@ func botReplyTurnBudget(ctx context.Context) time.Duration {
 	return workqueue.BotReplyTimeout()
 }
 
+// asynqTaskID reports the asynq task ID of the consumed task, or "-" when the
+// handler runs outside a worker (unit tests call HandleBotReply directly).
+// ci#1163: the id is what the dispatch-side line logs, so the two lines can be
+// joined in the log to prove the queued task really reached the turn.
+func asynqTaskID(ctx context.Context) string {
+	if ctx != nil {
+		if id, ok := asynq.GetTaskID(ctx); ok && id != "" {
+			return id
+		}
+	}
+	return "-"
+}
+
+// asynqQueueName reports the queue the consumed task came from, or "-".
+func asynqQueueName(ctx context.Context) string {
+	if ctx != nil {
+		if queue, ok := asynq.GetQueueName(ctx); ok && queue != "" {
+			return queue
+		}
+	}
+	return "-"
+}
+
+// asynqRetryCount reports how often the task was retried before this attempt,
+// or 0. ci#1163: a stalled chat whose continuation is being retried in a loop
+// looks the same as one that was never consumed unless the attempt is logged.
+func asynqRetryCount(ctx context.Context) int {
+	if ctx != nil {
+		if n, ok := asynq.GetRetryCount(ctx); ok {
+			return n
+		}
+	}
+	return 0
+}
+
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
 // the bot/sender/message context, creates a short-lived bot session, rebuilds
 // websocket-style message payload (including attachments metadata), and then
 // calls the AI handler to generate and persist/send the bot response.
 func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
+	// ci#1163: the consume-side counterpart of the dispatch log in
+	// workqueue.bot_reply. The private-sandbox stalls showed a chat whose
+	// confirmable action reported continuation_queued and which then stayed
+	// active with no bot turn until the harness reaped it; from the log alone
+	// "the worker never picked the task up" and "the worker picked it up and the
+	// turn failed before doing anything" look identical. This line is therefore
+	// emitted first, before any state that can make the turn bail out, so its
+	// absence/presence alone tells the two apart.
+	logging.Infof(
+		"bot-reply turn start (ci#1163): consuming queued reply (task id=%s type=%s queue=%s retry=%d), attempting payload decode",
+		asynqTaskID(ctx), task.Type(), asynqQueueName(ctx), asynqRetryCount(ctx),
+	)
 	if deps.DB == nil {
 		return fmt.Errorf("%w: database unavailable", asynq.SkipRetry)
 	}
@@ -76,17 +123,6 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	if _, clearErr := database.ClearMessageQueued(deps.DB, &incomingMessage); clearErr != nil {
 		logging.Errorf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
 	}
-
-	// ci#1163: the consume-side counterpart of the dispatch log in
-	// workqueue.bot_reply. A queued continuation that never reaches this line was
-	// never consumed by the worker (a private-sandbox stall showed exactly that:
-	// an enqueued continuation, no dispatch or turn-start line, and a chat that
-	// kept answering "active" until the harness reaped it). Without both lines the
-	// two cases - never picked up vs. picked up and hung - look identical.
-	logging.Infof(
-		"bot-reply turn start (ci#1163): consuming queued reply for chat %s message %s bot_user_id=%d",
-		payload.ChatUUID, payload.MessageUUID, payload.BotUserID,
-	)
 
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
