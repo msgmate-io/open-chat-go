@@ -34,6 +34,12 @@ import useSWR from "swr";
 import { fetcher } from "@/lib/utils";
 import { MobileServerSelector } from "@/components/mobile/MobileServerSelector";
 import { isMobileAppRuntime } from "@open-chat-go/ui";
+import {
+    SIGNUP_UNAVAILABLE_INTEGRATION_ABSENT_MESSAGE,
+    landingTabForPathname,
+    useAccountManagementGate,
+    type AccountManagementPublicConfig,
+} from "@/lib/accountManagement";
 
 
 interface TabState {
@@ -53,16 +59,6 @@ export const useTabs = create<TabState>()(
     )
 
 const TEXTS = openChatLandingTypewriterTexts
-
-type AccountManagementPublicConfig = {
-    signup_enabled?: boolean
-    signup_requires_admin_approval?: boolean
-    google_signup_enabled?: boolean
-    google_client_id?: string
-    google_signup_redirect_url?: string
-    google_signup_start_url?: string
-    require_email_verification?: boolean
-}
 
 // Wraps the cinematic logo in a viewport-clamped square so the landing/login
 // hero art never overflows a very short / near-square device (the native app
@@ -292,15 +288,17 @@ function IndexTab({
 }
 
 function RegisterTab({
-    hasSignupEnabled,
+    signupAvailable,
+    integrationPresent,
     config,
     navigateTo,
 }: {
-    hasSignupEnabled: boolean,
+    signupAvailable: boolean,
+    integrationPresent: boolean,
     config?: AccountManagementPublicConfig,
     navigateTo: (to: string) => void,
 }){
-    if (hasSignupEnabled) {
+    if (signupAvailable) {
         return <RegisterSection
             navigateTo={navigateTo}
             signupRequiresAdminApproval={Boolean(config?.signup_requires_admin_approval)}
@@ -310,17 +308,25 @@ function RegisterTab({
         />
     }
 
-    return <div>
+    // ci#1150: two distinct states. When the account_management integration is
+    // not deployed on this server there is no closed beta to talk about - the
+    // server simply has no account creation. Only the present-but-disabled case
+    // keeps the closed beta / early access wording.
+    return <div data-testid="landing-register-unavailable">
         <div className="flex flex-col items-center content-center justify-center pb-2 text-secondary-foreground">
             <Text type={TextTypes.Heading5} tag="h1" bold center>
-                No Sign-up Yet!
+                {integrationPresent ? "No Sign-up Yet!" : "Sign-up unavailable"}
             </Text>
             <Text type={TextTypes.Body4} center className="mt-2">
-                We are in closed beta, you can contact{" "}
-                <a href="mailto:tim@msgmate.io" className="text-primary font-bold hover:underline">
-                    tim@msgmate.io
-                </a>{" "}
-                to get early access.
+                {integrationPresent ? (
+                    <>
+                        We are in closed beta, you can contact{" "}
+                        <a href="mailto:tim@msgmate.io" className="text-primary font-bold hover:underline">
+                            tim@msgmate.io
+                        </a>{" "}
+                        to get early access.
+                    </>
+                ) : SIGNUP_UNAVAILABLE_INTEGRATION_ABSENT_MESSAGE}
             </Text>
         </div>
     </div>
@@ -344,27 +350,38 @@ export function LandingHero({
     const tab = useTabs(state => state.tab)
     const setTab = useTabs(state => state.setTab)
     const { data: user, isLoading, error } = useSWR(`/api/v1/user/self`, fetcher)
-    const { data: accountManagementConfig, error: accountManagementConfigError } = useSWR<AccountManagementPublicConfig>(
-        "/api/v1/integrations/account_management/config",
-        fetcher,
-    )
+    // ci#1150: account creation is a full-only, integration-provided page. The
+    // gate collapses "config 404 / error" (integration absent) and
+    // "signup_enabled !== true" (present but disabled) into "no sign-up here".
+    const accountManagement = useAccountManagementGate()
+    const accountManagementConfig = accountManagement.config
+    const signupAvailable = accountManagement.signupAvailable
+    const integrationPresent = accountManagement.integrationPresent
+    const signupGateResolved = accountManagement.status !== "loading"
     const { data: versionData } = useSWR(`/api/version`, fetcher)
     const [isVideoOpen, setIsVideoOpen] = useState(false)
     const demoEmbedUrl = toYouTubeEmbedUrl(LANDING_DEMO_VIDEO_URL)
-    const hasSignupEnabled = accountManagementConfig?.signup_enabled === true
-    const signupGateResolved = accountManagementConfig !== undefined || Boolean(accountManagementConfigError)
+
+    // `/sign-up` is served by the tracked landing shell when no integration
+    // contributes that page, so the tab has to be derived from the pathname.
+    useEffect(() => {
+        const pathnameTab = landingTabForPathname(typeof window !== "undefined" ? window.location.pathname : null)
+        if (pathnameTab) {
+            setTab(pathnameTab)
+        }
+    }, [setTab])
 
     useEffect(() => {
         if (!signupGateResolved) {
             return
         }
-        if (!hasSignupEnabled && tab === "register") {
+        if (!signupAvailable && tab === "register") {
             setTab("index")
         }
-        if ((!hasSignupEnabled || !Boolean(accountManagementConfig?.signup_requires_admin_approval)) && tab === "signup-request-send") {
+        if ((!signupAvailable || !Boolean(accountManagementConfig?.signup_requires_admin_approval)) && tab === "signup-request-send") {
             setTab("index")
         }
-    }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
+    }, [accountManagementConfig?.signup_requires_admin_approval, signupAvailable, setTab, signupGateResolved, tab])
 
     return <>
         <div className={AUTH_SHELL_CLASSES}>
@@ -394,15 +411,16 @@ export function LandingHero({
                         </div>
                     </div>
                     <div className={AUTH_CONTENT_CLASSES}>
-                        {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
+                        {tab === "index" && <IndexTab hasSignupEnabled={signupAvailable} navigateTo={navigateTo}/>} 
                         {tab === "login" && <LoginSection
                             navigateTo={navigateTo}
                             onSignUpClick={() => navigateTo("/sign-up")}
+                            signupAvailable={signupAvailable}
                             googleLoginEnabled={Boolean(accountManagementConfig?.google_signup_enabled)}
                             googleClientID={accountManagementConfig?.google_client_id}
                             googleLoginRedirectURL={accountManagementConfig?.google_signup_redirect_url}
                         />}
-                        {tab === "register" && <RegisterTab hasSignupEnabled={hasSignupEnabled} config={accountManagementConfig} navigateTo={navigateTo} />}
+                        {tab === "register" && <RegisterTab signupAvailable={signupAvailable} integrationPresent={integrationPresent} config={accountManagementConfig} navigateTo={navigateTo} />}
                         {tab === "signup-request-send" && <SignupRequestTab navigateTo={navigateTo} />}
                         {tab === "email-verification" && <EmailVerificationSection navigateTo={navigateTo} />}
                     </div>
