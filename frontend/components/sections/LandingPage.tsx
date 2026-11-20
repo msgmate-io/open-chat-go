@@ -364,24 +364,33 @@ export function LandingHero({
 
     // `/sign-up` is served by the tracked landing shell when no integration
     // contributes that page, so the tab has to be derived from the pathname.
+    // An explicit deep link into the register tab has to survive the gate
+    // effect below: on a server without account creation that tab is exactly
+    // where the "Account creation is not available on this server." placeholder
+    // is rendered, so bouncing it back to `index` would hide the explanation
+    // the user was deep-linked to.
+    const pathnameRequestsRegisterTab = landingTabForPathname(
+        typeof window !== "undefined" ? window.location.pathname : null,
+    ) === "register"
     useEffect(() => {
-        const pathnameTab = landingTabForPathname(typeof window !== "undefined" ? window.location.pathname : null)
-        if (pathnameTab) {
-            setTab(pathnameTab)
+        if (pathnameRequestsRegisterTab) {
+            setTab("register")
         }
-    }, [setTab])
+    }, [pathnameRequestsRegisterTab, setTab])
 
     useEffect(() => {
         if (!signupGateResolved) {
             return
         }
-        if (!signupAvailable && tab === "register") {
+        // A `/sign-up` deep link stays on the register tab even when the gate
+        // says there is no sign-up: that is where the placeholder lives.
+        if (!signupAvailable && tab === "register" && !pathnameRequestsRegisterTab) {
             setTab("index")
         }
         if ((!signupAvailable || !Boolean(accountManagementConfig?.signup_requires_admin_approval)) && tab === "signup-request-send") {
             setTab("index")
         }
-    }, [accountManagementConfig?.signup_requires_admin_approval, signupAvailable, setTab, signupGateResolved, tab])
+    }, [accountManagementConfig?.signup_requires_admin_approval, pathnameRequestsRegisterTab, signupAvailable, setTab, signupGateResolved, tab])
 
     return <>
         <div className={AUTH_SHELL_CLASSES}>
