@@ -303,8 +303,53 @@ func DecideBotReplyContinuation(turnLive bool) BotReplyEnqueueDecision {
 	return BotReplyDecisionInterruptTurn
 }
 
+// botReplyContinuationTaskID returns the asynq task ID of a bot-reply
+// continuation (ci#1147).
+//
+// A continuation is derived from the event message of the confirmable action it
+// follows, so two continuations of the same chat can never collide and neither
+// has to be given the chat's base ID. The ID stays inside the chat's reply
+// task prefix, so CancelBotReplyTask, BotReplyHasWork and the queued-count
+// helpers keep seeing it.
+func botReplyContinuationTaskID(chatUUID, messageUUID string) string {
+	if strings.TrimSpace(messageUUID) == "" {
+		// No event to key on: fall back to a unique suffix instead of the base
+		// ID, which a live turn may already hold.
+		return BotReplyTaskID(chatUUID) + ":continuation:" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return botReplyTaskID(chatUUID, messageUUID) + ":continuation"
+}
+
+// enqueueBotReplyTaskUnderID enqueues one bot-reply task under an explicit task
+// ID without touching any other reply task of the chat. It keeps the archived-ID
+// fallback of the normal enqueue path: asynq archives a finished task under its
+// ID and a re-enqueue with that ID is rejected (ci#747 RC4), so a conflict
+// retries once with a unique suffix instead of dropping the turn.
+func enqueueBotReplyTaskUnderID(client *asynq.Client, payload BotReplyPayload, taskID string, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	task, err := NewBotReplyTask(payload)
+	if err != nil {
+		return nil, err
+	}
+	enqueue := func(id string) (*asynq.TaskInfo, error) {
+		enqueueOpts := []asynq.Option{
+			asynq.Queue(QueueDefault),
+			asynq.TaskID(id),
+			asynq.MaxRetry(10),
+			asynq.Timeout(BotReplyTimeout()),
+			asynq.Retention(0),
+		}
+		enqueueOpts = append(enqueueOpts, opts...)
+		return client.Enqueue(task, enqueueOpts...)
+	}
+	info, err := enqueue(taskID)
+	if err != nil {
+		info, err = enqueue(taskID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36))
+	}
+	return info, err
+}
+
 // EnqueueBotReplyContinuation enqueues the follow-up bot turn of a confirmable
-// action that no parked generation picked up (ci#1142).
+// action that no parked generation picked up (ci#1142, ci#1147).
 //
 // Unlike EnqueueBotReply it never attaches the continuation behind whatever is
 // currently running for the chat, so the follow-up turn cannot be starved by a
@@ -317,14 +362,29 @@ func EnqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspecto
 
 // enqueueBotReplyContinuation is the liveness-injected core of
 // EnqueueBotReplyContinuation (same reason as enqueueBotReplyWithDelivery: a
-// queued task is pending, not active, so a test cannot otherwise reach the
+// queued task is pending, not active, so a unit test cannot otherwise reach the
 // live-turn case).
 func enqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, turnLive bool, opts ...asynq.Option) (*asynq.TaskInfo, error) {
-	if decision := DecideBotReplyContinuation(turnLive); decision != BotReplyDecisionInterruptTurn {
+	if client == nil {
+		return nil, fmt.Errorf("asynq client is required")
+	}
+	decision := DecideBotReplyContinuation(turnLive)
+	if decision != BotReplyDecisionInterruptTurn {
 		// Unreachable by construction; kept so a future change to the decision
 		// cannot silently reintroduce the ci#1142 starvation.
 		return nil, fmt.Errorf("continuation for chat %s would be queued behind a live turn (%s); refusing to starve it", payload.ChatUUID, decision)
 	}
+	taskID := botReplyContinuationTaskID(payload.ChatUUID, payload.MessageUUID)
+	// The decision is logged unconditionally: ci#1147 was invisible in the log
+	// because nothing said whether a continuation was enqueued, merged onto an
+	// existing task, or never asked for.
+	logging.Infof(
+		"bot-reply continuation (ci#1147): chat %s event %s enqueue_decision=%s turn_live=%v task_id=%s",
+		payload.ChatUUID, payload.MessageUUID, decision, turnLive, taskID,
+	)
+
+	var info *asynq.TaskInfo
+	var err error
 	if turnLive {
 		// Visible in the log on purpose: this is the ci#1142 shape, and the
 		// orphaned turn is about to be cancelled.
@@ -332,13 +392,31 @@ func enqueueBotReplyContinuation(client *asynq.Client, inspector *asynq.Inspecto
 			"bot-reply continuation (ci#1142): chat %s still reports a live turn that did not take the confirmation decision; cancelling it so the continuation starts now",
 			payload.ChatUUID,
 		)
+		// Interrupt takes the chat's base ID, which the orphaned live turn holds:
+		// it has to be cleared before the continuation can own it.
+		info, err = enqueueBotReplyWithDelivery(client, inspector, payload, BotReplyDeliveryInterrupt, turnLive, opts...)
+	} else {
+		// Nothing is running, so the continuation is a plain enqueue under its
+		// own event-keyed ID. It deliberately does NOT sweep the chat's pending
+		// replies: with several confirmable calls in one round a sibling
+		// approval's continuation would otherwise be dropped before it ran,
+		// which is exactly the ci#1147 shape ("every call decided, no bot turn").
+		info, err = enqueueBotReplyTaskUnderID(client, payload, taskID, opts...)
 	}
-	info, err := enqueueBotReplyWithDelivery(client, inspector, payload, BotReplyDeliveryInterrupt, turnLive, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to enqueue bot-reply continuation for chat %s: %w", payload.ChatUUID, err)
 	}
 	if info == nil {
 		return nil, fmt.Errorf("bot-reply continuation for chat %s was not enqueued (empty task info)", payload.ChatUUID)
+	}
+	if info.ID != taskID {
+		// asynq rejected the event-keyed ID (an archived/finished task still
+		// holds it) and the enqueue fell back to a unique ID. Logged because it
+		// is the difference between "this continuation" and "a merged one".
+		logging.Infof(
+			"bot-reply continuation (ci#1147): chat %s event %s skipped_merged_task_id=true (requested %s, queued %s)",
+			payload.ChatUUID, payload.MessageUUID, taskID, info.ID,
+		)
 	}
 	return info, nil
 }
