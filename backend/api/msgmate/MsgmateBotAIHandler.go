@@ -1618,6 +1618,19 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\n" + guidance
 				}
+			case FailureReasonToolCallBudget:
+				// ci#1160: a reached tool-call budget is a capacity stop, not
+				// a fault. The server ended the turn exactly as designed, so
+				// the reply must not claim an internal error; the existing cap
+				// guidance (shared with the terminal-text resolution) explains
+				// the stop and how to continue.
+				guidance := terminalTextGuidance(streamErr, outcome)
+				reasoningEntry = "Response stopped because this chat's tool-call budget was exhausted."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
@@ -1650,9 +1663,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["backend"] = backend
 		}
 		if streamErr != nil {
-			metadata["error"] = true
-			metadata["failure_reason"] = streamFailure.Reason
-			metadata["error_detail"] = streamErr.Error()
+			// ci#1160: a reached tool-call budget is a capacity stop, so
+			// applyTerminalFailureMetadata records it without flagging the
+			// turn as errored.
+			applyTerminalFailureMetadata(metadata, streamErr, streamFailure, outcome)
 			if streamFailure.ProviderSummary != "" {
 				metadata["provider_error"] = streamFailure.ProviderSummary
 			}

@@ -227,6 +227,38 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 	}
 }
 
+// applyTerminalFailureMetadata records a failed terminal turn on the message
+// metadata.
+//
+// ci#1160: a turn stopped by this chat's tool-call budget is a capacity stop the
+// server performed by design - the cap exists to protect the chat and the
+// sandbox from a runaway loop, and the turn ends with guidance telling the user
+// the work done so far is kept. It must therefore still be recorded (its
+// failure_reason is what makes a cap stop inspectable), but it must not be
+// flagged as an error: `error: true` is what the chat UI and the ci#622
+// native-coder agent self-check read as "the server broke", which classified a
+// healthy budget stop as an internal defect.
+//
+// Both terminal outcomes keep turn_ended populated: it is written here from the
+// recorded outcome (and again later in the handler), so a cap stop stays fully
+// inspectable without being reported as an error.
+func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr error, classification GenerationFailureClassification, outcome *TurnOutcome) {
+	if metadata == nil {
+		return
+	}
+	if streamErr == nil {
+		return
+	}
+	metadata["failure_reason"] = classification.Reason
+	if classification.Reason == FailureReasonToolCallBudget {
+		// Capacity stop, not a fault: keep it out of the error surface.
+		metadata["turn_ended"] = outcome.reason()
+		return
+	}
+	metadata["error"] = true
+	metadata["error_detail"] = streamErr.Error()
+}
+
 // toolCallCapError is the typed terminal error of a turn that hit its per-chat
 // tool-call budget. It keeps the historic error wording (other components match
 // on it) and adds the structured counters and human-readable guidance, so the
