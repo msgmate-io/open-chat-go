@@ -239,7 +239,9 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 // native-coder agent self-check read as "the server broke", which classified a
 // healthy budget stop as an internal defect.
 //
-// The caller has already set turn_ended from the turn outcome for both files.
+// Both terminal outcomes keep turn_ended populated: it is written here from the
+// recorded outcome (and again later in the handler), so a cap stop stays fully
+// inspectable without being reported as an error.
 func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr error, classification GenerationFailureClassification, outcome *TurnOutcome) {
 	if metadata == nil {
 		return
