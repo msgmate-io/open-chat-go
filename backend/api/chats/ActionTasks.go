@@ -258,8 +258,7 @@ func (h *ChatsHandler) DismissAllActionTasks(w http.ResponseWriter, r *http.Requ
 	dismissed := 0
 	for _, task := range tasks {
 		taskKey := actionTaskKey(task.Chat.UUID, task.Message.UUID)
-		dismissal := database.ActionTaskDismissal{UserId: user.ID, ChatId: task.Chat.ID, TaskKey: taskKey}
-		if err := DB.Where("user_id = ? AND task_key = ?", user.ID, taskKey).FirstOrCreate(&dismissal).Error; err != nil {
+		if err := database.EnsureActionTaskDismissal(DB, user.ID, task.Chat.ID, taskKey); err != nil {
 			http.Error(w, "Unable to dismiss tasks", http.StatusInternalServerError)
 			return
 		}
@@ -416,8 +415,7 @@ func (h *ChatsHandler) DismissActionTask(w http.ResponseWriter, r *http.Request)
 	}
 
 	taskKey := actionTaskKey(chat.UUID, message.UUID)
-	dismissal := database.ActionTaskDismissal{UserId: user.ID, ChatId: chat.ID, TaskKey: taskKey}
-	if err := DB.Where("user_id = ? AND task_key = ?", user.ID, taskKey).FirstOrCreate(&dismissal).Error; err != nil {
+	if err := database.EnsureActionTaskDismissal(DB, user.ID, chat.ID, taskKey); err != nil {
 		http.Error(w, "Unable to dismiss task", http.StatusInternalServerError)
 		return
 	}

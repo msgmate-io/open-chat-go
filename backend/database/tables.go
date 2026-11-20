@@ -229,8 +229,11 @@ func (BackfillBotRuntimeOwnersMigration) Migrate(db *gorm.DB) error {
 		if row.ID == 0 || row.OwnerUserId == 0 {
 			continue
 		}
-		owner := BotRuntimeOwner{BotRuntimeConfigId: row.ID, UserId: row.OwnerUserId}
-		if err := db.Where("bot_runtime_config_id = ? AND user_id = ?", row.ID, row.OwnerUserId).FirstOrCreate(&owner).Error; err != nil {
+		// Re-ensure through the upsert helper: the config bootstrap soft-deletes
+		// a transferred owner's grant, and a plain FirstOrCreate would then
+		// collide with idx_bot_runtime_owner and abort the migration pass
+		// (ci#1154's 23505 crash-loop shape).
+		if err := EnsureBotRuntimeOwner(db, row.ID, row.OwnerUserId); err != nil {
 			return err
 		}
 	}
