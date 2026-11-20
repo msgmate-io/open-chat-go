@@ -1065,32 +1065,21 @@ func streamChatCompletion(
 			// instead of ending here and letting the handler queue a fresh bot
 			// reply. The pending signal is the placeholder result's own status,
 			// so no extra flag has to be threaded through the loop.
-			if pausedCall, pending := pendingConfirmationCall(appended); pending {
-				resumedCall, resumedMessages, resumed := parkAndAwaitConfirmation(
-					ctx, meta.ChatUUID, pausedCall, currentMessages, contextBudget.Limits,
-				)
-				if resumed {
-					currentMessages = resumedMessages
-					// Report the decision on the call row the reader already
-					// received, so the chat UI shows the executed/rejected
-					// result of the parked call rather than "waiting".
-					for i := range appended {
-						if appended[i].id == resumedCall.id {
-							appended[i] = resumedCall
-						}
-					}
-					for _, details := range toolCallDetails {
-						if id, _ := details["id"].(string); id == resumedCall.id {
-							details["status"] = resumedCall.status
-							details["result"] = resumedCall.result
-						}
-					}
-					logging.Debugf(
-						"Confirmable tool call %s resumed (status %s); continuing the same turn",
-						resumedCall.id, resumedCall.status,
-					)
-					continue
-				}
+			//
+			// ci#1147: a round may surface SEVERAL confirmable calls. Every one
+			// of them has to be decided before the turn can continue, so they
+			// are parked and awaited one after another (one live park per
+			// suspension key, no registry change): parking only the first left
+			// the sibling calls on their pending placeholder forever, and the
+			// round then fell through to the terminal pause with no follow-up
+			// assistant message at all.
+			var roundDecided bool
+			appended, currentMessages, roundDecided = parkAndAwaitConfirmationRound(
+				ctx, meta.ChatUUID, appended, toolCallDetails, currentMessages, contextBudget.Limits,
+			)
+			if roundDecided {
+				logging.Debugf("Confirmable tool round fully decided; continuing the same turn")
+				continue
 			}
 
 			if toolCallResult.stopAfterTool {
@@ -1266,17 +1255,86 @@ func appendExecutedToolCalls(
 	return appended, messages, truncatedResults
 }
 
-// pendingConfirmationCall reports the call of a round that parked the turn on a
-// user decision. The signal is the placeholder result's own status
-// (ToolCallStatusPendingConfirmation), so the tool loop needs no extra flag
-// threaded through it to know that a round paused instead of finishing.
-func pendingConfirmationCall(calls []executedToolCall) (executedToolCall, bool) {
+// pendingConfirmationCalls reports the calls of a round that parked the turn on
+// a user decision, in emission order. The signal is the placeholder result's own
+// status (ToolCallStatusPendingConfirmation), so the tool loop needs no extra
+// flag threaded through it to know that a round paused instead of finishing.
+//
+// ci#1147: a round can surface more than one confirmable call. All of them are
+// returned so the caller parks each one; returning only the first left the
+// siblings pending forever and made the whole round end without a follow-up.
+func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
+	var pending []executedToolCall
 	for _, call := range calls {
 		if call.status == ToolCallStatusPendingConfirmation {
-			return call, true
+			pending = append(pending, call)
 		}
 	}
-	return executedToolCall{}, false
+	return pending
+}
+
+// parkAndAwaitConfirmationRound parks every confirmable call of the round, one
+// after another, and reports whether the turn can continue.
+//
+// ci#1147: a single model round may surface several confirmable calls. Parking
+// only the first one left the sibling calls on their pending placeholder
+// forever and let the round fall through to the terminal pause, so the turn
+// ended with no follow-up assistant message even after the user approved the
+// calls. Each call is parked under its own suspension key (one live park at a
+// time), and every resumed call is patched back into the appended call rows and
+// the tool_call_details the reader already received.
+//
+// It returns as soon as one call is not decided (expiry, stop, shutdown) or
+// nothing could be parked, so an undecided user still ends the turn the way it
+// did before ci#1116 instead of blocking once per call.
+func parkAndAwaitConfirmationRound(
+	ctx context.Context,
+	chatUUID string,
+	appended []executedToolCall,
+	toolCallDetails []map[string]interface{},
+	currentMessages []map[string]interface{},
+	limits ToolResultLimits,
+) ([]executedToolCall, []map[string]interface{}, bool) {
+	pending := pendingConfirmationCalls(appended)
+	if len(pending) == 0 {
+		return appended, currentMessages, false
+	}
+	for _, pausedCall := range pending {
+		resumedCall, resumedMessages, resumed := parkAndAwaitConfirmation(
+			ctx, chatUUID, pausedCall, currentMessages, limits,
+		)
+		if !resumed {
+			// Not decided (expiry, stop, shutdown) or nothing could be parked:
+			// stop here, so the caller ends the turn the way it did before
+			// ci#1116 instead of blocking once per call on an undecided user.
+			// The round is NOT decided - a still pending sibling must not be
+			// re-parked by the next loop iteration.
+			return appended, currentMessages, false
+		}
+		currentMessages = resumedMessages
+		// Report the decision on the call row the reader already received, so
+		// the chat UI shows the executed/rejected result of each parked call
+		// rather than "waiting".
+		for i := range appended {
+			if appended[i].id == resumedCall.id {
+				appended[i] = resumedCall
+			}
+		}
+		for _, details := range toolCallDetails {
+			if id, _ := details["id"].(string); id == resumedCall.id {
+				details["status"] = resumedCall.status
+				details["result"] = resumedCall.result
+			}
+		}
+		logging.Debugf(
+			"Confirmable tool call %s resumed (status %s)",
+			resumedCall.id, resumedCall.status,
+		)
+	}
+	// Every confirmable call of the round is decided, so the same generation can
+	// continue with the real tool results instead of ending the turn and leaving
+	// the placeholders in the transcript.
+	return appended, currentMessages, true
 }
 
 // parkAndAwaitConfirmation parks the enclosing generation for the confirmable
