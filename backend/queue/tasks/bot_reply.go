@@ -77,6 +77,17 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		logging.Errorf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
 	}
 
+	// ci#1163: the consume-side counterpart of the dispatch log in
+	// workqueue.bot_reply. A queued continuation that never reaches this line was
+	// never consumed by the worker (a private-sandbox stall showed exactly that:
+	// an enqueued continuation, no dispatch or turn-start line, and a chat that
+	// kept answering "active" until the harness reaped it). Without both lines the
+	// two cases - never picked up vs. picked up and hung - look identical.
+	logging.Infof(
+		"bot-reply turn start (ci#1163): consuming queued reply for chat %s message %s bot_user_id=%d",
+		payload.ChatUUID, payload.MessageUUID, payload.BotUserID,
+	)
+
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
