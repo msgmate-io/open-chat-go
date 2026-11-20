@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ProductLandingPageConfig is the monorepo half of the private "product landing
@@ -206,14 +208,39 @@ func SeedProductLandingPageConfigs(db *gorm.DB) error {
 	}
 	for _, def := range ProductLandingPageDefaults {
 		// The defaults carry the title/nav/order values, so a missing row is
-		// created complete (FirstOrCreate inserts the dest struct as-is).
+		// created complete.
 		row := def
-		if err := db.Where("integration_id = ? AND page_slug = ?", def.IntegrationId, def.PageSlug).
-			FirstOrCreate(&row).Error; err != nil {
+		if err := upsertProductLandingPageConfigRow(db, &row); err != nil {
 			return fmt.Errorf("seed product landing page %q: %w", def.PageSlug, err)
 		}
 	}
 	return nil
+}
+
+// upsertProductLandingPageConfigRow inserts `row` (with its values) and, when a
+// row for (integration_id, page_slug) already exists, only revives it.
+//
+// ProductLandingPageConfig embeds the soft-deletable Model while
+// idx_product_landing_page_integration_slug covers only (integration_id,
+// page_slug), so a removed page leaves a tombstone that a `FirstOrCreate`
+// lookup cannot see but the unique index still enforces - the plain
+// FirstOrCreate/insert then died with SQLSTATE 23505, the ci#1154 boot-panic
+// shape. DoUpdates touches nothing but deleted_at/updated_at, so operator edits
+// are still never overwritten.
+func upsertProductLandingPageConfigRow(db *gorm.DB, row *ProductLandingPageConfig) error {
+	if db == nil || row == nil {
+		return errors.New("nil database or row")
+	}
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "integration_id"},
+			{Name: "page_slug"},
+		},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"deleted_at": nil,
+			"updated_at": time.Now(),
+		}),
+	}).Create(row).Error
 }
 
 // ListProductLandingPageConfigs returns every page of an integration ordered by
@@ -276,8 +303,7 @@ func UpdateProductLandingPageConfig(db *gorm.DB, integrationID string, slug stri
 	}
 
 	row := ProductLandingPageConfig{IntegrationId: integrationID, PageSlug: normalized}
-	if err := db.Where("integration_id = ? AND page_slug = ?", integrationID, normalized).
-		FirstOrCreate(&row).Error; err != nil {
+	if err := upsertProductLandingPageConfigRow(db, &row); err != nil {
 		return nil, err
 	}
 

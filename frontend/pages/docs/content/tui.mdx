@@ -1,16 +1,22 @@
 ---
 title: Terminal UI (TUI)
 path: tui
-description: Chat with Open Chat from the terminal using the built-in TUI client.
+description: Private documentation for the terminal UI of the `tui` integration.
 order: 54
-adminOnly: false
 section: Clients
+visibility: integration
+integration: tui
 ---
 
-Open Chat Go ships a full-screen terminal client as a Go integration that runs
-in-process in the `open-chat` binary. It connects to one or more Open Chat
-servers, keeps you signed in on the device, and lets you chat with your default
-bot — or attach to an existing chat — without leaving the shell.
+Private documentation for the `tui` integration: a full-screen terminal client
+that runs in-process in the `open-chat` binary when the integration is part of
+the build. It connects to one or more Open Chat servers, keeps you signed in on
+the device, and lets you chat with your default bot — or attach to an existing
+chat — without leaving the shell.
+
+How the TUI is embedded, forwarded and provisioned — including the integration's
+own deployment assets — is documented in the integration's own docs, which you
+can open from the [Integrations & Tools](/docs#integrations) overview.
 
 ## Launching
 
@@ -18,8 +24,7 @@ bot — or attach to an existing chat — without leaving the shell.
 open-chat tui
 ```
 
-The TUI is the `tui` integration: it is part of the standard `open-chat` build
-and runs directly from the `open-chat tui` subcommand (no separate binary is
+The TUI runs directly from the `open-chat tui` subcommand (no separate binary is
 downloaded, extracted or looked up on `PATH`). If your build omits the `tui`
 integration, the subcommand is not registered.
 
@@ -50,24 +55,23 @@ blinking block in `NORMAL` and a blinking bar in `INSERT`.
 
 ### Catalog commands
 
-The palette (`:`) exposes three read-only catalogs over the same short-lived
-`coder-tui` token, so the pickers work inside a forwarded coding sandbox
-without any wider credential:
+The palette (`:`) exposes three read-only catalogs, so the pickers work without
+any wider credential than the token the client already holds:
 
 | Command | Route | Behaviour |
 | --- | --- | --- |
 | `:models` | `GET /api/v1/models` | pick the model used for the next turn (sent as the chat's `shared_config`) |
 | `:tools` | `GET /api/v1/tools` | inspect the tool catalog, including whether a tool needs init or confirmation |
 | `:bots` | `GET /api/v1/bots/list` | list the bots you may use and switch this interaction to the picked one; v1 stops at bots the acting user already owns or may read |
-| `:sessions` | owner session list | scroll the coding sessions you still own and attach the picked one back into this view; destroyed, expired and duplicate rows for one chat are hidden |
+| `:sessions` | owner session list | scroll the sessions you still own and attach the picked one back into this view; destroyed, expired and duplicate rows for one chat are hidden |
 
 `:models`, `:tools` and `:bots` are plain catalog reads: they cannot mutate
 remote state, and the sibling write routes (`POST /models`, `PATCH
 /bots/{identifier}`, `PUT /bots/{identifier}/config`, `POST /bots/list`) stay
-denied for this audience. `:bots` v1 deliberately stops at bots the caller
-already knows; discovering bots nobody interacted with yet is left to the web UI.
-`:sessions` reads the owner-scoped session list and only pre-selects a row:
-re-attaching the chosen session stays an explicit action.
+denied. `:bots` v1 deliberately stops at bots the caller already knows;
+discovering bots nobody interacted with yet is left to the web UI. `:sessions`
+reads the owner-scoped session list and only pre-selects a row: re-attaching the
+chosen session stays an explicit action.
 
 ### Keys
 
@@ -147,24 +151,13 @@ user config directory (for example
 `0600` permissions on Unix, so the device stays authorized until the token
 expires. Override the location with `OPEN_CHAT_TUI_CONFIG_DIR`.
 
-### Concurrent sessions
-
-Several `open-chat code` / `open-chat tui` sessions may run side by side on one
-device. A session started by a coder integration does not use the shared
-`config.json` above: it gets its own private directory
-`<config dir>/sessions/<session id>/`, resolved by the core helper
-`SessionTUIConfigDir` (`backend/cmd/tui_session.go`) and exposed to the TUI as
-`OPEN_CHAT_TUI_CONFIG_DIR`. The `<config dir>` is `OPEN_CHAT_TUI_CONFIG_DIR` when
-the user set it, otherwise the platform user config directory; the `<session id>`
-is the chat UUID (or the endpoint/folder name) reduced to a single `[a-z0-9-]`
-path element, created with `0700` permissions because it holds bearer tokens.
-
-The consequence is that two shells never write the same file, so neither can
-fail on a lock/atomic replace nor clobber the other's active server and chat
-selection. Because the directories are per session, a plain `open-chat tui`
-(which keeps the shared device file) and a coding session see separate
-server/token lists - log in once per session directory, or point
-`OPEN_CHAT_TUI_CONFIG_DIR` at your own directory to share one.
+Several `open-chat tui` sessions may run side by side on one device. A session
+that an integrating deployment starts for you gets its own private directory
+inside the config dir instead of the shared file, so two shells never write the
+same file nor clobber the other's active server and chat selection; log in once
+per directory, or point `OPEN_CHAT_TUI_CONFIG_DIR` at a directory of your own to
+share one. How those per-session directories are provisioned belongs to the
+integration's own docs.
 
 ```json
 {
@@ -187,11 +180,11 @@ open-chat tui --version
 
 ### Environment overrides
 
-The TUI also honours environment variables, which is how the forwarded
-sandbox TUI is started authenticated:
+The TUI also honours environment variables, so a scripted login can start it
+without an interactive prompt:
 
-- `OPENCHAT_SERVER_URL` — server to dial back
-  to (overrides the active server's URL).
+- `OPENCHAT_SERVER_URL` — server to dial back to (overrides the active server's
+  URL).
 - `OPENCHAT_ACCESS_TOKEN` — bearer token to use without an interactive login
   (an integrating deployment may also inject a namespaced alias of the same
   variables; see its integration docs).
@@ -202,16 +195,3 @@ sandbox TUI is started authenticated:
 The TUI talks to the regular HTTP API (version probe, `user/self`, the CLI
 browser-auth endpoints, chats and messages), so anything that works in a browser
 session works from the terminal too.
-
-## Forwarded TUI in a coding sandbox
-
-Some deployments forward this TUI into a chat's coding sandbox, so a freshly
-provisioned sandbox opens an authenticated TUI attached to the chat
-(`OPENCHAT_SERVER_URL`, `OPENCHAT_CHAT_UUID`, `OPENCHAT_ACCESS_TOKEN`). Because
-the TUI ships inside the `open-chat` binary as the `tui` integration, the
-sandbox only needs `open-chat` itself on `PATH` — put it in the sandbox image,
-or install it through the workspace `setup_commands` — and the forwarded
-session just runs `open-chat tui`. The integration that provides the forwarding —
-including how the short-lived, audience-bound (`coder-tui`) access token is
-minted — is documented in its own integration docs, which require an account
-with access; open them from the `/integrations` overview.
