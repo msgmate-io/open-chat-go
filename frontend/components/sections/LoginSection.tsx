@@ -56,9 +56,14 @@ type EmailVerificationStatusResponse = {
 export default function LoginHero({
     navigateTo,
     onSignUpClick,
+    signupAvailable = false,
 }: {
     navigateTo: (to: string) => void,
     onSignUpClick?: () => void,
+    // ci#1150: account creation is contributed by the account_management
+    // integration. When that integration is absent (or has sign-up disabled)
+    // there is no /sign-up page, so the login form must not advertise one.
+    signupAvailable?: boolean,
 }) {
     const [showPassword, setShowPassword] = useState(false)
     const togglePasswordVisibility = () => setShowPassword(!showPassword);
@@ -315,10 +320,12 @@ export default function LoginHero({
                     </Text>
                 )}
                 {!errors?.non_field_errors && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
+                {signupAvailable && (
                 <Button
                     variant="ghost"
                     type="button"
                     className="rounded-full"
+                    data-testid="login-signup-button"
                     onClick={() => {
                         if (onSignUpClick) {
                             onSignUpClick()
@@ -329,6 +336,7 @@ export default function LoginHero({
                 >
                     No account yet? Sign up
                 </Button>
+                )}
                 </form>
             </FormProvider>
         </div>
@@ -360,6 +368,7 @@ export function LoginSection({
     sectionId = "login",
     navigateTo,
     onSignUpClick,
+    signupAvailable = false,
     googleLoginEnabled = false,
     googleClientID,
     googleLoginRedirectURL,
@@ -367,6 +376,7 @@ export function LoginSection({
     sectionId?: string,
     navigateTo: (to: string) => void,
     onSignUpClick?: () => void,
+    signupAvailable?: boolean,
     googleLoginEnabled?: boolean,
     googleClientID?: string,
     googleLoginRedirectURL?: string,
@@ -484,7 +494,7 @@ export function LoginSection({
                 </CollapsibleContent>
             </Collapsible>
         )}
-        <LoginHero navigateTo={navigateTo} onSignUpClick={onSignUpClick} />
+        <LoginHero navigateTo={navigateTo} onSignUpClick={onSignUpClick} signupAvailable={signupAvailable} />
         <Toaster />
     </div>
 }
