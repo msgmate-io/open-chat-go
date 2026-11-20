@@ -661,3 +661,35 @@ func TestSandboxWorkspaceMissingIsNotTransient(t *testing.T) {
 		t.Fatal("an unrelated transient error must not classify as workspace-missing")
 	}
 }
+
+// ci#1168: the live tool API wraps the same shell failure in an extra `line 0:`
+// segment (`sh: cd: line 0: can't cd to ...`). Every fixture above carries only
+// the older, unwrapped `sh: cd:` form, so the wrapped shape the canary actually
+// emitted was never exercised - which is how the missing-root handling could
+// describe the breakage while nothing repaired it. Both shapes must classify
+// identically: deterministic (never retried), path extracted, placeholder built.
+func TestSandboxWorkspaceMissingClassifiesWrappedLineZeroForm(t *testing.T) {
+	wrapped := "coder tool api failed (400): failed to list .: sh: cd: line 0: can't cd to " +
+		ci1120WorkspaceMissingPath + ": No such file or directory"
+	err := errors.New(wrapped)
+
+	if isTransientToolFailure(err) {
+		t.Fatal("the wrapped line-0 form must not be treated as a transient tool failure")
+	}
+	if isSandboxCapacityFailure(err) {
+		t.Fatal("the wrapped line-0 form is not a node-capacity rejection")
+	}
+	path, missing := isSandboxWorkspaceMissing(err)
+	if !missing {
+		t.Fatalf("expected %q to classify as a missing sandbox workspace root", wrapped)
+	}
+	if path != ci1120WorkspaceMissingPath {
+		t.Fatalf("missing path = %q, want %q", path, ci1120WorkspaceMissingPath)
+	}
+	placeholder := buildSandboxWorkspaceMissingToolErrorPlaceholder("coder_list", path, err)
+	for _, fragment := range []string{"coder_list", ci1120WorkspaceMissingPath, "not retried"} {
+		if !strings.Contains(placeholder, fragment) {
+			t.Fatalf("expected %q to contain %q", placeholder, fragment)
+		}
+	}
+}
