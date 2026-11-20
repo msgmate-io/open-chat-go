@@ -36,12 +36,59 @@ func botReplyTurnBudget(ctx context.Context) time.Duration {
 	return workqueue.BotReplyTimeout()
 }
 
+// asynqTaskID reports the asynq task ID of the consumed task, or "-" when the
+// handler runs outside a worker (unit tests call HandleBotReply directly).
+// ci#1163: the id is what the dispatch-side line logs, so the two lines can be
+// joined in the log to prove the queued task really reached the turn.
+func asynqTaskID(ctx context.Context) string {
+	if ctx != nil {
+		if id, ok := asynq.GetTaskID(ctx); ok && id != "" {
+			return id
+		}
+	}
+	return "-"
+}
+
+// asynqQueueName reports the queue the consumed task came from, or "-".
+func asynqQueueName(ctx context.Context) string {
+	if ctx != nil {
+		if queue, ok := asynq.GetQueueName(ctx); ok && queue != "" {
+			return queue
+		}
+	}
+	return "-"
+}
+
+// asynqRetryCount reports how often the task was retried before this attempt,
+// or 0. ci#1163: a stalled chat whose continuation is being retried in a loop
+// looks the same as one that was never consumed unless the attempt is logged.
+func asynqRetryCount(ctx context.Context) int {
+	if ctx != nil {
+		if n, ok := asynq.GetRetryCount(ctx); ok {
+			return n
+		}
+	}
+	return 0
+}
+
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
 // the bot/sender/message context, creates a short-lived bot session, rebuilds
 // websocket-style message payload (including attachments metadata), and then
 // calls the AI handler to generate and persist/send the bot response.
 func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
+	// ci#1163: the consume-side counterpart of the dispatch log in
+	// workqueue.bot_reply. The private-sandbox stalls showed a chat whose
+	// confirmable action reported continuation_queued and which then stayed
+	// active with no bot turn until the harness reaped it; from the log alone
+	// "the worker never picked the task up" and "the worker picked it up and the
+	// turn failed before doing anything" look identical. This line is therefore
+	// emitted first, before any state that can make the turn bail out, so its
+	// absence/presence alone tells the two apart.
+	logging.Infof(
+		"bot-reply turn start (ci#1163): consuming queued reply (task id=%s type=%s queue=%s retry=%d), attempting payload decode",
+		asynqTaskID(ctx), task.Type(), asynqQueueName(ctx), asynqRetryCount(ctx),
+	)
 	if deps.DB == nil {
 		return fmt.Errorf("%w: database unavailable", asynq.SkipRetry)
 	}
@@ -81,6 +128,22 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
 	}
+
+	// ci#1153: a continuation turn that is queued but never reaches the agent
+	// leaves the chat stalled with nothing in the log that separates "the task
+	// was never dequeued" from "the handler ran and dropped the turn". The
+	// confirmable-action side already logs the enqueue (ci#1147); this is the
+	// matching consumer-side line, keyed to the task ID and the source message,
+	// so a relayed stall is attributable from the log alone.
+	//
+	// asynq.Task carries no ID (the ID lives in the handler context), so read it
+	// from the context; a handler invoked without one still logs the turn.
+	taskID, hasTaskID := asynq.GetTaskID(ctx)
+	logging.Infof(
+		"bot-reply task start: chat=%s task=%s task_id_known=%v message=%s sender_automated=%v continuation=%v",
+		payload.ChatUUID, taskID, hasTaskID, incomingMessage.UUID, senderUser.IsAutomated,
+		strings.Contains(taskID, ":continuation"),
+	)
 
 	// ci#747 RC-8: refuse to add another turn to a bot-to-bot loop. Only an
 	// automated peer can loop, so the check is gated on that; a long
@@ -318,6 +381,13 @@ func botReplyFailureMessage(err error) string {
 		return "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
 	case msgmate.FailureReasonTimeout:
 		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
+	case msgmate.FailureReasonToolCallBudget:
+		// ci#1160: a reached tool-call cap is a capacity stop, not an internal
+		// fault - the server ended the turn exactly as designed. Reporting it
+		// as "internal error" told the user (and the agent self-check) the
+		// server broke when it actually protected itself; the cap guidance
+		// explains the stop and how to continue.
+		return "It stopped because this chat's tool-call budget was exhausted. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
 	}
 
 	if isProviderReachabilityError(err) {

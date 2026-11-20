@@ -39,10 +39,53 @@ export function WebsocketHandler() {
                     announceWebsocketReconnected();
                 }
                 hasOpenedRef.current = true;
+                // ci#1157: the chat list cache may have been populated before
+                // the socket was up (or by a stale reload), so refresh it on
+                // every open - including reconnects - so a newly created chat
+                // shows up without a manual page reload.
+                void revalidateChatData();
             },
         },
         socketUrl !== null,
     );
+
+    // ci#1149: the socket only pushes frames while it is connected, so a chat
+    // created from another client (terminal TUI, second tab, another device) or
+    // a turn that finished during a connection drop left the cached chat list
+    // stale until a manual page reload. Refresh the chat caches whenever the tab
+    // regains focus or becomes visible again, and keep a slow refresh running
+    // while the socket is down, so reconnecting/returning users see new chats,
+    // finished turns and tool results without reloading.
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return
+        }
+        const refresh = () => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+                return
+            }
+            void revalidateChatData()
+        }
+        window.addEventListener('focus', refresh)
+        document.addEventListener('visibilitychange', refresh)
+        return () => {
+            window.removeEventListener('focus', refresh)
+            document.removeEventListener('visibilitychange', refresh)
+        }
+    }, [])
+
+    const socketOpen = readyState === ReadyState.OPEN
+    useEffect(() => {
+        if (socketOpen) {
+            return
+        }
+        // While the socket is not open the UI is blind to new chats and tool
+        // frames; poll the chat caches at a low rate until it reconnects.
+        const interval = setInterval(() => {
+            void revalidateChatData()
+        }, 15000)
+        return () => clearInterval(interval)
+    }, [socketOpen])
 
     if (!socketUrl) {
         return null;
@@ -136,6 +179,13 @@ export function WebsocketHandlerBase({
                 queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
                 void revalidateChatStates()
+            }else if(parsedMessage.type === "tool_call_started" || parsedMessage.type === "tool_call_updated" || parsedMessage.type === "tool_call_ended"){
+                // ci#1157: consume the fine grained tool frames. A running tool
+                // call refreshes the chat so the tool run is visible while it
+                // streams, and the terminal frame reloads the persisted
+                // messages so the tool result renders as a result instead of
+                // staying stuck as plain text.
+                void revalidateChatData(chatUUID)
             }else if(parsedMessage.type === "new_message"){
                 queueRef.current.dispose()
                 removePartialMessage(chatUUID, sessionId)
