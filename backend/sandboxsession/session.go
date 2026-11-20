@@ -329,7 +329,11 @@ func Open(ctx context.Context, reg *Registry, req Request) (Session, error) {
 	// msgmate_coder hook is the implementation. Providers without the contract are
 	// unaffected, and when the request names no root core leaves the root to the
 	// provider's own intent.
-	if root := strings.TrimSpace(req.Shell.WorkDir); root != "" && SupportsWorkspaceRootProvisioning(provider) {
+	// ci#1168: gate on the *resolved* working directory, not the raw request
+	// value. ResolveWorkDir defaults an unset workdir to DefaultWorkDir, so
+	// gating on req.Shell.WorkDir left the root the session actually opens in
+	// unasserted exactly when the request named none.
+	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" && SupportsWorkspaceRootProvisioning(provider) {
 		spec := WorkspaceRootSpec{WorkspaceUUID: ref.SandboxUUID, Root: root}
 		if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
 			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
