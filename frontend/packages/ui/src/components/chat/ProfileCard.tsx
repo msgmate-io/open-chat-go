@@ -35,6 +35,11 @@ export function ProfileCard({
   const hasAdminIntegration = Boolean(
     integrations?.rows?.some((integration) => integration?.name === "admin"),
   )
+  // ci#1143: model management may be served by the dedicated `model_selector`
+  // integration instead of the private `admin` integration.
+  const hasModelSelector = Boolean(
+    integrations?.rows?.some((integration) => integration?.name === "model_selector"),
+  )
 
   const onLogout = () => {
     fetch("/api/v1/user/logout", { method: "POST" }).then((res) => {
@@ -91,8 +96,23 @@ export function ProfileCard({
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">Admin</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => navigateTo("/integrations/admin")}>Admin Overview</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigateTo("/integrations/admin/models")}>Model Management</DropdownMenuItem>
+                {hasModelSelector ? null : (
+                  <DropdownMenuItem onClick={() => navigateTo("/integrations/admin/models")}>
+                    Model Management
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={() => navigateTo("/integrations/admin/settings")}>Integration Settings</DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
+          {user?.is_admin && hasModelSelector ? (
+            <>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">Models</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => navigateTo("/integrations/model_selector")}>
+                  Model Management
+                </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
             </>
