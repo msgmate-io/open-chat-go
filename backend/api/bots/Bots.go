@@ -31,6 +31,11 @@ import (
 
 var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 
+// errBotUsername wraps a failure to derive the bot user's unique username
+// (open-chat-go-ci#1158) so Create can report it as a distinct 500 instead of
+// the generic failed_to_create_bot.
+var errBotUsername = errors.New("bot username unresolved")
+
 func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
 	_ = DB
 	_ = user
@@ -70,7 +75,11 @@ type ListedBotsPage struct {
 }
 
 type CreateBotRequest struct {
-	Name                string                 `json:"name"`
+	Name string `json:"name"`
+	// Username is the optional login handle of the bot user. When empty (the
+	// dashboard never sends one) it is derived from Name so the bot user row
+	// never persists an empty `users.username` (open-chat-go-ci#1158).
+	Username            string                 `json:"username,omitempty"`
 	Description         string                 `json:"description,omitempty"`
 	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
 	Password            string                 `json:"password,omitempty"`
@@ -964,6 +973,16 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeBotAPIError(w, http.StatusBadRequest, "name_is_required", "name is required")
 		return
 	}
+	// ci#1158: `users.username` is a unique column, so a bot user must never be
+	// created with an empty handle - the second such bot tripped
+	// "UNIQUE constraint failed: users.username". The handle comes from the
+	// optional request field or, like the dashboard always does, from the bot
+	// name; database.EnsureUniqueUsername adds a deterministic suffix when the
+	// slug is already taken and never returns an empty value.
+	usernameSource := req.Username
+	if strings.TrimSpace(usernameSource) == "" {
+		usernameSource = req.Name
+	}
 	if req.DefaultSharedConfig == nil {
 		writeBotAPIError(w, http.StatusBadRequest, "default_shared_config_is_required", "default_shared_config is required")
 		return
@@ -1013,8 +1032,15 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var runtime database.BotRuntimeConfig
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		// Resolve the handle inside the transaction so the uniqueness check and
+		// the insert see the same snapshot (ci#1158).
+		botUsername, usernameErr := database.EnsureUniqueUsername(tx, usernameSource)
+		if usernameErr != nil {
+			return fmt.Errorf("%w: %v", errBotUsername, usernameErr)
+		}
 		botUser := database.User{
 			Name:         req.Name,
+			Username:     botUsername,
 			Email:        fmt.Sprintf("bot-%s@bot.local", uuid.NewString()),
 			PasswordHash: string(hashedPassword),
 			ContactToken: uuid.NewString(),
@@ -1059,6 +1085,17 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
+		if errors.Is(err, errBotUsername) {
+			writeBotAPIError(w, http.StatusInternalServerError, "failed_to_generate_username", "Failed to generate bot username")
+			return
+		}
+		// A username unique-index violation means another request took the
+		// derived handle between the check and the insert (ci#1158); report it
+		// as a retryable conflict instead of the opaque generic 500.
+		if strings.Contains(errText, "users.username") {
+			writeBotAPIError(w, http.StatusConflict, "bot_username_taken", "bot username already taken, please retry")
+			return
+		}
 		if strings.Contains(errText, "idx_bot_owner_name") || strings.Contains(errText, "duplicate") {
 			writeBotAPIError(w, http.StatusConflict, "bot_name_already_exists", "bot name already exists for owner")
 			return
