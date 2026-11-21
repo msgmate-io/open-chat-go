@@ -261,7 +261,22 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	// call, and record the remaining turn budget: the private-sandbox harness
 	// gives up long before the 30m task timeout, so a starving turn (tiny
 	// remaining budget on a retry/continuation) has to be visible in the log.
-	logging.Infof("%s", botReplyGenerationStartLine(payload.ChatUUID, ctx))
+	//
+	// ci#1161: the bracketing pair also carries the task id, the continuation
+	// flag and the incoming message uuid, because the failing private coder
+	// probes showed "task start", two chat fetches, one message list and then
+	// nothing until the harness timed out. A missing "generation finished" line
+	// therefore means the turn is blocked inside the handler, a present one
+	// means the handler returned and the stall is downstream of it. Both tickets
+	// are folded into one pair of lines so a log never carries two competing
+	// generation-start events for the same turn.
+	generationStartedAt := time.Now()
+	continuationTurn := strings.Contains(taskID, ":continuation")
+	logging.Infof(
+		"%s task=%s continuation=%v message=%s",
+		botReplyGenerationStartLine(payload.ChatUUID, ctx),
+		taskID, continuationTurn, incomingMessage.UUID,
+	)
 	var err error
 	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
 		err = backendFn(ctx, msgmate.ChatBackendRequest{
@@ -273,7 +288,11 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	} else {
 		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
 	}
-	logging.Infof("%s", botReplyGenerationFinishedLine(payload.ChatUUID, err))
+	logging.Infof(
+		"%s task=%s continuation=%v elapsed=%s err=%v",
+		botReplyGenerationFinishedLine(payload.ChatUUID, err),
+		taskID, continuationTurn, time.Since(generationStartedAt).Round(time.Millisecond), err,
+	)
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if isBotReplyCancellation(err, ctx) {
