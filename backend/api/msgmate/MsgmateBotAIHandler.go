@@ -2287,7 +2287,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if ok && err != nil {
 				logging.Errorf("streamChatCompletion error: %v", err)
 				sendFinalMessage(false, err, turnOutcome)
-				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
+				// ci#1169: the terminal error keeps travelling typed through the
+				// "response already sent" marker, so the queue task classifies a
+				// tool-call budget stop as the capacity stop it is instead of
+				// re-rendering it as "internal error".
+				return wrapTerminalResponseAlreadySent(err)
 			}
 			errs = nil
 		}

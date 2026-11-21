@@ -71,6 +71,24 @@ func asynqRetryCount(ctx context.Context) int {
 	return 0
 }
 
+// botReplyGenerationStartLine renders the ci#1162 pre-generation trace. The
+// remaining turn budget is part of it because the private-sandbox harness gives
+// up after 720s while a bot reply task may run for 30m: a continuation turn that
+// starts with a nearly exhausted budget stalls the interaction without any
+// further log line, which is exactly the failure relayed in ci#1162.
+func botReplyGenerationStartLine(chatUUID string, ctx context.Context) string {
+	return fmt.Sprintf(
+		"bot-reply generation start: chat=%s budget=%s",
+		chatUUID, botReplyTurnBudget(ctx).Round(time.Second),
+	)
+}
+
+// botReplyGenerationFinishedLine renders the ci#1162 post-generation trace so
+// the generation window is bracketed and a missing pair is unambiguous.
+func botReplyGenerationFinishedLine(chatUUID string, err error) string {
+	return fmt.Sprintf("bot-reply generation finished: chat=%s ok=%t", chatUUID, err == nil)
+}
+
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
 // the bot/sender/message context, creates a short-lived bot session, rebuilds
@@ -236,6 +254,29 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 	}
 
+	// ci#1162: the continuation turn of a stalled chat re-enters the handler and
+	// then produces no further line until the turn ends, so a relayed
+	// "interaction timed out ... state=active" cannot be attributed to the
+	// pre-generation setup or to the generation/tool loop itself. Bracket the
+	// call, and record the remaining turn budget: the private-sandbox harness
+	// gives up long before the 30m task timeout, so a starving turn (tiny
+	// remaining budget on a retry/continuation) has to be visible in the log.
+	//
+	// ci#1161: the bracketing pair also carries the task id, the continuation
+	// flag and the incoming message uuid, because the failing private coder
+	// probes showed "task start", two chat fetches, one message list and then
+	// nothing until the harness timed out. A missing "generation finished" line
+	// therefore means the turn is blocked inside the handler, a present one
+	// means the handler returned and the stall is downstream of it. Both tickets
+	// are folded into one pair of lines so a log never carries two competing
+	// generation-start events for the same turn.
+	generationStartedAt := time.Now()
+	continuationTurn := strings.Contains(taskID, ":continuation")
+	logging.Infof(
+		"%s task=%s continuation=%v message=%s",
+		botReplyGenerationStartLine(payload.ChatUUID, ctx),
+		taskID, continuationTurn, incomingMessage.UUID,
+	)
 	var err error
 	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
 		err = backendFn(ctx, msgmate.ChatBackendRequest{
@@ -247,6 +288,11 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	} else {
 		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
 	}
+	logging.Infof(
+		"%s task=%s continuation=%v elapsed=%s err=%v",
+		botReplyGenerationFinishedLine(payload.ChatUUID, err),
+		taskID, continuationTurn, time.Since(generationStartedAt).Round(time.Millisecond), err,
+	)
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if isBotReplyCancellation(err, ctx) {
