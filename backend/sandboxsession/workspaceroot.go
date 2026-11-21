@@ -262,6 +262,34 @@ func EnsureWorkspaceRoot(ctx context.Context, provider Provider, ref SandboxRef,
 	return observation, nil
 }
 
+// coderWorkspaceRootPrefix is the container path prefix the coder sandbox
+// advertises as its shell workdir (`/workspace/coder-<chat_uuid>`).
+const coderWorkspaceRootPrefix = "/workspace/"
+
+// IsCoderWorkspaceRoot reports whether root is a coder sandbox workspace root,
+// ie a path under the `/workspace/` volume the coder image mounts.
+func IsCoderWorkspaceRoot(root string) bool {
+	root = strings.TrimSpace(root)
+	return root != coderWorkspaceRootPrefix && strings.HasPrefix(root, coderWorkspaceRootPrefix)
+}
+
+// AssertWorkspaceRootCapability fails closed (ci#1166) when a session would be
+// handed to a tool call with a coder workspace root that nothing materialised.
+// The live canary kept failing after ci#1126 because the materialisation gate in
+// Open/AttachSandbox was *fail-open*: a provider that advertises
+// `/workspace/coder-<uuid>` but does not implement WorkspaceRootProvisioner was
+// silently skipped, so the broken root reached the first tool call as
+// `can't cd to /workspace/coder-<uuid>`. A coder root now requires the
+// capability; every other root keeps the pre-existing fail-open behaviour so no
+// existing provider changes shape.
+func AssertWorkspaceRootCapability(provider Provider, root string) error {
+	if provider == nil || !IsCoderWorkspaceRoot(root) || SupportsWorkspaceRootProvisioning(provider) {
+		return nil
+	}
+	return fmt.Errorf("%w: provider %s advertises workspace root %q but cannot materialise it (ci#1166); refusing to hand the session to a tool call",
+		ErrUnsupportedOperation, provider.Name(), strings.TrimSpace(root))
+}
+
 // assertWorkspaceRoot is the post-provision assertion: it fails closed when the
 // observed root is not a clean absolute path or does not exist.
 func assertWorkspaceRoot(providerName string, spec WorkspaceRootSpec, observation WorkspaceRootObservation) error {
