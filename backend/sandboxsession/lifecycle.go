@@ -118,11 +118,19 @@ func AttachSandbox(ctx context.Context, reg *Registry, req Request) (Session, er
 	// `chown -R`), and the gate is the resolved working directory - not the raw
 	// request value - for the same reason as Open: an unset workdir must not
 	// skip the root the session actually opens in.
-	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" && SupportsWorkspaceRootProvisioning(provider) {
-		ref := SandboxRef{Provider: name, SandboxUUID: req.SandboxUUID}
-		spec := WorkspaceRootSpec{WorkspaceUUID: req.SandboxUUID, Root: root}
-		if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+	// ci#1166: a coder workspace root requires the materialisation contract;
+	// see AssertWorkspaceRootCapability. Without it an unmaterialised
+	// `/workspace/coder-<uuid>` was silently handed to the tool API on attach too.
+	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" {
+		if err := AssertWorkspaceRootCapability(provider, root); err != nil {
 			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+		}
+		if SupportsWorkspaceRootProvisioning(provider) {
+			ref := SandboxRef{Provider: name, SandboxUUID: req.SandboxUUID}
+			spec := WorkspaceRootSpec{WorkspaceUUID: req.SandboxUUID, Root: root}
+			if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+			}
 		}
 	}
 
