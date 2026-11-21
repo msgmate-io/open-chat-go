@@ -4257,7 +4257,13 @@ jobs:
     name: Open Production Promotion PR
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
+    # ci#1173: deliberately pinned to the merge event. The `push: branches: [main]`
+    # arm added for the `msgmate-io-ci` hop must NOT be able to (re)open or
+    # refresh the `main` -> production promotion PR, and it must not be able to
+    # make `msgmate-io-production` deployable: that hop stays merge-event-only.
+    # A `main` push therefore stops at `dispatch-merged-ci-deployment`.
     if: |
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     env:
@@ -4657,7 +4663,14 @@ jobs:
     name: Post Merged Deploy Approval Link
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
-    if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
+    # ci#1173: merge-event only. This job comments on the *merged PR* and opens
+    # the approval issue from `github.event.pull_request`, so it must not run for
+    # the `push: branches: [main]` arm; that arm exists solely to reach
+    # `dispatch-merged-ci-deployment` and never deploys `msgmate-io-production`
+    # or the staging environment on a push.
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
@@ -4773,8 +4786,13 @@ jobs:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment, post-merged-deploy-approval-link, cancel-superseded-merged-deployment]
+    # ci#1173: merge-event only. A `main` push is a state-of-main driver for
+    # `msgmate-io-ci` alone (`dispatch-merged-ci-deployment`); it must not
+    # dispatch the staging/production deploy, and its concurrency group key
+    # reads `github.event.pull_request.base.ref`, which is empty on a push.
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
     concurrency:
@@ -5518,8 +5536,11 @@ jobs:
     name: Close Merged Deploy Approval Issue
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment, post-merged-deploy-approval-link, dispatch-merged-deployment]
+    # ci#1173: merge-event only - it closes the approval issue opened by
+    # `post-merged-deploy-approval-link`, which does not run on a push.
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
     env:
