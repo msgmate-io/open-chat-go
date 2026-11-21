@@ -96,6 +96,40 @@ func TestBotReplyTurnStartLogHelpersFallBackOutsideWorker(t *testing.T) {
 	}
 }
 
+// TestBotReplyGenerationTraceLines pins the ci#1162 generation-boundary trace:
+// the start line has to carry the remaining turn budget (the number that
+// separates "the continuation turn started with no time left" from "the turn had
+// its full budget and still produced nothing"), and the finished line has to
+// record whether generation returned an error. A missing start/finished pair in a
+// relayed private-sandbox log is then a definitive statement about where the turn
+// stalled.
+func TestBotReplyGenerationTraceLines(t *testing.T) {
+	deadline, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	start := botReplyGenerationStartLine("chat-uuid", deadline)
+	if !strings.HasPrefix(start, "bot-reply generation start: chat=chat-uuid budget=") {
+		t.Fatalf("unexpected generation start line: %q", start)
+	}
+	if !strings.Contains(start, "budget=1m30s") {
+		t.Fatalf("generation start line must report the remaining turn budget, got %q", start)
+	}
+
+	// Without a task deadline the helper falls back to the configured turn
+	// timeout instead of logging a zero budget.
+	fallback := botReplyGenerationStartLine("chat-uuid", context.Background())
+	if strings.Contains(fallback, "budget=0s") {
+		t.Fatalf("generation start line must not report a zero budget without a deadline: %q", fallback)
+	}
+
+	if got, want := botReplyGenerationFinishedLine("chat-uuid", nil), "bot-reply generation finished: chat=chat-uuid ok=true"; got != want {
+		t.Fatalf("generation finished line = %q, want %q", got, want)
+	}
+	if got, want := botReplyGenerationFinishedLine("chat-uuid", errors.New("boom")), "bot-reply generation finished: chat=chat-uuid ok=false"; got != want {
+		t.Fatalf("generation finished line = %q, want %q", got, want)
+	}
+}
+
 func TestBotReplyFailureMessageUnclassifiedDoesNotMentionCreditsOrOutage(t *testing.T) {
 	got := botReplyFailureMessage(errors.New("unexpected decoder failure"))
 	gotLower := strings.ToLower(got)
