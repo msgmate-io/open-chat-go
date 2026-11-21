@@ -71,6 +71,24 @@ func asynqRetryCount(ctx context.Context) int {
 	return 0
 }
 
+// botReplyGenerationStartLine renders the ci#1162 pre-generation trace. The
+// remaining turn budget is part of it because the private-sandbox harness gives
+// up after 720s while a bot reply task may run for 30m: a continuation turn that
+// starts with a nearly exhausted budget stalls the interaction without any
+// further log line, which is exactly the failure relayed in ci#1162.
+func botReplyGenerationStartLine(chatUUID string, ctx context.Context) string {
+	return fmt.Sprintf(
+		"bot-reply generation start: chat=%s budget=%s",
+		chatUUID, botReplyTurnBudget(ctx).Round(time.Second),
+	)
+}
+
+// botReplyGenerationFinishedLine renders the ci#1162 post-generation trace so
+// the generation window is bracketed and a missing pair is unambiguous.
+func botReplyGenerationFinishedLine(chatUUID string, err error) string {
+	return fmt.Sprintf("bot-reply generation finished: chat=%s ok=%t", chatUUID, err == nil)
+}
+
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
 // the bot/sender/message context, creates a short-lived bot session, rebuilds
@@ -236,7 +254,14 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 	}
 
-	logging.Infof("bot-reply generation start: chat=%s", payload.ChatUUID)
+	// ci#1162: the continuation turn of a stalled chat re-enters the handler and
+	// then produces no further line until the turn ends, so a relayed
+	// "interaction timed out ... state=active" cannot be attributed to the
+	// pre-generation setup or to the generation/tool loop itself. Bracket the
+	// call, and record the remaining turn budget: the private-sandbox harness
+	// gives up long before the 30m task timeout, so a starving turn (tiny
+	// remaining budget on a retry/continuation) has to be visible in the log.
+	logging.Infof("%s", botReplyGenerationStartLine(payload.ChatUUID, ctx))
 	var err error
 	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
 		err = backendFn(ctx, msgmate.ChatBackendRequest{
@@ -248,7 +273,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	} else {
 		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
 	}
-	logging.Infof("bot-reply generation finished: chat=%s ok=%t", payload.ChatUUID, err == nil)
+	logging.Infof("%s", botReplyGenerationFinishedLine(payload.ChatUUID, err))
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if isBotReplyCancellation(err, ctx) {
