@@ -334,3 +334,132 @@ func TestDefaultFileModeIsOwnerOnly(t *testing.T) {
 		t.Fatalf("credential files must default to 0600, got %o", DefaultFileMode)
 	}
 }
+
+// rootedProvider is fakeProvider plus the ci#1126 workspace-root contract, so
+// Open/Attach drive the provisioner the way the private msgmate_coder hook does.
+type rootedProvider struct {
+	*fakeProvider
+	root *rootProvider
+}
+
+func (p *rootedProvider) ProvisionWorkspaceRoot(ctx context.Context, ref SandboxRef, spec WorkspaceRootSpec) (WorkspaceRootObservation, error) {
+	return p.root.ProvisionWorkspaceRoot(ctx, ref, spec)
+}
+
+// rootedAttachProvider adds the attach capability to the rooted provider.
+type rootedAttachProvider struct {
+	*rootedProvider
+}
+
+func (p *rootedAttachProvider) AttachSandbox(_ context.Context, req Request) (Session, error) {
+	p.sessionCalls++
+	return Session{
+		SessionID:   "sess-attach",
+		Provider:    p.name,
+		SandboxUUID: req.SandboxUUID,
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}, nil
+}
+
+func newRootedProvider(name string, rootExists bool) (*rootedProvider, *rootProvider) {
+	root := &rootProvider{fakeProvider: fakeProvider{name: name}, rootExists: rootExists}
+	return &rootedProvider{fakeProvider: &fakeProvider{name: name}, root: root}, root
+}
+
+// ci#1168: the workspace-root assertion must gate on the *resolved* working
+// directory. ResolveWorkDir defaults an empty workdir, so gating on the raw
+// request value skipped the assertion entirely - leaving the root the session
+// actually opens in unasserted exactly when the request named none.
+func TestOpenAssertsWorkspaceRootForDefaultWorkDir(t *testing.T) {
+	reg := NewRegistry()
+	p, root := newRootedProvider("rooted", true)
+	if err := reg.Register(p); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// No WorkDir on the request at all: the gate must still fire, because the
+	// session opens in DefaultWorkDir.
+	if _, err := Open(context.Background(), reg, Request{OwnerUUID: "user-1"}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if root.calls != 1 {
+		t.Fatalf("expected the workspace root to be materialised once for the default workdir, got %d", root.calls)
+	}
+	if got := root.gotSpec.Root; got != DefaultWorkDir {
+		t.Fatalf("expected the root to be the resolved default %q, got %q", DefaultWorkDir, got)
+	}
+	if p.sessionCalls != 1 {
+		t.Fatalf("expected the shell session to open only after materialisation, got %d", p.sessionCalls)
+	}
+}
+
+// ci#1168: a workspace whose root is still absent must fail the provision
+// instead of being advertised to a tool call. This is what turns the canary's
+// `can't cd to /workspace/coder-<uuid>` into a provisioning error the caller can
+// repair, rather than a tool error the model is asked to work around.
+func TestOpenRefusesWorkspaceWhoseRootIsStillMissing(t *testing.T) {
+	reg := NewRegistry()
+	p, root := newRootedProvider("rooted", false)
+	if err := reg.Register(p); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	_, err := Open(context.Background(), reg, Request{OwnerUUID: "user-1"})
+	if err == nil {
+		t.Fatal("expected a missing workspace root to fail the open")
+	}
+	if !errors.Is(err, ErrWorkspaceRootMissing) {
+		t.Fatalf("expected ErrWorkspaceRootMissing, got %v", err)
+	}
+	if root.calls != 1 {
+		t.Fatalf("expected the root to be materialised once, got %d", root.calls)
+	}
+	if p.sessionCalls != 0 {
+		t.Fatalf("a root-less workspace must never reach a shell session, got %d calls", p.sessionCalls)
+	}
+}
+
+// ci#1168: attaching to a sandbox (pool restart, credential replay, a second
+// chat) must assert and materialise the same root the provision path does,
+// gated on the resolved workdir.
+func TestAttachAssertsWorkspaceRootForDefaultWorkDir(t *testing.T) {
+	reg := NewRegistry()
+	rooted, root := newRootedProvider("rooted", true)
+	p := &rootedAttachProvider{rootedProvider: rooted}
+	if err := reg.Register(p); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if _, err := AttachSandbox(context.Background(), reg, Request{SandboxUUID: "sbx-1"}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if root.calls != 1 {
+		t.Fatalf("expected the workspace root to be materialised once on attach, got %d", root.calls)
+	}
+	if got := root.gotSpec.Root; got != DefaultWorkDir {
+		t.Fatalf("expected the root to be the resolved default %q, got %q", DefaultWorkDir, got)
+	}
+	if got := root.gotSpec.WorkspaceUUID; got != "sbx-1" {
+		t.Fatalf("expected the root spec to name the attached sandbox, got %q", got)
+	}
+	if p.sessionCalls != 1 {
+		t.Fatalf("expected the attach to happen after materialisation, got %d", p.sessionCalls)
+	}
+}
+
+// ci#1168: attach to a root-less sandbox fails closed, like Open.
+func TestAttachRefusesWorkspaceWhoseRootIsStillMissing(t *testing.T) {
+	reg := NewRegistry()
+	rooted, _ := newRootedProvider("rooted", false)
+	p := &rootedAttachProvider{rootedProvider: rooted}
+	if err := reg.Register(p); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if _, err := AttachSandbox(context.Background(), reg, Request{SandboxUUID: "sbx-1"}); !errors.Is(err, ErrWorkspaceRootMissing) {
+		t.Fatalf("expected ErrWorkspaceRootMissing, got %v", err)
+	}
+	if p.sessionCalls != 0 {
+		t.Fatalf("a root-less sandbox must never be attached, got %d calls", p.sessionCalls)
+	}
+}

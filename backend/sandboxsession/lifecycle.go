@@ -109,6 +109,31 @@ func AttachSandbox(ctx context.Context, reg *Registry, req Request) (Session, er
 		return Session{}, fmt.Errorf("sandboxsession: %s: %w: attach", name, ErrUnsupportedOperation)
 	}
 
+	// ci#1168: attach is the other live seam that hands a sandbox to a tool
+	// call, and it reaches the same root the provision path does. Adopting a
+	// sandbox whose root was never materialised (a pool restart, a credential
+	// replay, a second chat) surfaced the identical
+	// `can't cd to /workspace/coder-<uuid>` failure, so assert and materialise
+	// the root here too. Materialise is idempotent by construction (`mkdir -p`,
+	// `chown -R`), and the gate is the resolved working directory - not the raw
+	// request value - for the same reason as Open: an unset workdir must not
+	// skip the root the session actually opens in.
+	// ci#1166: a coder workspace root requires the materialisation contract;
+	// see AssertWorkspaceRootCapability. Without it an unmaterialised
+	// `/workspace/coder-<uuid>` was silently handed to the tool API on attach too.
+	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" {
+		if err := AssertWorkspaceRootCapability(provider, root); err != nil {
+			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+		}
+		if SupportsWorkspaceRootProvisioning(provider) {
+			ref := SandboxRef{Provider: name, SandboxUUID: req.SandboxUUID}
+			spec := WorkspaceRootSpec{WorkspaceUUID: req.SandboxUUID, Root: root}
+			if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+			}
+		}
+	}
+
 	session, err := attacher.AttachSandbox(ctx, req)
 	if err != nil {
 		return Session{}, fmt.Errorf("sandboxsession: %s: attach sandbox %q: %w", name, req.SandboxUUID, err)

@@ -34,6 +34,11 @@ type AgentTurnSpec struct {
 	ToolInit map[string]map[string]interface{}
 	// Hooks are the integration's turn hooks (all optional).
 	Hooks AgentTurnHooks
+	// NoteWorkspaceMissingRoot records that the workspace root named by a
+	// provisioned sandbox workspace does not exist, so the next turn stops
+	// replaying the dead pin (ci#1168). Optional; nil means the caller owns
+	// its own persistence.
+	NoteWorkspaceMissingRoot func(path string) error
 }
 
 // AgentInitContext is the read-only input to the PreCallInit hook.
