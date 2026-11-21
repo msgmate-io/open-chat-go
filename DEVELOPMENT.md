@@ -406,21 +406,45 @@ for the `openchat-integrations` CLI.
 
 Symptom: a long coder test (or an interactive chat) is left `state=active` with
 `last_message=false` until the probe harness reports
-`interaction timed out after 720s` - no assertion failure, no bot turn.
+`interaction timed out after 720s (runtime=native, state=active, messages=N,
+last_message=false|...)` - no assertion failure, no bot turn. This is the shape
+of the ci#1172 relay: eleven `Private Test msgmate_coder_*` jobs, one identical
+timeout each, no failed test name anywhere in the log.
 
 Reading the backend log, in order:
 
-1. `bot-reply generation finished ... ok=true` - turn 1 completed. If its `elapsed`
+1. `bot-reply generation finished: chat=<uuid> ok=true task=<id>
+   continuation=<bool> elapsed=<dur> err=<nil>` - turn 1 completed. If `elapsed`
    is close to `suspend.DefaultTTL` (10m), the generation burned an in-turn
-   confirmation park instead of doing provider work.
-2. `confirmable action ...: continuation=continuation_queued` (not
-   `continuation=resumed_turn`) proves the park was already gone when the
-   approval landed - the pending `confirmable_actions` row is only persisted
-   *after* the generation returns, so a decider that reads durable state can
-   never satisfy a live in-turn park.
+   confirmation park instead of doing provider work. The matching
+   `bot-reply generation start: chat=<uuid> budget=<dur> ...` line should be
+   present for every finished line (ci#1161/ci#1162 bracketing pair).
+2. `confirmable action <id> in chat <uuid>: continuation=continuation_queued
+   (event <name>)` (not `continuation=resumed_turn`) proves the park was already
+   gone when the approval landed - the pending `confirmable_actions` row is only
+   persisted *after* the generation returns, so a decider that reads durable
+   state can never satisfy a live in-turn park.
 3. `Confirmable tool call <id> in chat <uuid> was not decided within 10m0s;
    dropping the park and keeping the pause behaviour` is the explicit expiry
    line (Info level since ci#1178; it used to be silent at Debug).
+
+The harness log carries the same fingerprint one layer up: an
+`[interaction] pending confirmable action approved` line that lands ~10m after
+`[sandbox-test] running interaction for ...` (the failing ci#1172 job approved
+at +10m08s). That lag is the park TTL, not harness slowness - the approval can
+only be read once the row exists. With the in-turn park enabled, every
+confirmable call of the round parks (ci#1147), so a two-call round burns
+2 x 10m against a 720s probe timeout and the job cannot pass. That arithmetic,
+not a slow provider, is what a relay of this family means.
+
+Also check which code was actually under test before concluding "main is fixed":
+a private-sandbox run's title and `headBranch` say `main`, but the per-job
+`TARGET_REF` / `SOURCE_SHA` / `BACKEND_IMAGE_INPUT` env in the "Run private
+sandbox test" step name the commit that was built. The ci#1172 run tested
+`82a10647` (pre-gate); the green re-run `44926643459` tested `SOURCE_SHA
+09f7e01f` - the `dev` commit that carries the gate - even though its title says
+`main`. Gate presence on the tip itself is `git cat-file -e <sha>:backend/
+suspend/in_turn_park.go`.
 
 The in-turn park is gated behind `OCI_CONFIRMABLE_IN_TURN_PARK` (default
 **off**, see `backend/suspend/in_turn_park.go`). Leave it off: with the gate
