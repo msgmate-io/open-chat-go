@@ -61,7 +61,7 @@ func TestNoteSandboxWorkspaceMissingRootIsBestEffort(t *testing.T) {
 // cannot be attributed to a stored selector.
 func TestNoteSandboxWorkspaceMissingRootHookNeedsChat(t *testing.T) {
 	if hook := NoteSandboxWorkspaceMissingRootHook(context.Background()); hook != nil {
-		t.Fatalf("hook = %v, want nil without a turn context", hook)
+		t.Fatalf("hook = %p, want nil without a turn context", hook)
 	}
 
 	// A chat that does not exist (or no database at all) must not produce an
