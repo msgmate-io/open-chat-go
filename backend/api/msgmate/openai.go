@@ -1368,6 +1368,28 @@ func parkAndAwaitConfirmationRound(
 	return appended, currentMessages, true
 }
 
+// inTurnParkWaitBudget is how long a single in-turn park may block the
+// enclosing generation (ci#1175).
+//
+// The park used to wait for the full suspension TTL (suspend.DefaultTTL, 10m).
+// That TTL exists to keep an orphaned suspension around for a *queued*
+// continuation, and it is far longer than any interaction window: the ci#1175
+// relay shows confirmable rounds whose generation blocked until the private
+// sandbox harness killed the interaction, with the approval arriving afterwards
+// as continuation=continuation_queued instead of continuation=resumed_turn. A
+// park can at most bridge a decision that arrives while the generation is
+// running, so it is bounded by suspend.InTurnParkBudget() and never longer than
+// the registry TTL.
+func inTurnParkWaitBudget(registry *suspend.Registry) time.Duration {
+	budget := suspend.InTurnParkBudget()
+	if registry != nil {
+		if ttl := registry.TTL(); ttl > 0 && budget > ttl {
+			budget = ttl
+		}
+	}
+	return budget
+}
+
 // parkAndAwaitConfirmation parks the enclosing generation for the confirmable
 // call (ci#1116) and blocks until the user's decision is delivered through the
 // suspension registry or the turn's context ends.
@@ -1393,7 +1415,8 @@ func parkAndAwaitConfirmation(
 	if !parked {
 		return paused, currentMessages, false
 	}
-	awaitCtx, cancel := context.WithTimeout(ctx, registry.TTL())
+	parkBudget := inTurnParkWaitBudget(registry)
+	awaitCtx, cancel := context.WithTimeout(ctx, parkBudget)
 	defer cancel()
 
 	decision, decided := waiter.Await(awaitCtx)
@@ -1406,8 +1429,8 @@ func parkAndAwaitConfirmation(
 		// TTL was invisible at the deployment log level - the single most
 		// expensive silent wait in a confirmable turn.
 		logging.Infof(
-			"Confirmable tool call %s in chat %s was not decided within %s; dropping the park and keeping the pause behaviour",
-			paused.id, chatUUID, registry.TTL(),
+			"Confirmable tool call %s in chat %s was not decided within %s (suspension TTL %s); dropping the park and keeping the pause behaviour (ci#1175)",
+			paused.id, chatUUID, parkBudget, registry.TTL(),
 		)
 		return paused, currentMessages, false
 	}
