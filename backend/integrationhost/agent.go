@@ -21,6 +21,11 @@ func (agentAdapter) Run(ctx context.Context, req integrationinterface.AgentReque
 		Tools:        req.Tools,
 		ToolInit:     req.ToolInit,
 		Hooks:        adaptAgentHooks(req.Hooks),
+		// Capture the chat this turn belongs to so a missing sandbox
+		// workspace root observed mid-turn is stamped onto that chat's
+		// stored workspace selector (ci#1168). Nil when the turn carries
+		// no chat to attribute the observation to.
+		NoteWorkspaceMissingRoot: msgmate.NoteSandboxWorkspaceMissingRootHook(ctx),
 	})
 	if err != nil {
 		return integrationinterface.AgentResult{}, err
