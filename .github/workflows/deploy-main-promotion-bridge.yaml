@@ -1,0 +1,168 @@
+name: Deploy Main Promotion Bridge
+
+# ci#1173: `main` was at 0.0.841 (fed930c4) while ci.msgmate.io still served
+# 0.0.836, and `GET /repos/msgmate-io/open-chat-go/deployments?environment=msgmate-io-ci&ref=main`
+# returned `[]` - no deployment record has ever been created on ref `main` for
+# that environment.
+#
+# Root cause: the `msgmate-io-ci` deploy hangs off the merge event of the
+# `[Dev promotion]` pull request (`dev` -> `main`). That PR is merged by a bot
+# identity (`app/github-actions`), and GitHub raises NO workflow run at all for
+# events caused by the default `GITHUB_TOKEN` / an app token built from it. So
+# both the `pull_request: closed` arm and the `push: branches: [main]` arm of
+# `Run PR CI Tests and Deployments` are inert for exactly the merges that are
+# failing - adding the push arm alone (ci#1080's `dev` fix, one branch further)
+# does not close this ticket.
+#
+# `workflow_run` DOES fire for `GITHUB_TOKEN`-caused runs (that is why
+# `auto-approve-consolidation.yaml` works), so this bridge is the load-bearing,
+# token-agnostic hop: it observes the completion of any workflow that can
+# advance `main` and drives the deploy from the *state* of `main`.
+#
+# Plan of record (ci#1173): do NOT switch the promotion merge to a PAT, do NOT
+# change the merge identity or the `main` ruleset, and do NOT extend any arm to
+# refresh the `main` -> production promotion PR. `msgmate-io-production` stays
+# merge-event-only and is NOT deployable by anything in this file.
+
+on:
+  workflow_run:
+    workflows:
+      # The promotion PR is verified by PR CI; its merge/refresh happens here.
+      - "Run PR CI Tests and Deployments"
+      # The bot that performs the `[Dev promotion]` merge.
+      - "Auto-approve consolidation PRs"
+    types:
+      - completed
+  # Manual escape hatch for a maintainer; same code path, same guards.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  deployments: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  # One bridge at a time, repository-wide: the guard below is read-then-dispatch,
+  # so two parallel bridges could both observe "not deployed yet" and dispatch
+  # twice. `cancel-in-progress: false` keeps a run that already decided to
+  # dispatch from being killed mid-flight.
+  group: deploy-main-promotion-bridge
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    name: Deploy main promotion to msgmate-io-ci
+    runs-on: ubuntu-latest
+    # Only a *successful* completion can have advanced `main`. `head_branch` is
+    # the branch of the observed run: `main` for a push to main, `dev` for the
+    # `[Dev promotion]` pull request's own CI run (its head is `dev`). Every
+    # other run is filtered out here; the deployments guard below is what makes
+    # a false positive harmless.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.head_branch == 'main' ||
+        github.event.workflow_run.head_branch == 'dev'))
+    steps:
+      - name: Check out the bridge workflow at main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Resolve the state of main
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          REPOSITORY: ${{ github.repository }}
+          DEPLOYMENT_ENV: msgmate-io-ci
+        run: |
+          set -euo pipefail
+
+          main_sha="$(gh api "repos/${REPOSITORY}/commits/main" --jq '.sha')"
+          if [ -z "${main_sha}" ] || [ "${main_sha}" = "null" ]; then
+            echo "::error::Could not resolve the head SHA of main."
+            exit 1
+          fi
+          echo "main head is ${main_sha}"
+
+          # Idempotency guard (MANDATORY): the promotion PR's own completion
+          # fires this bridge, and so does the run this bridge dispatches. Only
+          # dispatch when no deployment for this environment already exists on
+          # ref `main` at the current main head - otherwise every completed run
+          # would re-deploy.
+          deployments_json="$(gh api \
+            "repos/${REPOSITORY}/deployments?environment=${DEPLOYMENT_ENV}&ref=main&per_page=100")"
+          deployed_sha="$(jq -r --arg sha "${main_sha}" \
+            '[.[] | select(.sha == $sha)] | length' <<< "${deployments_json}")"
+
+          deploy_needed="true"
+          if [ "${deployed_sha:-0}" != "0" ]; then
+            echo "::notice::${DEPLOYMENT_ENV} already has a deployment for main@${main_sha}; nothing to do."
+            deploy_needed="false"
+          fi
+
+          # Second guard: an in-flight deploy run for main at this SHA makes a
+          # dispatch redundant even before its deployment record exists.
+          if [ "${deploy_needed}" = "true" ]; then
+            for status in queued in_progress waiting pending; do
+              runs_json="$(gh api \
+                "repos/${REPOSITORY}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/runs?branch=main&status=${status}&per_page=50" 2>/dev/null || echo '{"workflow_runs":[]}')"
+              count="$(jq -r --arg sha "${main_sha}" \
+                '[.workflow_runs[]? | select(.head_sha == $sha)] | length' <<< "${runs_json}" 2>/dev/null || echo 0)"
+              if [ "${count:-0}" != "0" ]; then
+                echo "::notice::A ${status} deploy run for main@${main_sha} already exists; nothing to do."
+                deploy_needed="false"
+                break
+              fi
+            done
+          fi
+
+          echo "main_sha=${main_sha}" >> "$GITHUB_OUTPUT"
+          echo "deploy_needed=${deploy_needed}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch the msgmate-io-ci deployment for main
+        if: steps.state.outputs.deploy_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          REPOSITORY: ${{ github.repository }}
+          MAIN_SHA: ${{ steps.state.outputs.main_sha }}
+          DEPLOYMENT_ENV: msgmate-io-ci
+        run: |
+          set -euo pipefail
+          # Dispatch open-chat-go's OWN workflow - the supported, audited entry
+          # point (workflow_dispatch inputs -> resolve context ->
+          # `approve-and-dispatch-deploy` -> the CI repository's
+          # `test-api-deploy.yaml`). The private CI repository's deploy workflow
+          # is never dispatched from here directly.
+          #
+          # `target_ref: main` targets the tip of `main`, not the triggering
+          # SHA, so this bridge self-heals a backlog: the first effective run
+          # after this lands deploys main@fed930c4 (0.0.841) to ci.msgmate.io
+          # with no maintainer action, so live stops serving 0.0.836.
+          echo "Dispatching ${DEPLOYMENT_ENV} deployment for main@${MAIN_SHA}"
+          gh workflow run run-pr-ci-tests-and-deployments.yaml \
+            --repo "${REPOSITORY}" \
+            --ref main \
+            -f "deployment_name=${DEPLOYMENT_ENV}" \
+            -f "target_ref=main"
+
+      - name: Summary
+        if: always()
+        env:
+          MAIN_SHA: ${{ steps.state.outputs.main_sha }}
+          DEPLOY_NEEDED: ${{ steps.state.outputs.deploy_needed }}
+          TRIGGER_RUN: ${{ github.event.workflow_run.html_url }}
+        run: |
+          {
+            echo "### Deploy main promotion bridge (ci#1173)"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| main head | \`${MAIN_SHA:-unknown}\` |"
+            echo "| deploy needed | ${DEPLOY_NEEDED:-unknown} |"
+            echo "| trigger run | ${TRIGGER_RUN:-manual} |"
+          } >> "$GITHUB_STEP_SUMMARY"

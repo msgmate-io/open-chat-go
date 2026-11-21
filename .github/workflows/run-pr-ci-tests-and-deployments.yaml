@@ -108,6 +108,16 @@ on:
   push:
     branches:
       - dev
+      # ci#1173: same reasoning one branch further along. The `dev` -> `main`
+      # promotion pull request is merged by `GITHUB_TOKEN`, so the
+      # `pull_request: closed` event of that merge raises no run and the
+      # `msgmate-io-ci` deployment job hanging off it never fires (main was at
+      # 0.0.841 while ci.msgmate.io still served 0.0.836). Driving the deploy
+      # off the *state* of `main` makes the hop independent of who merged.
+      # This arm covers human/PAT merges; the load-bearing, token-agnostic
+      # `workflow_run` bridge (`deploy-main-promotion-bridge.yaml`) covers
+      # `GITHUB_TOKEN`/app merges, for which GitHub raises no `push` run either.
+      - main
 
 concurrency:
   # Key pull-request runs by PR number *and* head SHA. A run that is parked
@@ -128,11 +138,17 @@ concurrency:
   # ci#1080: a `push` run carries no `pull_request` payload, so it needs its own
   # group key; without this arm every push to `dev` would collapse into the
   # shape-invalid `pr-ci--` group and cancel the run that implements the hop.
+  # ci#1173: the arm is keyed by the pushed ref name, so a push to `main` gets
+  # its own `main-push-<after>` group and cannot cross-cancel the `dev-push-<after>`
+  # group. `dev` keeps the exact key it had before (`dev-push-<after>`), and a
+  # `main` push can never land in the `merged-deploy-*` group either: that group
+  # is only reachable from a `pull_request` payload, which a push run does not
+  # carry.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
         || github.event_name == 'push'
-        && format('dev-push-{0}', github.event.after)
+        && format('{0}-push-{1}', github.ref_name, github.event.after)
         || github.event.action == 'closed'
         && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
         || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
@@ -4155,13 +4171,18 @@ jobs:
     # ci#1080: resolved from the merge event *and* from a push to `dev`, so the
     # `dev` -> `main` hop is driven by the state of `dev` instead of by who
     # performed the merge. A branch-deletion push is not a hop trigger.
+    # ci#1173: a push to `main` resolves too, as the state-of-main driver for
+    # human/PAT merges of the `[Dev promotion]` pull request (an `app`
+    # `GITHUB_TOKEN` merge raises no push run - that case is covered by
+    # `deploy-main-promotion-bridge.yaml`). `production` is deliberately absent:
+    # `msgmate-io-production` stays merge-event-only.
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
        github.event.pull_request.merged == true &&
        (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')) ||
       (github.event_name == 'push' &&
-       github.ref_name == 'dev' &&
+       (github.ref_name == 'dev' || github.ref_name == 'main') &&
        github.event.deleted != true)
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
