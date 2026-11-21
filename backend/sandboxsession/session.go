@@ -333,10 +333,21 @@ func Open(ctx context.Context, reg *Registry, req Request) (Session, error) {
 	// value. ResolveWorkDir defaults an unset workdir to DefaultWorkDir, so
 	// gating on req.Shell.WorkDir left the root the session actually opens in
 	// unasserted exactly when the request named none.
-	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" && SupportsWorkspaceRootProvisioning(provider) {
-		spec := WorkspaceRootSpec{WorkspaceUUID: ref.SandboxUUID, Root: root}
-		if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+	//
+	// ci#1166: the gate above was fail-open for a provider that advertises the
+	// coder root but cannot materialise it, which is exactly how an
+	// unmaterialised `/workspace/coder-<uuid>` kept reaching the first tool call
+	// after ci#1126. A coder root now requires the materialisation contract, and
+	// the root is materialised and re-asserted before the session opens.
+	if root := ResolveWorkDir(req.Shell.WorkDir); root != "" {
+		if err := AssertWorkspaceRootCapability(provider, root); err != nil {
 			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+		}
+		if SupportsWorkspaceRootProvisioning(provider) {
+			spec := WorkspaceRootSpec{WorkspaceUUID: ref.SandboxUUID, Root: root}
+			if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
+				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+			}
 		}
 	}
 
