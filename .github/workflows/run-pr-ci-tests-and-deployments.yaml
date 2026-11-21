@@ -108,6 +108,16 @@ on:
   push:
     branches:
       - dev
+      # ci#1173: same reasoning one branch further along. The `dev` -> `main`
+      # promotion pull request is merged by `GITHUB_TOKEN`, so the
+      # `pull_request: closed` event of that merge raises no run and the
+      # `msgmate-io-ci` deployment job hanging off it never fires (main was at
+      # 0.0.841 while ci.msgmate.io still served 0.0.836). Driving the deploy
+      # off the *state* of `main` makes the hop independent of who merged.
+      # This arm covers human/PAT merges; the load-bearing, token-agnostic
+      # `workflow_run` bridge (`deploy-main-promotion-bridge.yaml`) covers
+      # `GITHUB_TOKEN`/app merges, for which GitHub raises no `push` run either.
+      - main
 
 concurrency:
   # Key pull-request runs by PR number *and* head SHA. A run that is parked
@@ -128,11 +138,17 @@ concurrency:
   # ci#1080: a `push` run carries no `pull_request` payload, so it needs its own
   # group key; without this arm every push to `dev` would collapse into the
   # shape-invalid `pr-ci--` group and cancel the run that implements the hop.
+  # ci#1173: the arm is keyed by the pushed ref name, so a push to `main` gets
+  # its own `main-push-<after>` group and cannot cross-cancel the `dev-push-<after>`
+  # group. `dev` keeps the exact key it had before (`dev-push-<after>`), and a
+  # `main` push can never land in the `merged-deploy-*` group either: that group
+  # is only reachable from a `pull_request` payload, which a push run does not
+  # carry.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
         || github.event_name == 'push'
-        && format('dev-push-{0}', github.event.after)
+        && format('{0}-push-{1}', github.ref_name, github.event.after)
         || github.event.action == 'closed'
         && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
         || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
@@ -4155,13 +4171,18 @@ jobs:
     # ci#1080: resolved from the merge event *and* from a push to `dev`, so the
     # `dev` -> `main` hop is driven by the state of `dev` instead of by who
     # performed the merge. A branch-deletion push is not a hop trigger.
+    # ci#1173: a push to `main` resolves too, as the state-of-main driver for
+    # human/PAT merges of the `[Dev promotion]` pull request (an `app`
+    # `GITHUB_TOKEN` merge raises no push run - that case is covered by
+    # `deploy-main-promotion-bridge.yaml`). `production` is deliberately absent:
+    # `msgmate-io-production` stays merge-event-only.
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
        github.event.pull_request.merged == true &&
        (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')) ||
       (github.event_name == 'push' &&
-       github.ref_name == 'dev' &&
+       (github.ref_name == 'dev' || github.ref_name == 'main') &&
        github.event.deleted != true)
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
@@ -4236,7 +4257,13 @@ jobs:
     name: Open Production Promotion PR
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
+    # ci#1173: deliberately pinned to the merge event. The `push: branches: [main]`
+    # arm added for the `msgmate-io-ci` hop must NOT be able to (re)open or
+    # refresh the `main` -> production promotion PR, and it must not be able to
+    # make `msgmate-io-production` deployable: that hop stays merge-event-only.
+    # A `main` push therefore stops at `dispatch-merged-ci-deployment`.
     if: |
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     env:
@@ -4636,7 +4663,14 @@ jobs:
     name: Post Merged Deploy Approval Link
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
-    if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
+    # ci#1173: merge-event only. This job comments on the *merged PR* and opens
+    # the approval issue from `github.event.pull_request`, so it must not run for
+    # the `push: branches: [main]` arm; that arm exists solely to reach
+    # `dispatch-merged-ci-deployment` and never deploys `msgmate-io-production`
+    # or the staging environment on a push.
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
@@ -4752,8 +4786,13 @@ jobs:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment, post-merged-deploy-approval-link, cancel-superseded-merged-deployment]
+    # ci#1173: merge-event only. A `main` push is a state-of-main driver for
+    # `msgmate-io-ci` alone (`dispatch-merged-ci-deployment`); it must not
+    # dispatch the staging/production deploy, and its concurrency group key
+    # reads `github.event.pull_request.base.ref`, which is empty on a push.
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
     concurrency:
@@ -5497,8 +5536,11 @@ jobs:
     name: Close Merged Deploy Approval Issue
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment, post-merged-deploy-approval-link, dispatch-merged-deployment]
+    # ci#1173: merge-event only - it closes the approval issue opened by
+    # `post-merged-deploy-approval-link`, which does not run on a push.
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
     env:
