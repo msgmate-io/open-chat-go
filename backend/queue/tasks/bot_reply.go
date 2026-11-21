@@ -236,6 +236,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 	}
 
+	logging.Infof("bot-reply generation start: chat=%s", payload.ChatUUID)
 	var err error
 	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
 		err = backendFn(ctx, msgmate.ChatBackendRequest{
@@ -247,6 +248,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	} else {
 		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
 	}
+	logging.Infof("bot-reply generation finished: chat=%s ok=%t", payload.ChatUUID, err == nil)
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if isBotReplyCancellation(err, ctx) {
