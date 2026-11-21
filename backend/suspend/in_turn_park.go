@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // InTurnParkEnvKey is the deployment-wide lever for the ci#1116 in-turn
@@ -45,4 +46,52 @@ func parseInTurnPark(raw string) bool {
 		return false
 	}
 	return enabled
+}
+
+// InTurnParkBudgetEnvKey bounds a single ci#1178 in-turn park (ci#1175).
+//
+// Even on a deployment that enables the park, an undecided park must never
+// consume the whole suspension TTL. The TTL exists so an orphaned suspension
+// survives until a *queued* continuation picks it up, while the in-turn park
+// can at most bridge a decision that arrives while the generation is still
+// running - an interaction window of seconds to a couple of minutes. Waiting a
+// full DefaultTTL (10m) inside a generation is what the ci#1175 relay shows:
+// confirmable rounds whose generation blocked until the harness killed the
+// interaction, with the approval arriving afterwards as
+// continuation=continuation_queued. The budget is therefore deliberately
+// shorter than the TTL and is consulted only by the in-turn park; an ordinary
+// suspension keeps using Registry.TTL().
+const InTurnParkBudgetEnvKey = "OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET"
+
+// DefaultInTurnParkBudget is how long an enabled in-turn park waits for a
+// decision before it gives up and lets the caller end the turn.
+const DefaultInTurnParkBudget = 90 * time.Second
+
+// minInTurnParkBudget keeps a typo'd tiny value from turning the in-turn park
+// into a no-op that can never observe an interactive click.
+const minInTurnParkBudget = time.Second
+
+// InTurnParkBudget reports the wait budget of a single in-turn park. It is read
+// per call, so raising it needs no restart-time wiring.
+func InTurnParkBudget() time.Duration {
+	return parseInTurnParkBudget(os.Getenv(InTurnParkBudgetEnvKey))
+}
+
+// parseInTurnParkBudget parses the raw budget value. Unset, empty, unparsable
+// and non-positive values fall back to DefaultInTurnParkBudget, and a value
+// below minInTurnParkBudget is raised to it - a bad value must never make the
+// park fail instantly or wait unboundedly.
+func parseInTurnParkBudget(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultInTurnParkBudget
+	}
+	budget, err := time.ParseDuration(raw)
+	if err != nil || budget <= 0 {
+		return DefaultInTurnParkBudget
+	}
+	if budget < minInTurnParkBudget {
+		return minInTurnParkBudget
+	}
+	return budget
 }
