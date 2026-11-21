@@ -2139,6 +2139,10 @@ func processParsedToolCall(
 				// a provisioning failure of that path, and tell the model to
 				// re-select a workspace instead of replaying the call.
 				noteSandboxProvisioningFailure(name, runErr)
+				// Record the dead pin on the chat's stored workspace selector so
+				// the next turn stops replaying it (ci#1168). Best effort: never
+				// masks the tool failure reported below.
+				_ = noteSandboxWorkspaceMissingRoot(ctx, path)
 				toolResult = buildSandboxWorkspaceMissingToolErrorPlaceholder(name, path, runErr)
 			} else if isSandboxRegistryConflict(runErr) {
 				// ci#739: deterministic, so never retried (isTransientToolFailure
