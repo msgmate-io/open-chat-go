@@ -236,6 +236,21 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 	}
 
+	// ci#1161: a continuation turn that reaches the handler, loads the chat and
+	// then enters the generation without ever returning used to leave a silent
+	// gap in the log - the failing private coder probes showed "task start",
+	// two chat fetches, one message list, and then nothing until the harness
+	// timed out. Log the entry into (and the return from) the generation call so
+	// the stall is attributable from the backend log alone: a missing
+	// "generation done" line means the turn is blocked inside the handler, a
+	// present one means the turn completed and the stall is downstream.
+	generationStartedAt := time.Now()
+	continuationTurn := strings.Contains(taskID, ":continuation")
+	logging.Infof(
+		"bot-reply generation start (ci#1161): chat=%s task=%s continuation=%v message=%s",
+		payload.ChatUUID, taskID, continuationTurn, incomingMessage.UUID,
+	)
+
 	var err error
 	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
 		err = backendFn(ctx, msgmate.ChatBackendRequest{
@@ -247,6 +262,10 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	} else {
 		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
 	}
+	logging.Infof(
+		"bot-reply generation done (ci#1161): chat=%s task=%s continuation=%v elapsed=%s err=%v",
+		payload.ChatUUID, taskID, continuationTurn, time.Since(generationStartedAt).Round(time.Millisecond), err,
+	)
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if isBotReplyCancellation(err, ctx) {
