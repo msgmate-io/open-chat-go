@@ -1075,7 +1075,7 @@ func streamChatCompletion(
 			// assistant message at all.
 			var roundDecided bool
 			appended, currentMessages, roundDecided = parkAndAwaitConfirmationRound(
-				ctx, meta.ChatUUID, appended, toolCallDetails, currentMessages, contextBudget.Limits,
+				ctx, suspend.Default(), meta.ChatUUID, appended, toolCallDetails, currentMessages, contextBudget.Limits,
 			)
 			if roundDecided {
 				logging.Debugf("Confirmable tool round fully decided; continuing the same turn")
@@ -1287,21 +1287,52 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 // It returns as soon as one call is not decided (expiry, stop, shutdown) or
 // nothing could be parked, so an undecided user still ends the turn the way it
 // did before ci#1116 instead of blocking once per call.
+//
+// ci#1178: the in-turn park is gated behind suspend.InTurnParkEnabled()
+// (OCI_CONFIRMABLE_IN_TURN_PARK, default off). Parking here blocks the
+// generation on a decision that can only be produced from the pending
+// confirmable_actions row the handler persists once this generation has
+// RETURNED, so a decider that reads durable state can never approve while the
+// park is live: every confirmable round then burns the whole suspension TTL
+// (suspend.DefaultTTL, 10m), the expiry drops the park at
+// registry.Forget, and the later approval falls back to
+// continuation=continuation_queued - which parks again on its own next
+// confirmable call and never finishes inside the interaction window. With the
+// flag off a confirmable round ends the turn the way it did before ci#1116
+// (TurnEndedConfirmablePause) and the approval starts an ordinary follow-up
+// turn.
 func parkAndAwaitConfirmationRound(
 	ctx context.Context,
+	registry *suspend.Registry,
 	chatUUID string,
 	appended []executedToolCall,
 	toolCallDetails []map[string]interface{},
 	currentMessages []map[string]interface{},
 	limits ToolResultLimits,
 ) ([]executedToolCall, []map[string]interface{}, bool) {
+	if registry == nil {
+		registry = suspend.Default()
+	}
+	if !suspend.InTurnParkEnabled() {
+		// ci#1178: no in-turn park - the caller keeps the pre-ci#1116
+		// terminal pause and the confirmation handler queues the
+		// continuation after the (now returned) generation persisted the
+		// pending confirmable action.
+		if pending := pendingConfirmationCalls(appended); len(pending) > 0 {
+			logging.Debugf(
+				"In-turn confirmation park disabled (%s): ending the turn on %d pending confirmable call(s) of chat %s",
+				suspend.InTurnParkEnvKey, len(pending), chatUUID,
+			)
+		}
+		return appended, currentMessages, false
+	}
 	pending := pendingConfirmationCalls(appended)
 	if len(pending) == 0 {
 		return appended, currentMessages, false
 	}
 	for _, pausedCall := range pending {
 		resumedCall, resumedMessages, resumed := parkAndAwaitConfirmation(
-			ctx, chatUUID, pausedCall, currentMessages, limits,
+			ctx, registry, chatUUID, pausedCall, currentMessages, limits,
 		)
 		if !resumed {
 			// Not decided (expiry, stop, shutdown) or nothing could be parked:
@@ -1349,12 +1380,15 @@ func parkAndAwaitConfirmationRound(
 // the previous terminal behaviour.
 func parkAndAwaitConfirmation(
 	ctx context.Context,
+	registry *suspend.Registry,
 	chatUUID string,
 	paused executedToolCall,
 	currentMessages []map[string]interface{},
 	limits ToolResultLimits,
 ) (executedToolCall, []map[string]interface{}, bool) {
-	registry := suspend.Default()
+	if registry == nil {
+		registry = suspend.Default()
+	}
 	waiter, parked := suspend.ParkWaiter(registry, chatUUID, paused.id, "", "", paused.id)
 	if !parked {
 		return paused, currentMessages, false
@@ -1368,9 +1402,12 @@ func parkAndAwaitConfirmation(
 		// deliver into a generation that already finished, and let the caller
 		// end the turn the way it did before ci#1116.
 		registry.Forget(chatUUID, paused.id)
-		logging.Debugf(
-			"Confirmable tool call %s was not decided in time; keeping the pause behaviour",
-			paused.id,
+		// ci#1178: this used to be Debug, so a park that consumed its whole
+		// TTL was invisible at the deployment log level - the single most
+		// expensive silent wait in a confirmable turn.
+		logging.Infof(
+			"Confirmable tool call %s in chat %s was not decided within %s; dropping the park and keeping the pause behaviour",
+			paused.id, chatUUID, registry.TTL(),
 		)
 		return paused, currentMessages, false
 	}
