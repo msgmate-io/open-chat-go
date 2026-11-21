@@ -1393,7 +1393,12 @@ func parkAndAwaitConfirmation(
 	if !parked {
 		return paused, currentMessages, false
 	}
-	awaitCtx, cancel := context.WithTimeout(ctx, registry.TTL())
+	// ci#1177: bound the park well below the suspension TTL. Waiting the whole
+	// TTL made a confirmable round indistinguishable from a dead generation:
+	// the park expired at the same moment the approval arrived, nothing
+	// continued the generation and the interaction stalled without a reply.
+	parkBudget := suspend.ParkWaitBudget(registry.TTL())
+	awaitCtx, cancel := context.WithTimeout(ctx, parkBudget)
 	defer cancel()
 
 	decision, decided := waiter.Await(awaitCtx)
@@ -1406,8 +1411,8 @@ func parkAndAwaitConfirmation(
 		// TTL was invisible at the deployment log level - the single most
 		// expensive silent wait in a confirmable turn.
 		logging.Infof(
-			"Confirmable tool call %s in chat %s was not decided within %s; dropping the park and keeping the pause behaviour",
-			paused.id, chatUUID, registry.TTL(),
+			"Confirmable tool call %s in chat %s was not decided within %s (suspension TTL %s); dropping the park and keeping the pause behaviour",
+			paused.id, chatUUID, parkBudget, registry.TTL(),
 		)
 		return paused, currentMessages, false
 	}
