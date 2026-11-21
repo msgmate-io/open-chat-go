@@ -42,6 +42,9 @@ func TestPendingConfirmationCallsReturnsEveryPendingCall(t *testing.T) {
 // Only the second call is approved first; the round must not resume on the
 // first park it finds, and the second decision must reach the same generation.
 func TestParkAndAwaitConfirmationRoundParksEveryPendingCall(t *testing.T) {
+	// ci#1178: the in-turn park is opt-in, so this ci#1147 regression test has
+	// to enable it explicitly to exercise the parking code path at all.
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
 	const chatUUID = "ci1147-round-chat"
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -81,7 +84,7 @@ func TestParkAndAwaitConfirmationRoundParksEveryPendingCall(t *testing.T) {
 			done <- res
 		}()
 		appendedOut, messagesOut, decided := parkAndAwaitConfirmationRound(
-			ctx, chatUUID, appended, toolCallDetails, currentMessages, ToolResultLimits{},
+			ctx, registry, chatUUID, appended, toolCallDetails, currentMessages, ToolResultLimits{},
 		)
 		res.appended = appendedOut
 		res.messages = messagesOut
@@ -144,6 +147,8 @@ func TestParkAndAwaitConfirmationRoundParksEveryPendingCall(t *testing.T) {
 // caller keeps the pre-ci#1116 terminal pause behaviour instead of re-parking a
 // still pending sibling.
 func TestParkAndAwaitConfirmationRoundUndecidedKeepsPause(t *testing.T) {
+	// ci#1178: opt in to the park so the undecided/expiry fallback is exercised.
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
 	const chatUUID = "ci1147-undecided-chat"
 	registry := suspend.Default()
 	registry.Forget(chatUUID, "call_a")
@@ -156,7 +161,7 @@ func TestParkAndAwaitConfirmationRoundUndecidedKeepsPause(t *testing.T) {
 	defer cancel()
 
 	out, _, decided := parkAndAwaitConfirmationRound(
-		ctx, chatUUID, appended, nil, nil, ToolResultLimits{},
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
 	)
 	if decided {
 		t.Fatal("an undecided round was reported as decided; the turn must keep the pause behaviour")
@@ -178,4 +183,100 @@ func waitForPark(t *testing.T, registry *suspend.Registry, chatUUID, toolCallID 
 		time.Sleep(2 * time.Millisecond)
 	}
 	return false
+}
+
+// TestInTurnParkDisabledByDefaultEndsTurn is the ci#1178 regression: with
+// OCI_CONFIRMABLE_IN_TURN_PARK unset, a round that surfaced a pending confirmable
+// call must NOT park the generation at all.
+//
+// Parking here blocks the turn on a decision that can only be produced from the
+// pending confirmable_actions row the handler persists once this generation has
+// RETURNED, so a live park cannot be approved: it burns the whole 10m suspension
+// TTL (invisible below Debug), is dropped on expiry, and the later approval falls
+// back to continuation=continuation_queued - which then parks again on its next
+// confirmable call. With the flag off the round returns undecided immediately, so
+// the caller records TurnEndedConfirmablePause and the approval starts an
+// ordinary ~2s follow-up turn.
+func TestInTurnParkDisabledByDefaultEndsTurn(t *testing.T) {
+	t.Setenv(suspend.InTurnParkEnvKey, "")
+	const chatUUID = "ci1178-default-off-chat"
+	registry := suspend.NewWithTTL(time.Minute, nil)
+	registry.Forget(chatUUID, "call_a")
+
+	appended := []executedToolCall{
+		{id: "call_a", name: "coder_bash", status: ToolCallStatusPendingConfirmation},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	out, _, decided := parkAndAwaitConfirmationRound(
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
+	)
+	elapsed := time.Since(started)
+
+	if elapsed > time.Second {
+		t.Fatalf("round took %s with the in-turn park disabled, want an immediate return (ci#1178: no park may block the generation)", elapsed)
+	}
+	if decided {
+		t.Fatal("round reported decided with the in-turn park disabled, want the pre-ci#1116 pause behaviour")
+	}
+	if registry.Parked(chatUUID, "call_a") {
+		t.Fatal("the call was parked with the in-turn park disabled: the park can never be decided, so it only burns the suspension TTL (ci#1178)")
+	}
+	if registry.Len() != 0 {
+		t.Fatalf("registry holds %d suspension(s) after a disabled-park round, want 0", registry.Len())
+	}
+	for _, call := range out {
+		if call.status != ToolCallStatusPendingConfirmation {
+			t.Fatalf("call %s status = %q, want it left pending for the confirmation handler", call.id, call.status)
+		}
+	}
+}
+
+// TestParkExpiryForgetsKeySoLateDecisionCannotResume is the ci#1178 TTL-expiry
+// regression with the flag ON: a park whose decision never arrives must expire on
+// the registry TTL, drop the key, and leave a late decision unable to resume the
+// finished generation (the handler then logs continuation=continuation_queued).
+func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
+	const chatUUID = "ci1178-ttl-expiry-chat"
+	registry := suspend.NewWithTTL(50*time.Millisecond, nil)
+	registry.Forget(chatUUID, "call_a")
+
+	appended := []executedToolCall{
+		{id: "call_a", name: "coder_bash", status: ToolCallStatusPendingConfirmation},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_, _, decided := parkAndAwaitConfirmationRound(
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
+	)
+	elapsed := time.Since(started)
+
+	if decided {
+		t.Fatal("an expired park was reported as decided; the turn must keep the pause behaviour")
+	}
+	if elapsed < 50*time.Millisecond {
+		t.Fatalf("round returned after %s, want it to wait for the 50ms TTL", elapsed)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("round returned after %s, want it bounded by the registry TTL, not the turn context", elapsed)
+	}
+	if registry.Parked(chatUUID, "call_a") {
+		t.Fatal("the expired suspension is still registered; a late click would deliver into a finished generation")
+	}
+	resumed, err := registry.ResumeWith(ctx, chatUUID, "call_a", suspend.Decision{
+		Result:   "late approval",
+		Approved: true,
+		ActionID: "call_a",
+	})
+	if err != nil {
+		t.Fatalf("ResumeWith on an expired park returned an error: %v", err)
+	}
+	if resumed {
+		t.Fatal("a late decision resumed an expired park, want resumed=false so the handler queues a continuation instead (ci#1178)")
+	}
 }
