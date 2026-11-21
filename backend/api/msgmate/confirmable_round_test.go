@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,5 +279,25 @@ func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	}
 	if resumed {
 		t.Fatal("a late decision resumed an expired park, want resumed=false so the handler queues a continuation instead (ci#1178)")
+	}
+}
+
+// TestInTurnParkDisabledLine pins the ci#1174 triage line: the private-sandbox
+// relay has to be able to attribute a confirmable interaction that ended without
+// an approval to the disabled in-turn park (pre-ci#1116 terminal pause) instead
+// of guessing that the turn blocked inside a live park.
+//
+// The line names the lever and the number of pending calls, so a grep over a
+// relayed job log yields "park disabled ... ending the turn on 2 pending
+// confirmable call(s)" together with the chat, which is what distinguishes a
+// healthy pause from a stall.
+func TestInTurnParkDisabledLine(t *testing.T) {
+	line := inTurnParkDisabledLine("chat-uuid", 2)
+	want := "In-turn confirmation park disabled (" + suspend.InTurnParkEnvKey + "): ending the turn on 2 pending confirmable call(s) of chat chat-uuid"
+	if line != want {
+		t.Fatalf("inTurnParkDisabledLine() = %q, want %q", line, want)
+	}
+	if !strings.Contains(line, "chat-uuid") {
+		t.Fatalf("line %q omits the chat, so a relayed log cannot attribute the stall", line)
 	}
 }

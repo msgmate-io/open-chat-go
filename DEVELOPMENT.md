@@ -175,6 +175,24 @@ input and the closure instruction. Agent-facing working notes - including the
 full set of PR conventions (base, draft state, labels, tracker line, truthful
 test reporting) - live in [`AGENTS.md`](AGENTS.md).
 
+### Attributing a relayed private-sandbox failure (ci#1174)
+
+A `Private sandbox lw` run that fails *every* confirmable/interaction job while
+reporting **no failed test names** is a stalled interaction, not a test failure:
+the job hits `interaction timed out` with `state=active` and no bot turn
+finishing. Classify it from the tested commit, not from the job text:
+
+| Tested commit contains | Relay line to expect in the backend log | Meaning |
+| --- | --- | --- |
+| no `backend/suspend/in_turn_park.go` (pre-ci#1178) | none | the ci#1116 in-turn park waits for a decision that only exists after the generation returns, so every confirmable round burns the suspension TTL - the run is stale, re-run on a commit that carries the gate |
+| the gate, `OCI_CONFIRMABLE_IN_TURN_PARK` unset/`false` | `In-turn confirmation park disabled (OCI_CONFIRMABLE_IN_TURN_PARK): ending the turn on <n> pending confirmable call(s) of chat <uuid>` | the turn took the pre-ci#1116 terminal pause; the approval starts an ordinary follow-up turn |
+| the gate, lever set to `1`/`true` | `Confirmable tool call <id> in chat <uuid> was not decided within <ttl>; dropping the park ...` on expiry | a live park is waiting on the TTL - set the lever back to unset/`false` unless the decider can deliver while the generation is parked |
+
+Both lines are emitted at `info` (they fire at most once per confirmable round),
+so they are visible at the deployment log level. `parkAndAwaitConfirmationRound`
+renders the first one through `inTurnParkDisabledLine`, pinned by
+`backend/api/msgmate/confirmable_round_test.go`.
+
 Agent coordination and operational runbooks are maintained outside this
 repository. Do not add agent runbooks, private integration documentation or
 deployment secrets to this repository.
