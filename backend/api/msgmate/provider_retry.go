@@ -353,6 +353,22 @@ type GenerationFailureClassification struct {
 	ProviderAttempts int
 }
 
+// IsCapacityStopReason reports whether a failure reason denotes a capacity stop:
+// a turn the server ended on purpose because a limit it enforces was reached,
+// rather than a fault. Tool-call budget exhaustion (ci#1160) and provider
+// admission backpressure (ci#909) both qualify: in either case the server
+// stopped the turn exactly as designed, so the message must not carry the
+// "error" flag that makes the chat and the ci#622 agent self-check report an
+// internal error for a healthy stop.
+//
+// It delegates to failureReasonExemptFromErrorFlag so there is exactly ONE
+// definition of the exemption: the r104 consolidation folded ci#1160's
+// self-check predicate and ci#1179's metadata predicate together after both
+// branches introduced their own copy of the same two-reason switch.
+func IsCapacityStopReason(reason string) bool {
+	return failureReasonExemptFromErrorFlag(reason)
+}
+
 // ClassifyGenerationFailure maps a generation error onto a stable failure
 // reason. Only errors that are genuinely provider-side (a provider HTTP
 // response) or a recognised transient network problem may later be described as
