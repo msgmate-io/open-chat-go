@@ -172,8 +172,14 @@ export function WebsocketHandlerBase({
                     session_id: sessionId,
                 }, sessionId)
                 // A bot reply just started: flip the sidebar state dot to active
-                // immediately instead of waiting for the next poll.
+                // immediately instead of waiting for the next poll. The chat
+                // caches are refreshed as well (ci#1149): the first turn of a
+                // chat created by another client (TUI, second tab, another
+                // device) only ever reaches this socket as a partial frame, so
+                // without a revalidate the new chat never pops into the chat
+                // list until a manual reload.
                 void revalidateChatStates()
+                void revalidateChatData(chatUUID)
             }else if(parsedMessage.type === "end_partial_message"){
                 // Commit any buffered tail text before the partial is dropped.
                 queueRef.current.dispose()
