@@ -43,6 +43,14 @@ type TurnOutcome struct {
 	// (ci#688, ci#691).
 	TransientFailures       int
 	SandboxCapacityFailures int
+	// ProviderBackpressure is true when this server's own provider-admission
+	// back-pressure stopped the turn (the per-key in-flight cap was exhausted
+	// and no slot freed up within the queue timeout) instead of a provider
+	// fault (ci#1179). It consumes no tool-call budget, so it can never be
+	// derived from the counters above: it is recorded from the terminal
+	// failure classification and is what makes a saturation stop recoverable
+	// by one bounded continuation.
+	ProviderBackpressure bool
 	// BudgetExemptCalls counts the calls of the turn that were bookkeeping
 	// rather than work (`coder_schedule`, ci#724) and therefore did not consume
 	// the total tool-call budget.
