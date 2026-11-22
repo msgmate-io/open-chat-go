@@ -250,9 +250,19 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 		return
 	}
 	metadata["failure_reason"] = classification.Reason
-	if classification.Reason == FailureReasonToolCallBudget {
+	if IsCapacityStopReason(classification.Reason) {
 		// Capacity stop, not a fault: keep it out of the error surface.
+		//
+		// ci#1160: provider admission backpressure (*ProviderSaturationError) is
+		// a capacity refusal the server performed on itself, exactly like a
+		// tool-call budget stop: the turn never reached the provider because the
+		// per-key admission queue was saturated. Stamping `error: true` made the
+		// interaction settle as state=failed with no recovery path, which is what
+		// the ci#622 native-coder self-check reported as "the agent turn reported
+		// an internal error" for every role. It is a capacity stop, so it stays
+		// out of the error surface and remains inspectable via turn_ended.
 		metadata["turn_ended"] = outcome.reason()
+		metadata["capacity_stop"] = classification.Reason
 		return
 	}
 	metadata["error"] = true
