@@ -269,15 +269,15 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 // performed by design reached the task as an opaque error and was classified
 // (and settled) as an internal failure even though the turn is resumable.
 //
-// A cap error is therefore wrapped with %w so errors.As keeps matching it
-// through the "response already sent" marker; every other error keeps the exact
-// historic wrapping and wording, so no unrelated classification changes.
+// ci#1160: every classified terminal error is wrapped with %w for the same
+// reason, not just the cap error. The historic %v form flattened the whole
+// terminal error into a string, so the task re-classifying the turn saw an
+// opaque error and rendered the generic "internal error" instead of the real
+// reason (provider saturation, a provider fault, a cancelled context). With %w
+// the user-visible text keeps the concrete reason *and* errors.Is/errors.As
+// keep working downstream. The cap error behaves exactly as before.
 func wrapTerminalResponseAlreadySent(err error) error {
-	var capErr *toolCallCapError
-	if errors.As(err, &capErr) {
-		return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
-	}
-	return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
+	return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
 }
 
 // toolCallCapError is the typed terminal error of a turn that hit its per-chat
