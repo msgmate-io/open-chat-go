@@ -120,6 +120,33 @@ func TestCapContinuationForOutcomeProviderBackpressure(t *testing.T) {
 	if notRecoverable.Scheduled {
 		t.Fatalf("a provider error without a recoverable failure must not be retried")
 	}
+
+	// The backpressure fact travels on the outcome, so the decision holds even
+	// when the caller does not pass transientInfra (ci#1179).
+	backpressured := &TurnOutcome{Reason: TurnEndedProviderError, ProviderBackpressure: true}
+	if !CapContinuationForOutcome(backpressured, false, 0, "chat-uuid").Scheduled {
+		t.Fatalf("a backpressure stop must schedule its recovery continuation from the outcome alone")
+	}
+	if CapContinuationForOutcome(backpressured, false, TurnContinuationMaxAttempts, "chat-uuid").Scheduled {
+		t.Fatalf("a spent backpressure chain must not schedule another retry")
+	}
+	if CapContinuationForOutcome(backpressured, false, 0, "").Scheduled {
+		t.Fatalf("a continuation without a chain key must not be scheduled")
+	}
+
+	// Once the single bounded retry is spent the shipped metadata sets
+	// failure_reason=provider_backpressure with `error=true` and no recovery
+	// marker, which settles StateFailed (see backend/api/chats).
+	exhausted := map[string]interface{}{"finished": true}
+	applyTerminalFailureMetadata(exhausted, &ProviderSaturationError{}, GenerationFailureClassification{
+		Reason: FailureReasonProviderBackpressure,
+	}, &TurnOutcome{})
+	if clearRecoverableBackpressureFailure(exhausted, false) {
+		t.Fatalf("an exhausted backpressure chain must not clear the failure")
+	}
+	if exhausted["error"] != true {
+		t.Fatalf("an exhausted backpressure stop must stay flagged as an error")
+	}
 }
 
 // ci#1179: a scheduled backpressure recovery must not tell the user to retry by
