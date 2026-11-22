@@ -104,7 +104,12 @@ func CapContinuationForOutcome(outcome *TurnOutcome, transientInfra bool, attemp
 		// of budget while doing work: continue it once.
 		return newTurnContinuation(TurnContinuationToolCap, TurnContinuationPrompt, chainKey)
 	case TurnEndedProviderError:
-		if !transientInfra {
+		// ci#1179: a provider-admission back-pressure stop is recoverable even
+		// though it is reported as a provider error - the request never
+		// reached the provider, so the very next turn usually gets a slot. The
+		// outcome carries that fact as structured state, so the decision does
+		// not depend on the caller remembering to pass transientInfra.
+		if !transientInfra && !outcome.ProviderBackpressure {
 			// A provider error without a single transient failure is not
 			// recoverable by retrying the same turn.
 			return turnContinuationNone()
