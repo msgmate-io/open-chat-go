@@ -236,9 +236,12 @@ func TestInTurnParkDisabledByDefaultEndsTurn(t *testing.T) {
 }
 
 // TestParkExpiryForgetsKeySoLateDecisionCannotResume is the ci#1178 TTL-expiry
-// regression with the flag ON: a park whose decision never arrives must expire on
-// the registry TTL, drop the key, and leave a late decision unable to resume the
-// finished generation (the handler then logs continuation=continuation_queued).
+// regression with the flag ON: a park whose decision never arrives must expire,
+// drop the key, and leave a late decision unable to resume the finished
+// generation (the handler then logs continuation=continuation_queued). Since
+// ci#1177 the park waits suspend.ParkWaitBudget(ttl) rather than the whole TTL,
+// so the wait is bounded below the registry TTL and the durable suspension still
+// outlives the park.
 func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	t.Setenv(suspend.InTurnParkEnvKey, "1")
 	const chatUUID = "ci1178-ttl-expiry-chat"
@@ -260,8 +263,17 @@ func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	if decided {
 		t.Fatal("an expired park was reported as decided; the turn must keep the pause behaviour")
 	}
-	if elapsed < 50*time.Millisecond {
-		t.Fatalf("round returned after %s, want it to wait for the 50ms TTL", elapsed)
+	// ci#1177: the in-turn park no longer waits for the whole registry TTL; it
+	// waits for suspend.ParkWaitBudget(ttl), which stays strictly below the TTL
+	// so the durable suspension outlives the park. Pin that bound instead of the
+	// old full-TTL wait this regression test used to assert, allowing a
+	// scheduler-tick tolerance below the budget.
+	parkBudget := suspend.ParkWaitBudget(registry.TTL())
+	if parkBudget >= registry.TTL() {
+		t.Fatalf("park budget %s must stay below the registry TTL %s (ci#1177)", parkBudget, registry.TTL())
+	}
+	if tolerance := 5 * time.Millisecond; elapsed+tolerance < parkBudget {
+		t.Fatalf("round returned after %s, want it to wait for the %s park budget (registry TTL %s)", elapsed, parkBudget, registry.TTL())
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("round returned after %s, want it bounded by the registry TTL, not the turn context", elapsed)
