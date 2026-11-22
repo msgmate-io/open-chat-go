@@ -1784,7 +1784,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if message.Content.MetaData != nil {
 				continuationAttempts = ContinuationAttemptsFromMetadata(*message.Content.MetaData)
 			}
-			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0
+			// ci#1179: a provider-admission back-pressure stop is recoverable by a
+			// single bounded retry just like a transient provider failure - the
+			// request never reached the provider. The classification marks it in
+			// the metadata (see applyTerminalFailureMetadata), so the ordinary
+			// bounded continuation path (TurnContinuationMaxAttempts) picks it up
+			// instead of leaving the interaction failed with no recovery turn.
+			backpressureRecoverable := isRecoverableBackpressureStop(metadata)
+			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0 || backpressureRecoverable
 			dispatch, dispatchErr := DispatchCapContinuation(
 				coderScheduleRunner{}, message.Content.ChatUUID, outcome, transientInfra,
 				continuationAttempts, message.Content.ChatUUID, 0,
@@ -1796,6 +1803,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					metadata[key] = value
 				}
 				metadata["ci747_continuation_attempts"] = 1
+				// ci#1179: only now that the bounded recovery retry is really
+				// scheduled is the back-pressure stop no longer a failure. If the
+				// chain already spent TurnContinuationMaxAttempts (or the enqueue
+				// above failed) nothing is cleared, so the interaction settles
+				// failed with the real reason in its text.
+				clearRecoverableBackpressureFailure(metadata, dispatch.Scheduled)
 			}
 		}
 
@@ -1820,6 +1833,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		// The resolution runs last (after the confirmable-action prompt) so it
 		// only ever fills a genuinely blank message.
 		text = ResolveTerminalAssistantText(text, len(allToolCalls), isCancelled, streamErr, outcome)
+
+		// ci#1179: when the bounded recovery continuation of a provider
+		// back-pressure stop was actually scheduled, the message must not keep
+		// telling the user to retry by hand - the retry is already in flight.
+		if metadata["provider_backpressure_recovery"] == BackpressureRecoveryContinuationScheduled {
+			text = withBackpressureRecoveryNotice(text)
+		}
 
 		if len(reasoningEntries) > 0 {
 			aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
