@@ -61,12 +61,19 @@ type TurnContinuationDispatch struct {
 // de-duplicated, so refusing it is what keeps "one owner per ticket+lane" true
 // (RC7).
 //
-// delaySeconds <= 0 falls back to TurnContinuationDelaySeconds.
-func DispatchCapContinuation(scheduler turnContinuationScheduler, chatUUID string, outcome *TurnOutcome, transientInfra bool, attempts int, chainKey string, delaySeconds int) (TurnContinuationDispatch, error) {
+// delaySeconds <= 0 falls back to the delay the decision carries (the provider
+// back-pressure lane asks for a longer fixed backoff, ci#1179) and then to
+// TurnContinuationDelaySeconds.
+func DispatchCapContinuation(scheduler turnContinuationScheduler, chatUUID string, outcome *TurnOutcome, classification GenerationFailureClassification, transientInfra bool, used ContinuationAttempts, chainKey string, delaySeconds int) (TurnContinuationDispatch, error) {
 	chatUUID = strings.TrimSpace(chatUUID)
-	continuation := CapContinuationForOutcome(outcome, transientInfra, attempts, chainKey)
+	continuation := CapContinuationForOutcome(outcome, classification, transientInfra, used, chainKey)
 	if !continuation.Required || chatUUID == "" || scheduler == nil {
 		return TurnContinuationDispatch{}, nil
+	}
+	if delaySeconds <= 0 {
+		// A lane can carry its own fixed backoff (ci#1179 provider
+		// back-pressure); an explicit caller delay still wins.
+		delaySeconds = continuation.DelaySeconds
 	}
 	if delaySeconds <= 0 {
 		delaySeconds = TurnContinuationDelaySeconds
@@ -134,4 +141,23 @@ func metadataInt(raw interface{}) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// ProviderBackpressureContinuationsFromMetadata reports how many back-pressure
+// recoveries the interaction that produced this turn already enqueued (ci#1179).
+//
+// A scheduled turn inherits only its correlation id (the scheduler carries no
+// metadata), so the lane is recognised from that id; the explicit metadata key is
+// additionally written on the stopped message so the interaction shows the spent
+// lane.
+func ProviderBackpressureContinuationsFromMetadata(metadata map[string]interface{}) int {
+	if raw, ok := metadata[ProviderBackpressureContinuationsMetadataKey]; ok {
+		if n, ok := metadataInt(raw); ok && n > 0 {
+			return n
+		}
+	}
+	if correlation, _ := metadata["coder_schedule_scheduled_by_correlation"].(string); strings.HasPrefix(correlation, ContinuationProviderBackpressureCorrelationPrefix+"-") {
+		return 1
+	}
+	return 0
 }
