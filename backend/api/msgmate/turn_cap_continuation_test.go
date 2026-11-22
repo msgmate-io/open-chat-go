@@ -9,8 +9,9 @@ func TestCapContinuationForOutcome(t *testing.T) {
 	tests := []struct {
 		name           string
 		outcome        *TurnOutcome
+		classification GenerationFailureClassification
 		transientInfra bool
-		attempts       int
+		used           ContinuationAttempts
 		chainKey       string
 		want           bool
 		reason         string
@@ -25,7 +26,7 @@ func TestCapContinuationForOutcome(t *testing.T) {
 		{
 			name:     "second attempt of the same chain stops",
 			outcome:  &TurnOutcome{Reason: TurnEndedFailedToolCallCap},
-			attempts: TurnContinuationMaxAttempts,
+			used:     ContinuationAttempts{Cap: TurnContinuationMaxAttempts},
 			chainKey: "chat-1",
 			want:     false,
 		},
@@ -82,7 +83,7 @@ func TestCapContinuationForOutcome(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CapContinuationForOutcome(tc.outcome, tc.transientInfra, tc.attempts, tc.chainKey)
+			got := CapContinuationForOutcome(tc.outcome, tc.classification, tc.transientInfra, tc.used, tc.chainKey)
 			if got.Required != tc.want {
 				t.Fatalf("Required = %t, want %t (%+v)", got.Required, tc.want, got)
 			}
