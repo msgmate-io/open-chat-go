@@ -401,3 +401,78 @@ User- and developer-facing documentation lives in the frontend docs pages at
 
 Also see [`development/build-tools/README.md`](development/build-tools/README.md)
 for the `openchat-integrations` CLI.
+
+## Confirmable confirmation stalls (ci#1172 / ci#1177 / ci#1178)
+
+Symptom: a long coder test (or an interactive chat) is left `state=active` with
+`last_message=false` until the probe harness reports
+`interaction timed out after 720s (runtime=native, state=active, messages=N,
+last_message=false|...)` - no assertion failure, no bot turn. This is the shape
+of the ci#1172 relay: eleven `Private Test msgmate_coder_*` jobs, one identical
+timeout each, no failed test name anywhere in the log.
+
+Reading the backend log, in order:
+
+1. `bot-reply generation finished: chat=<uuid> ok=true task=<id>
+   continuation=<bool> elapsed=<dur> err=<nil>` - turn 1 completed. If `elapsed`
+   is close to the in-turn park budget (ci#1177: about **20s** by default, set
+   with `OCI_CONFIRMABLE_PARK_WAIT`, and never more than half the suspension
+   TTL), the generation burned an in-turn confirmation park instead of doing
+   provider work. On a build that predates ci#1177 the same comparison reads
+   against `suspend.DefaultTTL` (10m), because the park then awaited the whole
+   durable suspension instead of its own budget. The matching
+   `bot-reply generation start: chat=<uuid> budget=<dur> ...` line should be
+   present for every finished line (ci#1161/ci#1162 bracketing pair).
+2. `confirmable action <id> in chat <uuid>: continuation=continuation_queued
+   (event <name>)` (not `continuation=resumed_turn`) proves the park was already
+   gone when the approval landed - the pending `confirmable_actions` row is only
+   persisted *after* the generation returns, so a decider that reads durable
+   state can never satisfy a live in-turn park.
+3. `Confirmable tool call <id> in chat <uuid> was not decided within <budget>;
+   dropping the park and keeping the pause behaviour` is the explicit expiry
+   line (Info level since ci#1178; it used to be silent at Debug). Since ci#1177
+   the quoted duration is the park budget (~20s), not the suspension TTL; on an
+   older build it reads `10m0s` and matches `suspend.DefaultTTL`.
+
+The harness log carries the same fingerprint one layer up: an
+`[interaction] pending confirmable action approved` line that lands ~10m after
+`[sandbox-test] running interaction for ...` (the failing ci#1172 job approved
+at +10m08s). That lag is the park TTL, not harness slowness - the approval can
+only be read once the row exists. With the in-turn park enabled, every
+confirmable call of the round parks (ci#1147), so on the pre-ci#1177 code a
+two-call round burns 2 x 10m against a 720s probe timeout and the job cannot
+pass; with the ci#1177 budget the same round spends ~2 x 20s and the park is
+gone long before the probe gives up, so a park stuck at the full TTL family
+means the bound is not on the tip under test. That arithmetic, not a slow
+provider, is what a relay of this family means.
+
+Also check which code was actually under test before concluding "main is fixed":
+a private-sandbox run's title and `headBranch` say `main`, but the per-job
+`TARGET_REF` / `SOURCE_SHA` / `BACKEND_IMAGE_INPUT` env in the "Run private
+sandbox test" step name the commit that was built. The ci#1172 run tested
+`82a10647` (pre-gate); the green re-run `44926643459` tested `SOURCE_SHA
+09f7e01f` - the `dev` commit that carries the gate - even though its title says
+`main`. Gate presence on the tip itself is `git cat-file -e <sha>:backend/
+suspend/in_turn_park.go`.
+
+The in-turn park is bounded by its own budget since ci#1177 (about 20s,
+`OCI_CONFIRMABLE_PARK_WAIT`, capped at half the suspension TTL) and additionally
+gated by `OCI_CONFIRMABLE_IN_TURN_PARK` (default **off**, see
+`backend/suspend/in_turn_park.go`, ci#1178). Leave the gate off: with the gate
+off a confirmable round ends the turn as before ci#1116, the handler persists
+the pending action, the approval misses the (absent) park and queues an
+ordinary ~2s continuation turn. Enable it only where a decision can be
+delivered while the generation is still parked - and only on a tip that carries
+the ci#1177 bound, otherwise the budget is the whole 10m TTL again.
+
+Diagnostics checklist for a recurrence:
+
+- `grep "was not decided within"` in the backend log: any hit means a park
+  waited out its budget, i.e. the flag is on somewhere it should not be. Check
+  the duration it prints: `10m0s` means the tip predates ci#1177's bound.
+- `grep "generation finished"` for the continuation turn: a `generation start
+  ... continuation=true` with no matching `generation finished` means the
+  continuation itself is wedged - re-open with that run id rather than
+  re-triaging the park.
+- `grep -c "can't cd to"`: the workspace-root family (ci#1166 / ci#1171) always
+  logs at least one such line and is unrelated.
