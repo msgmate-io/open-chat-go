@@ -106,3 +106,52 @@ sandbox_provider_failure_class() {
     printf 'empty_reply\n'
   fi
 }
+
+# A turn that never started. The probe gives up after its full window on a chat
+# that is still `state=active`: the user message is stored, no bot message ever
+# appeared, so there is no reply at all. That is the ci#1172 fingerprint - a
+# relay of N private-sandbox jobs of the same run, one identical probe timeout
+# each, and no failed test name anywhere in the logs.
+#
+# Note what this is NOT: no bot reply was ever recorded, so the provider
+# classifiers (`account`/`unreachable`/`empty_reply`) have nothing to look at,
+# and a retry just buys a second identical probe window without new evidence.
+sandbox_turn_stall_pattern='interaction timed out after [0-9]+s'
+sandbox_turn_stall_pattern+='.*state=active'
+sandbox_turn_stall_pattern+='.*(last_message=false|no bot message|bot_messages=0)'
+
+# sandbox_turn_stall_class <attempt-log-or-results-dir>
+#
+#   turn_stall  every attempt log that shows a probe timeout shows the ci#1172
+#               stall (chat stayed active, no bot turn) and no other failure
+#               marker is present, so the turn provably never started.
+#   (empty)     anything else - a passing run, a real assertion failure, or a
+#               timeout of a chat that had already produced a bot turn - so the
+#               ordinary verdict and retry behaviour stand.
+sandbox_turn_stall_class() {
+  local target="${1:-}"
+  [ -n "$target" ] || return 0
+
+  local files=() file
+  if [ -d "$target" ]; then
+    for file in "$target"/*.attempt*.log "$target"/*.out; do
+      [ -f "$file" ] && files+=( "$file" )
+    done
+  elif [ -f "$target" ]; then
+    files=( "$target" )
+  fi
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  local stalls=0 other_failures=0
+  for file in "${files[@]}"; do
+    if grep -qiE "$sandbox_turn_stall_pattern" "$file"; then
+      stalls=$(( stalls + 1 ))
+    elif grep -qE '^FAIL|^not ok|::error|assertion failed|AssertionError' "$file"; then
+      other_failures=$(( other_failures + 1 ))
+    fi
+  done
+
+  if [ "$stalls" -gt 0 ] && [ "$other_failures" -eq 0 ]; then
+    printf 'turn_stall\n'
+  fi
+}

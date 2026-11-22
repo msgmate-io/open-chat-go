@@ -161,6 +161,58 @@ new_case
 printf '{"text":"ok"}\n' > "$case_dir/not-a-reply.txt"
 assert_class "" "files that are not *.last_bot.json are ignored"
 
+# --- turn_stall: the turn never started (ci#1172) ---------------------------
+# assert_stall <expected> <description> -- same contract as assert_class but for
+# sandbox_turn_stall_class, which reads attempt/probe logs instead of replies.
+assert_stall() {
+  local expected="$1" description="$2"
+  case_no=$(( case_no + 1 ))
+  local actual
+  actual="$(sandbox_turn_stall_class "$case_dir")"
+  if [ "$actual" = "$expected" ]; then
+    printf 'ok %d - %s\n' "$case_no" "$description"
+  else
+    printf 'not ok %d - %s (expected=%q actual=%q)\n' "$case_no" "$description" "$expected" "$actual"
+    failures=$(( failures + 1 ))
+  fi
+}
+
+# The ci#1172 fingerprint as the probe writes it: a timeout of a chat that is
+# still active with no bot turn, so no reply exists to classify.
+stall_log() {
+  printf '::warning::sandbox test ran\n'
+  printf '##[error]interaction timed out after 720s (runtime=native, state=active, messages=4, last_message=false) the interaction is still active with no bot turn\n'
+}
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "an active chat with no bot turn is a stalled turn, not variance"
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt2.log"
+assert_stall turn_stall "every attempt stalling is still a stalled turn"
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+printf 'FAIL: the marker was never printed\n' > "$case_dir/msgmate_coder_bugfix.attempt2.log"
+assert_stall "" "a stall mixed with a real assertion failure stays a code failure"
+
+new_case
+printf '##[error]interaction timed out after 720s (runtime=native, state=active, messages=4, last_message=true)\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "a timeout after the bot already answered keeps the ordinary verdict"
+
+new_case
+printf 'FAIL: unexpected behaviour\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "an ordinary failing attempt is not a stalled turn"
+
+new_case
+assert_stall "" "an empty results dir has no stalled turn"
+
+new_case
+printf 'ok\n' > "$case_dir/msgmate_coder_bugfix.out"
+assert_stall "" "a passing run is not a stalled turn"
+
 if [ "$failures" -ne 0 ]; then
   printf 'test_sandbox_provider_failure: FAILED (%d/%d)\n' "$failures" "$case_no" >&2
   exit 1
