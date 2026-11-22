@@ -500,6 +500,11 @@ jobs:
               sandbox_provider_failure_class "${SANDBOX_RESULTS_DIR:-}"
             fi
           }
+          turn_stall_class() {
+            if declare -F sandbox_turn_stall_class >/dev/null; then
+              sandbox_turn_stall_class "${SANDBOX_RESULTS_DIR:-}"
+            fi
+          }
           max_attempts=2
           attempt=1
           while :; do
@@ -534,6 +539,23 @@ jobs:
                 echo "infrastructure/credential problem, not a coder-sandbox regression."
               } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.provider_account_failure"
               echo "::error title=Provider account failure::sandbox test '${{ matrix.test }}' failed without retrying: every bot reply hit a provider credential/balance error (HTTP 401/402). Check the provider account/API key before re-running; this is not a code regression."
+              exit "$rc"
+            fi
+            if [ "$(turn_stall_class)" = "turn_stall" ]; then
+              # ci#1172: the interaction stayed active with no bot turn, so
+              # nothing was ever generated. The probe already burned its full
+              # window waiting for a reply that never came; a retry only buys a
+              # second identical window with the same evidence. Record the marker
+              # so the summary names the cause, and fail loudly without retrying.
+              {
+                echo "turn_stall_failure: the turn never started on any attempt."
+                echo "Every probe timed out on a chat that stayed state=active with"
+                echo "no bot message (last_message=false), so no reply was generated"
+                echo "and the provider classifiers had nothing to classify. This is"
+                echo "not a model-variance or provider-infrastructure failure: check"
+                echo "the interaction export for a stuck generation/park (ci#1172)."
+              } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.turn_stall"
+              echo "::error title=Turn never started::sandbox test '${{ matrix.test }}' failed without retrying: the interaction stayed active with no bot turn (no reply was ever generated). Inspect the interaction export for a stuck generation/park rather than re-running (ci#1172)."
               exit "$rc"
             fi
             if [ "$attempt" -ge "$max_attempts" ]; then
@@ -588,6 +610,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/*.provider_account_failure
             ${{ github.workspace }}/.sandbox-results/*.provider_unreachable
             ${{ github.workspace }}/.sandbox-results/*.empty_reply_failure
+            ${{ github.workspace }}/.sandbox-results/*.turn_stall
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
@@ -631,6 +654,7 @@ jobs:
           infra_failures=0
           unreachable_failures=0
           empty_reply_failures=0
+          turn_stall_failures=0
           # Artifacts are extracted per artifact into their own subdirectory
           # (no merge-multiple: merging multiple artifacts into one directory
           # has proven lossy in practice). TSV files are single-line; locate
@@ -694,6 +718,12 @@ jobs:
             elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_unreachable" ]; then
               unreachable_failures=$(( unreachable_failures + 1 ))
               detail="could not reach the AI provider - transient infrastructure, not a code regression"
+            # A failed test whose every probe timed out on a chat that stayed
+            # active with no bot turn never generated anything (ci#1172); name
+            # the cause once instead of repeating "unexpected failure".
+            elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.turn_stall" ]; then
+              turn_stall_failures=$(( turn_stall_failures + 1 ))
+              detail="the turn never started - no bot reply was generated (ci#1172)"
             # A failed test whose retries all came back empty ("model returned
             # no text for this turn") is model variance, not a coder-sandbox
             # regression; annotate the row and count it so the summary can say
@@ -732,6 +762,18 @@ jobs:
             # no text for this turn") on every attempt is the model declining
             # or blanking, not a coder-sandbox regression (ci#938).
             note="$(printf '> **%s test(s) failed on model variance (empty reply).** Every recorded reply of both attempts came back empty ("model returned no text for this turn") - the model declined or blanked, not a coder-sandbox regression; the failure was accepted as variance.' "$empty_reply_failures")"
+            if [ -n "$infra_note" ]; then
+              infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
+            else
+              infra_note="$note"
+            fi
+          fi
+
+          if [ "$turn_stall_failures" -gt 0 ]; then
+            # And the ci#1172 case: the turn never started, so there is no bot
+            # reply to blame on the provider or on model variance. Say what to
+            # look at instead, because re-running reproduces it.
+            note="$(printf '> **%s test(s) failed because the turn never started.** Every probe timed out on a chat that stayed `state=active` with the user message stored and no bot message (`last_message=false`), so no reply was ever generated and there was nothing to classify as a provider or model-variance failure. This is not a coder-sandbox regression and re-running reproduces it: inspect the linked interaction export (and the backend logs for that turn) for a stalled generation/approval continuation (ci#1172).' "$turn_stall_failures")"
             if [ -n "$infra_note" ]; then
               infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
             else
