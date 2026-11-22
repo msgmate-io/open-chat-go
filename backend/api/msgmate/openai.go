@@ -1281,7 +1281,9 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 // - because this line was emitted at Debug while deployments run at Info. The
 // line is the only positive evidence that the turn took the pre-ci#1116
 // terminal pause (no live park, so the approval starts a fresh follow-up turn)
-// rather than blocking inside a park that burns the whole suspension TTL. It
+// rather than blocking inside a live park (bounded since the ci#1175/ci#1177
+// consolidation by suspend.ParkWaitBudget, ~20s, instead of the whole
+// suspension TTL). It
 // fires at most once per confirmable round, so promoting it costs nothing.
 func inTurnParkDisabledLine(chatUUID string, pendingCalls int) string {
 	return fmt.Sprintf(
@@ -1310,8 +1312,10 @@ func inTurnParkDisabledLine(chatUUID string, pendingCalls int) string {
 // generation on a decision that can only be produced from the pending
 // confirmable_actions row the handler persists once this generation has
 // RETURNED, so a decider that reads durable state can never approve while the
-// park is live: every confirmable round then burns the whole suspension TTL
-// (suspend.DefaultTTL, 10m), the expiry drops the park at
+// park is live: every confirmable round then waits out the park and, before
+// ci#1177/ci#1175 bounded it (suspend.ParkWaitBudget, ~20s by default, always
+// below Registry.TTL()), burned the whole suspension TTL
+// (suspend.DefaultTTL, 10m); the expiry drops the park at
 // registry.Forget, and the later approval falls back to
 // continuation=continuation_queued - which parks again on its own next
 // confirmable call and never finishes inside the interaction window. With the
