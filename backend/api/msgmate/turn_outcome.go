@@ -250,13 +250,33 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 		return
 	}
 	metadata["failure_reason"] = classification.Reason
-	if classification.Reason == FailureReasonToolCallBudget {
+	if failureReasonExemptFromErrorFlag(classification.Reason) {
 		// Capacity stop, not a fault: keep it out of the error surface.
 		metadata["turn_ended"] = outcome.reason()
 		return
 	}
 	metadata["error"] = true
 	metadata["error_detail"] = streamErr.Error()
+}
+
+// failureReasonExemptFromErrorFlag reports whether a terminal failure reason
+// describes a capacity/back-pressure stop the server performed by design rather
+// than a fault, and therefore must not be flagged with `error: true`.
+//
+// ci#1179 (follow-up to ci#1160): provider backpressure joins the tool-call
+// budget here. Back-pressure means the request never reached the provider
+// because OpenChat's own admission cap was exhausted, and ci#1179 schedules a
+// bounded recovery continuation for it. Flagging it as an error is what made
+// the finished message resolve StateFailed (see chats.InteractionStatus), which
+// in turn hid the recovery continuation from the user and made a healthy
+// self-inflicted capacity stop look like a defect.
+func failureReasonExemptFromErrorFlag(reason string) bool {
+	switch reason {
+	case FailureReasonToolCallBudget, FailureReasonProviderBackpressure:
+		return true
+	default:
+		return false
+	}
 }
 
 // wrapTerminalResponseAlreadySent marks a turn that already persisted its own
