@@ -173,6 +173,9 @@ func TestBotReplyCapacityStopMetadataDoesNotFlagAnError(t *testing.T) {
 			if got := metadata["capacity_stop"]; got != tc.want {
 				t.Fatalf("capacity-stop failure metadata capacity_stop = %v, want %q", got, tc.want)
 			}
+			if got, ok := metadata["error_detail"]; ok {
+				t.Fatalf("capacity-stop failure metadata error_detail = %v, want unset", got)
+			}
 		})
 	}
 
