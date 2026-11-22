@@ -2963,7 +2963,7 @@
                         "in": "query"
                     },
                     {
-                        "maximum": 100,
+                        "maximum": 1000,
                         "minimum": 1,
                         "type": "integer",
                         "description": "Page size",
