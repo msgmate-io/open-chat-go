@@ -142,13 +142,19 @@ sandbox_turn_stall_class() {
   fi
   [ "${#files[@]}" -gt 0 ] || return 0
 
-  local stalls=0 other_failures=0
+  # Count per line, not per file: the probe appends every attempt of a test to
+  # the same `<test>.out`, so one file can hold a stall of attempt 1 and a real
+  # assertion failure of attempt 2. Classifying per file would let the earlier
+  # stall swallow the later failure and turn a code regression into "the turn
+  # never started". The stall lines themselves carry the harness's `::error`
+  # annotation, so they are removed before looking for other failure markers.
+  local stalls=0 other_failures=0 found
   for file in "${files[@]}"; do
-    if grep -qiE "$sandbox_turn_stall_pattern" "$file"; then
-      stalls=$(( stalls + 1 ))
-    elif grep -qE '^FAIL|^not ok|::error|assertion failed|AssertionError' "$file"; then
-      other_failures=$(( other_failures + 1 ))
-    fi
+    found="$(grep -ciE "$sandbox_turn_stall_pattern" "$file")"
+    stalls=$(( stalls + found ))
+    found="$(grep -iE '^FAIL|^not ok|::error|assertion failed|AssertionError' "$file" \
+      | grep -viE "$sandbox_turn_stall_pattern" | wc -l)"
+    other_failures=$(( other_failures + found ))
   done
 
   if [ "$stalls" -gt 0 ] && [ "$other_failures" -eq 0 ]; then

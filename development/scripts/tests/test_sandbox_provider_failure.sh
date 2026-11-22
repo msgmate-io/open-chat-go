@@ -198,6 +198,13 @@ stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
 printf 'FAIL: the marker was never printed\n' > "$case_dir/msgmate_coder_bugfix.attempt2.log"
 assert_stall "" "a stall mixed with a real assertion failure stays a code failure"
 
+# The probe appends every attempt of one test to the same <test>.out, so a stall
+# of attempt 1 and an assertion failure of attempt 2 can share a single file; the
+# later real failure must still win over the earlier stall.
+new_case
+{ stall_log; printf 'FAIL: the marker was never printed\n'; } > "$case_dir/msgmate_coder_bugfix.out"
+assert_stall "" "a stall and a later real failure inside one out file is a code failure"
+
 new_case
 printf '##[error]interaction timed out after 720s (runtime=native, state=active, messages=4, last_message=true)\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
 assert_stall "" "a timeout after the bot already answered keeps the ordinary verdict"
