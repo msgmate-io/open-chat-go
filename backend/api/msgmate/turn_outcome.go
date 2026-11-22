@@ -250,13 +250,33 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 		return
 	}
 	metadata["failure_reason"] = classification.Reason
-	if classification.Reason == FailureReasonToolCallBudget {
+	if failureReasonExemptFromErrorFlag(classification.Reason) {
 		// Capacity stop, not a fault: keep it out of the error surface.
 		metadata["turn_ended"] = outcome.reason()
 		return
 	}
 	metadata["error"] = true
 	metadata["error_detail"] = streamErr.Error()
+}
+
+// failureReasonExemptFromErrorFlag reports whether a terminal failure reason
+// describes a capacity/back-pressure stop the server performed by design rather
+// than a fault, and therefore must not be flagged with `error: true`.
+//
+// ci#1179 (follow-up to ci#1160): provider backpressure joins the tool-call
+// budget here. Back-pressure means the request never reached the provider
+// because OpenChat's own admission cap was exhausted, and ci#1179 schedules a
+// bounded recovery continuation for it. Flagging it as an error is what made
+// the finished message resolve StateFailed (see chats.InteractionStatus), which
+// in turn hid the recovery continuation from the user and made a healthy
+// self-inflicted capacity stop look like a defect.
+func failureReasonExemptFromErrorFlag(reason string) bool {
+	switch reason {
+	case FailureReasonToolCallBudget, FailureReasonProviderBackpressure:
+		return true
+	default:
+		return false
+	}
 }
 
 // wrapTerminalResponseAlreadySent marks a turn that already persisted its own
@@ -269,15 +289,15 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 // performed by design reached the task as an opaque error and was classified
 // (and settled) as an internal failure even though the turn is resumable.
 //
-// A cap error is therefore wrapped with %w so errors.As keeps matching it
-// through the "response already sent" marker; every other error keeps the exact
-// historic wrapping and wording, so no unrelated classification changes.
+// ci#1160: every classified terminal error is wrapped with %w for the same
+// reason, not just the cap error. The historic %v form flattened the whole
+// terminal error into a string, so the task re-classifying the turn saw an
+// opaque error and rendered the generic "internal error" instead of the real
+// reason (provider saturation, a provider fault, a cancelled context). With %w
+// the user-visible text keeps the concrete reason *and* errors.Is/errors.As
+// keep working downstream. The cap error behaves exactly as before.
 func wrapTerminalResponseAlreadySent(err error) error {
-	var capErr *toolCallCapError
-	if errors.As(err, &capErr) {
-		return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
-	}
-	return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
+	return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
 }
 
 // toolCallCapError is the typed terminal error of a turn that hit its per-chat

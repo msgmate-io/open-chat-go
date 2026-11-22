@@ -1273,6 +1273,25 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 	return pending
 }
 
+// inTurnParkDisabledLine renders the one line that explains why a confirmable
+// round ended the turn instead of parking it.
+//
+// ci#1174: the private-sandbox relay could not attribute a stalled confirmable
+// interaction - "interaction timed out, state=active" with no failed test name
+// - because this line was emitted at Debug while deployments run at Info. The
+// line is the only positive evidence that the turn took the pre-ci#1116
+// terminal pause (no live park, so the approval starts a fresh follow-up turn)
+// rather than blocking inside a live park (bounded since the ci#1175/ci#1177
+// consolidation by suspend.ParkWaitBudget, ~20s, instead of the whole
+// suspension TTL). It
+// fires at most once per confirmable round, so promoting it costs nothing.
+func inTurnParkDisabledLine(chatUUID string, pendingCalls int) string {
+	return fmt.Sprintf(
+		"In-turn confirmation park disabled (%s): ending the turn on %d pending confirmable call(s) of chat %s",
+		suspend.InTurnParkEnvKey, pendingCalls, chatUUID,
+	)
+}
+
 // parkAndAwaitConfirmationRound parks every confirmable call of the round, one
 // after another, and reports whether the turn can continue.
 //
@@ -1293,8 +1312,10 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 // generation on a decision that can only be produced from the pending
 // confirmable_actions row the handler persists once this generation has
 // RETURNED, so a decider that reads durable state can never approve while the
-// park is live: every confirmable round then burns the whole suspension TTL
-// (suspend.DefaultTTL, 10m), the expiry drops the park at
+// park is live: every confirmable round then waits out the park and, before
+// ci#1177/ci#1175 bounded it (suspend.ParkWaitBudget, ~20s by default, always
+// below Registry.TTL()), burned the whole suspension TTL
+// (suspend.DefaultTTL, 10m); the expiry drops the park at
 // registry.Forget, and the later approval falls back to
 // continuation=continuation_queued - which parks again on its own next
 // confirmable call and never finishes inside the interaction window. With the
@@ -1319,10 +1340,7 @@ func parkAndAwaitConfirmationRound(
 		// continuation after the (now returned) generation persisted the
 		// pending confirmable action.
 		if pending := pendingConfirmationCalls(appended); len(pending) > 0 {
-			logging.Debugf(
-				"In-turn confirmation park disabled (%s): ending the turn on %d pending confirmable call(s) of chat %s",
-				suspend.InTurnParkEnvKey, len(pending), chatUUID,
-			)
+			logging.Infof("%s", inTurnParkDisabledLine(chatUUID, len(pending)))
 		}
 		return appended, currentMessages, false
 	}
@@ -1393,7 +1411,14 @@ func parkAndAwaitConfirmation(
 	if !parked {
 		return paused, currentMessages, false
 	}
-	awaitCtx, cancel := context.WithTimeout(ctx, registry.TTL())
+	// ci#1177/ci#1175: one lever, bounded well below the suspension TTL.
+	// Waiting the whole TTL made a confirmable round indistinguishable from a
+	// dead generation: the park expired at the same moment the approval
+	// arrived, nothing continued the generation and the interaction stalled
+	// without a reply. suspend.ParkWaitBudget is the single resolver - its own
+	// default/floor, always capped strictly below Registry.TTL().
+	parkBudget := suspend.ParkWaitBudget(registry.TTL())
+	awaitCtx, cancel := context.WithTimeout(ctx, parkBudget)
 	defer cancel()
 
 	decision, decided := waiter.Await(awaitCtx)
@@ -1406,8 +1431,8 @@ func parkAndAwaitConfirmation(
 		// TTL was invisible at the deployment log level - the single most
 		// expensive silent wait in a confirmable turn.
 		logging.Infof(
-			"Confirmable tool call %s in chat %s was not decided within %s; dropping the park and keeping the pause behaviour",
-			paused.id, chatUUID, registry.TTL(),
+			"Confirmable tool call %s in chat %s was not decided within %s (suspension TTL %s); dropping the park and keeping the pause behaviour",
+			paused.id, chatUUID, parkBudget, registry.TTL(),
 		)
 		return paused, currentMessages, false
 	}
