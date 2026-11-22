@@ -303,7 +303,9 @@ func TestInTurnParkWaitBudgetNeverExceedsTTL(t *testing.T) {
 		t.Fatalf("inTurnParkWaitBudget = %s, want the configured 30s budget", got)
 	}
 
-	// A nil registry must not panic; the budget default applies.
+	// A nil registry must not panic; the budget default applies (the explicit
+	// env override above is cleared again first).
+	t.Setenv(suspend.InTurnParkBudgetEnvKey, "")
 	if got := inTurnParkWaitBudget(nil); got != suspend.DefaultInTurnParkBudget {
 		t.Fatalf("inTurnParkWaitBudget(nil) = %s, want the park budget %s", got, suspend.DefaultInTurnParkBudget)
 	}
