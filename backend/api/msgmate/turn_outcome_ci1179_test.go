@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/msgmate-io/open-chat-go/backend/api/chats/chatstate"
+	"backend/chatstate"
 )
 
 // ci#1179: provider admission back-pressure is a capacity stop OpenChat
