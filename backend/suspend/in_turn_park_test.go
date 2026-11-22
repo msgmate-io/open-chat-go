@@ -1,6 +1,10 @@
 package suspend
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // TestParseInTurnPark pins the ci#1178 default: the in-turn confirmation park is
 // OFF unless the deployment sets OCI_CONFIRMABLE_IN_TURN_PARK explicitly.
@@ -57,5 +61,27 @@ func TestInTurnParkEnabledReadsEnv(t *testing.T) {
 func TestInTurnParkEnvKeyName(t *testing.T) {
 	if InTurnParkEnvKey != "OCI_CONFIRMABLE_IN_TURN_PARK" {
 		t.Fatalf("InTurnParkEnvKey = %q, want OCI_CONFIRMABLE_IN_TURN_PARK", InTurnParkEnvKey)
+	}
+}
+
+// TestCiDeploymentPassesInTurnParkLever guards the ci#1176 follow-up on the
+// ci#1178 lever: the ci deployment profile (docker-compose.ci.yaml) is what the
+// private `tags=coder` sandbox suite starts the backend from, so a lever that is
+// not forwarded there can never be pinned by a run - the container silently
+// inherits the unset default and the sandbox has no way to opt in or out.
+//
+// The regression this protects against: the r99 sandbox run on `main` parked
+// every confirmable round for the full suspend.DefaultTTL (10m) before the
+// approval could even be persisted, which consumed the whole 720s interaction
+// window and failed ten unrelated coder interactions with a blank assertion.
+// Forwarding the key makes the park state explicit and reproducible per run.
+func TestCiDeploymentPassesInTurnParkLever(t *testing.T) {
+	raw, err := os.ReadFile("../../docker-compose.ci.yaml")
+	if err != nil {
+		t.Fatalf("read ci deployment profile: %v", err)
+	}
+	profile := string(raw)
+	if !strings.Contains(profile, "${"+InTurnParkEnvKey+":-}") {
+		t.Errorf("docker-compose.ci.yaml must pass %s through to the backend service", InTurnParkEnvKey)
 	}
 }
