@@ -46,6 +46,42 @@ const (
 	TurnContinuationFailedToolCap = "failed_tool_call_cap_reached"
 	TurnContinuationToolCap       = "tool_call_cap_reached"
 	TurnContinuationTransient     = "provider_or_workspace_transient"
+	// ContinuationReasonProviderBackpressure marks the single recovery of a
+	// turn that stopped on provider admission back-pressure (ci#1179).
+	ContinuationReasonProviderBackpressure = "provider_backpressure_recovery"
+)
+
+// ci#1179: provider admission back-pressure never reached the provider, so the
+// work of the turn is untouched and a delayed retry resumes it once a slot has
+// been freed. It is a lane of its own next to the cap/transient lanes, with its
+// own single attempt, so a cap recovery never consumes it and vice versa.
+const (
+	// maxProviderBackpressureContinuations is how many automatic recoveries one
+	// interaction chain may spend on back-pressure. Exactly one: if the retry is
+	// back-pressured again the pressure did not clear, so the stop has to stay
+	// explicit instead of retrying forever.
+	maxProviderBackpressureContinuations = 1
+
+	// TurnContinuationProviderBackpressureDelaySeconds is the fixed backoff of
+	// the back-pressure recovery. It is longer than the ordinary continuation: a
+	// queued request only proceeds once a slot holder frees its slot, so an
+	// immediate retry would just queue again.
+	TurnContinuationProviderBackpressureDelaySeconds = 60
+
+	// ProviderBackpressureContinuationsMetadataKey records on the stopped
+	// message that the back-pressure lane of this interaction already spent its
+	// attempt, so the next stop of the same chain settles instead of retrying.
+	ProviderBackpressureContinuationsMetadataKey = "ci1179_backpressure_continuations"
+
+	// ContinuationProviderBackpressureCorrelationPrefix namespaces the
+	// back-pressure correlation id. The lane is carried by that id because it is
+	// the only state a scheduled turn inherits (the scheduler carries no
+	// metadata), so the lane must be recognisable from it.
+	ContinuationProviderBackpressureCorrelationPrefix = "ci1179-bp"
+
+	// TurnContinuationProviderBackpressurePrompt is the prompt of the recovery.
+	TurnContinuationProviderBackpressurePrompt = "Your previous turn was stopped by provider admission back-pressure: too many AI requests were queued for the provider key, so the request never reached the provider. The work already done is kept. " +
+		"Resume the work where it stopped. If the same back-pressure stop recurs, name the blocker (provider admission saturation) and report it instead of retrying."
 )
 
 // TurnContinuation is the decision to re-fire a turn that ended on a cap or on a
@@ -69,6 +105,10 @@ type TurnContinuation struct {
 	// CorrelationID is stable for one chain, so a repeated decision cancels the
 	// previous task (same task id) instead of duplicating it (RC7/QW4).
 	CorrelationID string
+	// DelaySeconds is the backoff this continuation asks for. Zero means the
+	// dispatcher default (TurnContinuationDelaySeconds); the provider
+	// back-pressure lane sets a longer fixed backoff (ci#1179).
+	DelaySeconds int
 }
 
 // turnContinuationNone is the explicit "do not continue" decision. Kept as a
@@ -76,6 +116,15 @@ type TurnContinuation struct {
 // value.
 func turnContinuationNone() TurnContinuation {
 	return TurnContinuation{}
+}
+
+// ContinuationAttempts is how many automatic continuations each lane of the
+// chain that produced a turn already used. The lanes are bounded independently
+// (ci#1179): a cap recovery must not consume the single back-pressure recovery,
+// and a back-pressure recovery must not consume the cap lane's attempt.
+type ContinuationAttempts struct {
+	Cap                  int
+	ProviderBackpressure int
 }
 
 // CapContinuationForOutcome decides whether a finished turn is continued
@@ -87,13 +136,39 @@ func turnContinuationNone() TurnContinuation {
 // the decision stays a pure function of its inputs (and so the classification
 // itself stays owned by the turn loop that observed it).
 //
-// attempts is how many continuations this chain already enqueued, so the chain is
-// bounded by TurnContinuationMaxAttempts. chainKey identifies the chain (the
+// classification is the generation failure the turn ended on. It is passed in
+// instead of being re-derived here so the decision stays a pure function of what
+// the turn loop observed; ci#1179 needs it because provider back-pressure is a
+// recoverable capacity stop long before it is a provider error.
+//
+// used is how many continuations each lane of this chain already enqueued, so
+// every lane stays bounded (TurnContinuationMaxAttempts /
+// maxProviderBackpressureContinuations). chainKey identifies the chain (the
 // interaction or the ticket+lane owner key); an empty chainKey yields no
 // correlation id and therefore no continuation, because an unidentified retry
 // could not be de-duplicated.
-func CapContinuationForOutcome(outcome *TurnOutcome, transientInfra bool, attempts int, chainKey string) TurnContinuation {
-	if outcome == nil || attempts >= TurnContinuationMaxAttempts || chainKey == "" {
+func CapContinuationForOutcome(outcome *TurnOutcome, classification GenerationFailureClassification, transientInfra bool, used ContinuationAttempts, chainKey string) TurnContinuation {
+	if outcome == nil || chainKey == "" {
+		return turnContinuationNone()
+	}
+	// ci#1179: provider admission back-pressure is its own recoverable lane.
+	if classification.Reason == FailureReasonProviderBackpressure {
+		// A cancelled or completed turn is never resumed: a user stop wins over
+		// an automatic recovery and a completed turn has nothing left to do.
+		if reason := outcome.reason(); reason == TurnEndedCancelled || reason == TurnEndedCompleted {
+			return turnContinuationNone()
+		}
+		if used.ProviderBackpressure >= maxProviderBackpressureContinuations {
+			// The single recovery is spent and the pressure did not clear, so
+			// the stop stays explicit (ci#1179 acceptance).
+			return turnContinuationNone()
+		}
+		continuation := newTurnContinuation(ContinuationReasonProviderBackpressure, TurnContinuationProviderBackpressurePrompt, chainKey)
+		continuation.CorrelationID = TurnContinuationProviderBackpressureCorrelationID(chainKey)
+		continuation.DelaySeconds = TurnContinuationProviderBackpressureDelaySeconds
+		return continuation
+	}
+	if used.Cap >= TurnContinuationMaxAttempts {
 		return turnContinuationNone()
 	}
 	switch outcome.reason() {
@@ -131,4 +206,13 @@ func newTurnContinuation(reason, prompt, chainKey string) TurnContinuation {
 // second one.
 func TurnContinuationCorrelationID(chainKey string) string {
 	return fmt.Sprintf("%s-%s", ContinuationCorrelationPrefix, chainKey)
+}
+
+// TurnContinuationProviderBackpressureCorrelationID derives the stable
+// correlation id of the back-pressure lane of one chain (ci#1179). It stays
+// stable for the chain - a repeated decision cancels the previous task instead of
+// adding a second one - and is prefixed so the lane is recognisable from the id
+// a scheduled turn inherits.
+func TurnContinuationProviderBackpressureCorrelationID(chainKey string) string {
+	return fmt.Sprintf("%s-%s", ContinuationProviderBackpressureCorrelationPrefix, chainKey)
 }
