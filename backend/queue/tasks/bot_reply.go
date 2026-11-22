@@ -467,19 +467,38 @@ func isProviderReachabilityError(err error) bool {
 	return false
 }
 
-func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string, err error) error {
+// botFailureMessageMetadata builds the metadata of the failure message a bot
+// posts when its generation turn did not complete.
+//
+// ci#1160: a capacity stop is a stop the server performed on itself by design
+// (tool-call budget exhausted, or provider admission saturation so the request
+// never reached the provider). It is not an internal fault, so it must not
+// carry the error flag: the chat UI and the ci#622 native-coder self-check read
+// `error: true` as "the server broke" and settled every role's interaction as
+// state=failed, which is what turned the per-role suite red 0/5.
+func botFailureMessageMetadata(err error) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"finished": true,
 		"error":    true,
 	}
-	if err != nil {
-		classification := msgmate.ClassifyGenerationFailure(err)
-		metadata["failure_reason"] = classification.Reason
-		metadata["error_detail"] = err.Error()
-		if classification.ProviderSummary != "" {
-			metadata["provider_error"] = classification.ProviderSummary
-		}
+	if err == nil {
+		return metadata
 	}
+	classification := msgmate.ClassifyGenerationFailure(err)
+	metadata["failure_reason"] = classification.Reason
+	metadata["error_detail"] = err.Error()
+	if msgmate.IsCapacityStopReason(classification.Reason) {
+		delete(metadata, "error")
+		metadata["capacity_stop"] = classification.Reason
+	}
+	if classification.ProviderSummary != "" {
+		metadata["provider_error"] = classification.ProviderSummary
+	}
+	return metadata
+}
+
+func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string, err error) error {
+	metadata := botFailureMessageMetadata(err)
 
 	return ocClient.SendChatMessage(chatUUID, client.SendMessage{
 		Text:     text,

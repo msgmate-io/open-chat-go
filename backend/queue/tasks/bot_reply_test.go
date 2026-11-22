@@ -141,6 +141,51 @@ func TestBotReplyFailureMessageUnclassifiedDoesNotMentionCreditsOrOutage(t *test
 	}
 }
 
+// TestBotReplyCapacityStopMetadataDoesNotFlagAnError pins the queue-side half of
+// ci#1160: the failure message a bot posts after a capacity stop must not carry
+// `error: true`, because api/chats (and the ci#622 native-coder self-check)
+// read that flag as an internal fault and settle the interaction as
+// state=failed.
+func TestBotReplyCapacityStopMetadataDoesNotFlagAnError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "provider admission backpressure",
+			err:  &msgmate.ProviderSaturationError{Key: "coder", MaxConcurrency: 2, InFlight: 2, QueueWaiting: 1},
+			want: msgmate.FailureReasonProviderBackpressure,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := botFailureMessageMetadata(tc.err)
+			if got := metadata["error"]; got == true {
+				t.Fatalf("capacity-stop failure metadata error = %v, want unset (ci#1160)", got)
+			}
+			if got := metadata["finished"]; got != true {
+				t.Fatalf("capacity-stop failure metadata finished = %v, want true", got)
+			}
+			if got := metadata["failure_reason"]; got != tc.want {
+				t.Fatalf("capacity-stop failure metadata failure_reason = %v, want %q", got, tc.want)
+			}
+			if got := metadata["capacity_stop"]; got != tc.want {
+				t.Fatalf("capacity-stop failure metadata capacity_stop = %v, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// A genuine internal fault keeps the historic error surface.
+	internal := botFailureMessageMetadata(errors.New("unexpected decoder failure"))
+	if internal["error"] != true {
+		t.Fatalf("internal-failure metadata error = %v, want true", internal["error"])
+	}
+	if _, ok := internal["capacity_stop"]; ok {
+		t.Fatalf("internal-failure metadata capacity_stop = %v, want unset", internal["capacity_stop"])
+	}
+}
+
 // TestIsBotReplyCancellation distinguishes a genuine user stop from the queue
 // task's own deadline: a deadline is a timeout that must take the failure path
 // (and never render as a user pause), while context.Canceled is a real stop
