@@ -486,10 +486,14 @@ func botFailureMessageMetadata(err error) map[string]interface{} {
 	}
 	classification := msgmate.ClassifyGenerationFailure(err)
 	metadata["failure_reason"] = classification.Reason
-	metadata["error_detail"] = err.Error()
 	if msgmate.IsCapacityStopReason(classification.Reason) {
+		// Capacity stop, not a fault: keep it out of the error surface, exactly
+		// like the handler-side applyTerminalFailureMetadata does, and record it
+		// under its own key so the stop stays inspectable.
 		delete(metadata, "error")
 		metadata["capacity_stop"] = classification.Reason
+	} else {
+		metadata["error_detail"] = err.Error()
 	}
 	if classification.ProviderSummary != "" {
 		metadata["provider_error"] = classification.ProviderSummary
