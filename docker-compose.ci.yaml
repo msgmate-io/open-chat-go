@@ -34,6 +34,11 @@ services:
       NATIVE_CODER_CUTOVER: ${NATIVE_CODER_CUTOVER:-}
       MSGMATECODER_NATIVE_ROLLBACK_WINDOW: ${MSGMATECODER_NATIVE_ROLLBACK_WINDOW:-}
       OPENCODE_PERMISSION_MODE: ${OPENCODE_PERMISSION_MODE:-}
+      # ci#1176: the ci#1116 in-turn confirmable park is a deployment lever
+      # (OCI_CONFIRMABLE_IN_TURN_PARK, default OFF - see backend/suspend).
+      # Forward it so a sandbox/deploy run can pin it explicitly instead of
+      # silently inheriting the unset default.
+      OCI_CONFIRMABLE_IN_TURN_PARK: ${OCI_CONFIRMABLE_IN_TURN_PARK:-}
       # Deterministic benchmark runs + stall detection for headless runs.
       OPENCODE_TEMPERATURE: ${OPENCODE_TEMPERATURE:-}
       OPENCODE_NO_PROGRESS_TIMEOUT_SECONDS: ${OPENCODE_NO_PROGRESS_TIMEOUT_SECONDS:-}
