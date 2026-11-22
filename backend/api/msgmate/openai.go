@@ -1407,10 +1407,12 @@ func parkAndAwaitConfirmation(
 	if !parked {
 		return paused, currentMessages, false
 	}
-	// ci#1177: bound the park well below the suspension TTL. Waiting the whole
-	// TTL made a confirmable round indistinguishable from a dead generation:
-	// the park expired at the same moment the approval arrived, nothing
-	// continued the generation and the interaction stalled without a reply.
+	// ci#1177/ci#1175: one lever, bounded well below the suspension TTL.
+	// Waiting the whole TTL made a confirmable round indistinguishable from a
+	// dead generation: the park expired at the same moment the approval
+	// arrived, nothing continued the generation and the interaction stalled
+	// without a reply. suspend.ParkWaitBudget is the single resolver - its own
+	// default/floor, always capped strictly below Registry.TTL().
 	parkBudget := suspend.ParkWaitBudget(registry.TTL())
 	awaitCtx, cancel := context.WithTimeout(ctx, parkBudget)
 	defer cancel()
