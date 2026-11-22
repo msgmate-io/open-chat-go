@@ -1301,6 +1301,13 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 // flag off a confirmable round ends the turn the way it did before ci#1116
 // (TurnEndedConfirmablePause) and the approval starts an ordinary follow-up
 // turn.
+//
+// ci#1174: even with the flag ON the wait is bounded by
+// suspend.InTurnParkBudget() (OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET, default
+// 45s, capped by the registry TTL) and the bound covers the whole round, so
+// several pending calls cannot multiply it. That keeps the enabled park a
+// short, logged wait instead of a full-TTL stall that silently consumed the
+// private sandbox window on main.
 func parkAndAwaitConfirmationRound(
 	ctx context.Context,
 	registry *suspend.Registry,
@@ -1330,9 +1337,15 @@ func parkAndAwaitConfirmationRound(
 	if len(pending) == 0 {
 		return appended, currentMessages, false
 	}
+	// ci#1174: bound the whole parked round with the in-turn park budget, so a
+	// round with several pending calls cannot multiply the wait per call and even
+	// an explicitly enabled park cannot block the generation for the full
+	// suspension TTL.
+	roundCtx, cancelRound := context.WithTimeout(ctx, suspend.InTurnParkBudget())
+	defer cancelRound()
 	for _, pausedCall := range pending {
 		resumedCall, resumedMessages, resumed := parkAndAwaitConfirmation(
-			ctx, registry, chatUUID, pausedCall, currentMessages, limits,
+			roundCtx, registry, chatUUID, pausedCall, currentMessages, limits,
 		)
 		if !resumed {
 			// Not decided (expiry, stop, shutdown) or nothing could be parked:
@@ -1393,7 +1406,16 @@ func parkAndAwaitConfirmation(
 	if !parked {
 		return paused, currentMessages, false
 	}
-	awaitCtx, cancel := context.WithTimeout(ctx, registry.TTL())
+	// ci#1174: the await is bounded by the in-turn park budget, not by the full
+	// suspension TTL. A decision that the handler can only persist AFTER this
+	// generation returned can never arrive during the wait, so waiting the whole
+	// TTL only stalls the turn (10m03s per confirmable round on main, i.e. the
+	// entire private sandbox window).
+	budget := suspend.InTurnParkBudget()
+	if ttl := registry.TTL(); ttl > 0 && ttl < budget {
+		budget = ttl
+	}
+	awaitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	decision, decided := waiter.Await(awaitCtx)
@@ -1406,8 +1428,8 @@ func parkAndAwaitConfirmation(
 		// TTL was invisible at the deployment log level - the single most
 		// expensive silent wait in a confirmable turn.
 		logging.Infof(
-			"Confirmable tool call %s in chat %s was not decided within %s; dropping the park and keeping the pause behaviour",
-			paused.id, chatUUID, registry.TTL(),
+			"Confirmable tool call %s in chat %s was not decided within the in-turn park budget %s (%s); dropping the park and keeping the pause behaviour",
+			paused.id, chatUUID, budget, suspend.InTurnParkBudgetEnvKey,
 		)
 		return paused, currentMessages, false
 	}
