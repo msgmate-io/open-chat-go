@@ -1273,6 +1273,23 @@ func pendingConfirmationCalls(calls []executedToolCall) []executedToolCall {
 	return pending
 }
 
+// inTurnParkDisabledLine renders the one line that explains why a confirmable
+// round ended the turn instead of parking it.
+//
+// ci#1174: the private-sandbox relay could not attribute a stalled confirmable
+// interaction - "interaction timed out, state=active" with no failed test name
+// - because this line was emitted at Debug while deployments run at Info. The
+// line is the only positive evidence that the turn took the pre-ci#1116
+// terminal pause (no live park, so the approval starts a fresh follow-up turn)
+// rather than blocking inside a park that burns the whole suspension TTL. It
+// fires at most once per confirmable round, so promoting it costs nothing.
+func inTurnParkDisabledLine(chatUUID string, pendingCalls int) string {
+	return fmt.Sprintf(
+		"In-turn confirmation park disabled (%s): ending the turn on %d pending confirmable call(s) of chat %s",
+		suspend.InTurnParkEnvKey, pendingCalls, chatUUID,
+	)
+}
+
 // parkAndAwaitConfirmationRound parks every confirmable call of the round, one
 // after another, and reports whether the turn can continue.
 //
@@ -1319,10 +1336,7 @@ func parkAndAwaitConfirmationRound(
 		// continuation after the (now returned) generation persisted the
 		// pending confirmable action.
 		if pending := pendingConfirmationCalls(appended); len(pending) > 0 {
-			logging.Debugf(
-				"In-turn confirmation park disabled (%s): ending the turn on %d pending confirmable call(s) of chat %s",
-				suspend.InTurnParkEnvKey, len(pending), chatUUID,
-			)
+			logging.Infof("%s", inTurnParkDisabledLine(chatUUID, len(pending)))
 		}
 		return appended, currentMessages, false
 	}
