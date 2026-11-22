@@ -434,7 +434,9 @@ Reading the backend log, in order:
 1. `bot-reply generation finished: chat=<uuid> ok=true task=<id>
    continuation=<bool> elapsed=<dur> err=<nil>` - turn 1 completed. If `elapsed`
    is close to the in-turn park budget (ci#1177: about **20s** by default, set
-   with `OCI_CONFIRMABLE_PARK_WAIT`, and never more than half the suspension
+   with `OCI_CONFIRMABLE_PARK_WAIT` - the single lever since the ci#1175/ci#1177
+   consolidation; the ci#1175 spelling `OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET` is
+   still honoured as an alias - and never more than half the suspension
    TTL), the generation burned an in-turn confirmation park instead of doing
    provider work. On a build that predates ci#1177 the same comparison reads
    against `suspend.DefaultTTL` (10m), because the park then awaited the whole
@@ -474,7 +476,9 @@ sandbox test" step name the commit that was built. The ci#1172 run tested
 suspend/in_turn_park.go`.
 
 The in-turn park is bounded by its own budget since ci#1177 (about 20s,
-`OCI_CONFIRMABLE_PARK_WAIT`, capped at half the suspension TTL) and additionally
+`OCI_CONFIRMABLE_PARK_WAIT`, capped at half the suspension TTL; the ci#1175
+`OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET` is a documented alias of the same lever,
+with the canonical key winning when both are set) and additionally
 gated by `OCI_CONFIRMABLE_IN_TURN_PARK` (default **off**, see
 `backend/suspend/in_turn_park.go`, ci#1178). Leave the gate off: with the gate
 off a confirmable round ends the turn as before ci#1116, the handler persists
