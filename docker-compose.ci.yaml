@@ -39,6 +39,13 @@ services:
       # Forward it so a sandbox/deploy run can pin it explicitly instead of
       # silently inheriting the unset default.
       OCI_CONFIRMABLE_IN_TURN_PARK: ${OCI_CONFIRMABLE_IN_TURN_PARK:-}
+      # ci#1176/ci#1174: bound the in-turn park itself. OCI_CONFIRMABLE_PARK_WAIT
+      # is the single lever (default 20s, always capped below the suspension TTL)
+      # so a run can pin the wait instead of inheriting the default; the ci#1175
+      # spelling OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET is a documented alias of the
+      # same lever and is forwarded too, so an existing deployment keeps working.
+      OCI_CONFIRMABLE_PARK_WAIT: ${OCI_CONFIRMABLE_PARK_WAIT:-}
+      OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET: ${OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET:-}
       # Deterministic benchmark runs + stall detection for headless runs.
       OPENCODE_TEMPERATURE: ${OPENCODE_TEMPERATURE:-}
       OPENCODE_NO_PROGRESS_TIMEOUT_SECONDS: ${OPENCODE_NO_PROGRESS_TIMEOUT_SECONDS:-}
