@@ -265,6 +265,83 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 	}
 	metadata["error"] = true
 	metadata["error_detail"] = streamErr.Error()
+	// ci#1179: provider admission back-pressure is a server-performed capacity
+	// stop too - the provider was never asked - but unlike a tool-call budget it
+	// is recoverable: the very next turn usually gets a slot. The turn therefore
+	// starts out looking failed and the recovery seam clears the flag when (and
+	// only when) it actually schedules the one bounded continuation
+	// (see clearRecoverableBackpressureFailure). After that single retry is
+	// spent nothing clears it, so the interaction settles failed with the real
+	// reason in the message text instead of pretending it recovered.
+	if classification.Reason == FailureReasonProviderBackpressure {
+		metadata[BackpressureRecoverableMetadataKey] = true
+	}
+}
+
+// BackpressureRecoverableMetadataKey marks a provider-backpressure stop that is
+// still eligible for the single bounded recovery continuation, so the settle
+// path can tell "stopped, recovery scheduled" from "stopped, retry exhausted".
+const BackpressureRecoverableMetadataKey = "provider_backpressure_recoverable"
+
+// clearRecoverableBackpressureFailure drops the `error` flag of a
+// provider-backpressure stop once the bounded recovery continuation for it has
+// actually been scheduled (ci#1179).
+//
+// A back-pressure stop is not a fault: the request never reached the provider,
+// and one bounded backoff continuation is dispatched instead of settling the
+// interaction as failed. Only when no continuation is scheduled - because the
+// chain already spent its single attempt, or the enqueue failed - does the stop
+// stay an explicit failure, which is what makes the second, unrecoverable
+// saturation visible to the user and to the native-coder self-check.
+//
+// It returns true when the flag was cleared, so the caller can record the
+// decision in the transcript.
+func clearRecoverableBackpressureFailure(metadata map[string]interface{}, continuationScheduled bool) bool {
+	if len(metadata) == 0 || !continuationScheduled {
+		return false
+	}
+	if recoverable, _ := metadata[BackpressureRecoverableMetadataKey].(bool); !recoverable {
+		return false
+	}
+	delete(metadata, "error")
+	delete(metadata, "error_detail")
+	delete(metadata, BackpressureRecoverableMetadataKey)
+	metadata["provider_backpressure_recovery"] = BackpressureRecoveryContinuationScheduled
+	return true
+}
+
+// BackpressureRecoveryContinuationScheduled records in the interaction that the
+// bounded recovery continuation of a backpressure stop was actually enqueued, so
+// the decision is visible in the transcript instead of being implied by the
+// absence of the error flag.
+const BackpressureRecoveryContinuationScheduled = "continuation_scheduled"
+
+// isRecoverableBackpressureStop reports whether this turn's metadata marks a
+// provider-backpressure stop that is still eligible for its single bounded
+// recovery continuation (ci#1179).
+func isRecoverableBackpressureStop(metadata map[string]interface{}) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	recoverable, _ := metadata[BackpressureRecoverableMetadataKey].(bool)
+	return recoverable
+}
+
+// backpressureRecoveryNotice is the sentence appended to the terminal text of a
+// backpressure stop whose bounded recovery continuation was actually scheduled.
+// The back-pressure guidance alone tells the user to retry by hand, which is
+// exactly what the scheduled continuation makes unnecessary (ci#1179).
+const backpressureRecoveryNotice = "A recovery turn has been scheduled automatically, so no action is needed unless the work has to be re-dispatched after that retry."
+
+// withBackpressureRecoveryNotice appends the recovery notice to the terminal
+// text of a scheduled backpressure recovery, so the message never asks the user
+// for a manual retry that is already in flight.
+func withBackpressureRecoveryNotice(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return backpressureRecoveryNotice
+	}
+	return text + "\n\n" + backpressureRecoveryNotice
 }
 
 // wrapTerminalResponseAlreadySent marks a turn that already persisted its own
