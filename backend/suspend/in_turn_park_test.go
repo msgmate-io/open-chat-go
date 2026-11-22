@@ -84,4 +84,13 @@ func TestCiDeploymentPassesInTurnParkLever(t *testing.T) {
 	if !strings.Contains(profile, "${"+InTurnParkEnvKey+":-}") {
 		t.Errorf("docker-compose.ci.yaml must pass %s through to the backend service", InTurnParkEnvKey)
 	}
+	// ci#1176/ci#1174: the park BOUND has to be pinnable per run as well. Since
+	// the ci#1175/ci#1177 consolidation there is exactly one lever plus one
+	// documented alias, and both must be forwarded - a run that pins only the
+	// alias would otherwise silently inherit the default.
+	for _, key := range []string{ParkWaitEnvKey, ParkWaitEnvKeyAlias} {
+		if !strings.Contains(profile, "${"+key+":-}") {
+			t.Errorf("docker-compose.ci.yaml must pass %s through to the backend service", key)
+		}
+	}
 }
