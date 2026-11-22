@@ -1790,7 +1790,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// the metadata (see applyTerminalFailureMetadata), so the ordinary
 			// bounded continuation path (TurnContinuationMaxAttempts) picks it up
 			// instead of leaving the interaction failed with no recovery turn.
-			backpressureRecoverable := isRecoverableBackpressureStop(metadata)
+			backpressureRecoverable := outcome.ProviderBackpressure || isRecoverableBackpressureStop(metadata)
 			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0 || backpressureRecoverable
 			dispatch, dispatchErr := DispatchCapContinuation(
 				coderScheduleRunner{}, message.Content.ChatUUID, outcome, transientInfra,

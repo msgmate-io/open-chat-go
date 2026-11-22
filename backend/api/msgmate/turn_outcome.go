@@ -275,6 +275,13 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 	// reason in the message text instead of pretending it recovered.
 	if classification.Reason == FailureReasonProviderBackpressure {
 		metadata[BackpressureRecoverableMetadataKey] = true
+		// The outcome carries the same fact as structured state (it consumes
+		// no tool-call budget, so it cannot be derived from the counters), so
+		// the recovery seam and the transcript can decide on the outcome
+		// without re-parsing metadata.
+		if outcome != nil {
+			outcome.ProviderBackpressure = true
+		}
 	}
 }
 
