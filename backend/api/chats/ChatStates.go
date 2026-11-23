@@ -79,24 +79,17 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 	// One transcript-tail query for every chat of the poll rather than one per
 	// chat (the poll resolves up to chatStatesMaxChats chats every few seconds).
 	tails := loadChatMessageTails(DB, accessible)
-	cachedStates := cachedChatStates(accessible)
 	for _, chat := range accessible {
-		if cached, ok := cachedStates[chat.UUID]; ok {
-			response.States = append(response.States, cached)
-			continue
-		}
 		status, err := resolveInteractionStatusWithQueue(DB, chat, queue, tails)
 		if err != nil {
 			continue
 		}
-		row := ChatStateRow{
+		response.States = append(response.States, ChatStateRow{
 			ChatUUID: status.ChatUUID,
 			IsActive: status.IsActive,
 			State:    status.State,
 			Source:   status.Source,
-		}
-		storeChatState(row)
-		response.States = append(response.States, row)
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

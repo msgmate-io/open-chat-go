@@ -3,7 +3,6 @@ package chats
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	"backend/database"
 
@@ -56,9 +55,6 @@ func TestResolveChatStatesBatchMatchesPerChatResolution(t *testing.T) {
 		}
 	}
 
-	// Disable the cross-request cache so both paths resolve for real.
-	t.Setenv("OCI_CHAT_STATE_CACHE_MS", "0")
-
 	batchTails := loadChatMessageTails(DB, chats)
 	if batchTails == nil {
 		t.Fatal("expected a batched transcript tail, got no batch")
@@ -101,33 +97,5 @@ func TestChatMessageTailsCoverEmptyChats(t *testing.T) {
 	}
 	if len(messages) != 0 {
 		t.Fatalf("expected an empty tail, got %d messages", len(messages))
-	}
-}
-
-func TestChatStateCacheExpiryAndDisable(t *testing.T) {
-	row := ChatStateRow{ChatUUID: "chat-1", State: "active", IsActive: true}
-
-	cache := newChatStateCache(50 * time.Millisecond)
-	now := time.Unix(1700000000, 0)
-	cache.now = func() time.Time { return now }
-
-	if _, ok := cache.get("chat-1"); ok {
-		t.Fatal("empty cache returned a hit")
-	}
-	cache.put(row)
-	got, ok := cache.get("chat-1")
-	if !ok || got.State != "active" || !got.IsActive {
-		t.Fatalf("expected a cache hit for the stored state, got %+v (ok=%v)", got, ok)
-	}
-
-	now = now.Add(51 * time.Millisecond)
-	if _, ok := cache.get("chat-1"); ok {
-		t.Fatal("state was served after its TTL expired")
-	}
-
-	disabled := newChatStateCache(0)
-	disabled.put(row)
-	if _, ok := disabled.get("chat-1"); ok {
-		t.Fatal("a zero TTL must disable the cache")
 	}
 }
