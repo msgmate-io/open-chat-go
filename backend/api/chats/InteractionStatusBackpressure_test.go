@@ -51,6 +51,16 @@ func TestInteractionStateForFinishedMetadata(t *testing.T) {
 			want: chatstate.StateFinished,
 		},
 		{
+			name: "backpressure recovery ledger read as int stays finished",
+			meta: map[string]interface{}{
+				"finished":       true,
+				"error":          true,
+				"failure_reason": "provider_backpressure",
+				InteractionStatusProviderBackpressureContinuationsKey: int(1),
+			},
+			want: chatstate.StateFinished,
+		},
+		{
 			name: "stamped capacity stop stays finished",
 			meta: map[string]interface{}{
 				"finished":      true,
@@ -84,5 +94,23 @@ func TestInteractionStateForFinishedMetadata(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
 		})
+	}
+}
+
+// TestIsNonFaultTerminalFailureReason pins the chats-side copy of the
+// capacity-stop exemption. Its authority is the canonical constant set in
+// msgmate (msgmate.failureReasonExemptFromErrorFlag, asserted equal by
+// msgmate.TestIsCapacityStopReason); chats cannot import it here, so this test
+// guards the literal values the copy hardcodes.
+func TestIsNonFaultTerminalFailureReason(t *testing.T) {
+	for _, reason := range []string{"tool_call_budget_exhausted", "provider_backpressure"} {
+		if !IsNonFaultTerminalFailureReason(reason) {
+			t.Fatalf("IsNonFaultTerminalFailureReason(%q) = false, want true", reason)
+		}
+	}
+	for _, reason := range []string{"provider_error", "internal_error", "turn_timeout", ""} {
+		if IsNonFaultTerminalFailureReason(reason) {
+			t.Fatalf("IsNonFaultTerminalFailureReason(%q) = true, want false", reason)
+		}
 	}
 }
