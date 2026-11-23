@@ -213,6 +213,41 @@ new_case
 printf 'FAIL: unexpected behaviour\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
 assert_stall "" "an ordinary failing attempt is not a stalled turn"
 
+# ci#1171: a probe log also carries the `run:` block it executed, so the
+# annotation markers of the harness *source* appear in the log. Those lines are
+# not failures; counting them turned eleven identical ci#1171 probes into
+# "stalls=2, other_failures=9" and the stall never classified.
+echoed_source_log() {
+  stall_log
+  printf '  echo "::error::bot token cannot read ${REPO}@${REF}: ${body}"\n'
+  printf "  printf '::error::interaction timed out after %ss' \"\$timeout\"\n"
+  printf '  warn "::warning::no bot reply in %ss"\n'
+}
+
+new_case
+echoed_source_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "echoed harness source is not an extra failure marker"
+
+# The same block as GitHub renders it when the runner is configured with colour:
+# ANSI-wrapped source lines still must not mask the stall.
+new_case
+{
+  stall_log
+  printf '  \033[36;1mecho "::error::sandbox test ${name} failed" \033[0m\n'
+  printf '  \033[36;1mprintf %s %s \033[0m\n' "'::error::no bot reply'" '"$name"'
+} > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "ANSI-coloured echoed source is not an extra failure marker"
+
+# A rendered annotation (not echoed source) is still a real failure marker.
+new_case
+{ stall_log; printf '::error::assertion failed: expected 3 got 4\n'; } > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "a rendered ::error annotation still beats a stall"
+
+# The harness's own derived verdict annotation must not mask the stall either.
+new_case
+{ stall_log; printf '##[error]Process completed with exit code 1.\n'; } > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "the runner's exit-code annotation is not an extra failure marker"
+
 new_case
 assert_stall "" "an empty results dir has no stalled turn"
 

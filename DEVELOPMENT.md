@@ -193,6 +193,20 @@ so they are visible at the deployment log level. `parkAndAwaitConfirmationRound`
 renders the first one through `inTurnParkDisabledLine`, pinned by
 `backend/api/msgmate/confirmable_round_test.go`.
 
+Do not let the log text alone decide the class: a probe log also echoes the
+`run:` block it executed, so the harness source lines that *print* annotations
+(`echo "::error::..."`, `printf '::error::...'`, `warn "::warning::..."`) appear
+in the log next to the real markers. `sandbox_turn_stall_class` in
+`development/scripts/sandbox_provider_failure.sh` therefore strips ANSI colour,
+ignores annotation markers quoted inside `echo`/`printf`/`warn`, and ignores the
+derived `##[error]Process completed with exit code` / `##[error]sandbox test ...
+failed` annotations before counting other failures; without that, a run whose
+only real signal is a stall reports `stalls=<n>, other_failures=<m>` and never
+classifies (ci#1171: eleven identical confirmable probes, `stalls=2`,
+`other_failures=9`, all nine echoed source text). Regression cases for both the
+plain and the ANSI-coloured shape live in
+`development/scripts/tests/test_sandbox_provider_failure.sh`.
+
 Agent coordination and operational runbooks are maintained outside this
 repository. Do not add agent runbooks, private integration documentation or
 deployment secrets to this repository.
