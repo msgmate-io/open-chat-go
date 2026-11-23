@@ -478,8 +478,23 @@ func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Mess
 // a prefixed list silently broke the latter with
 // `missing FROM-clause entry for table "m"`, and the swallowed error made the
 // resolver skip the pending-confirmation check (PR CI shard 2/4).
-const messageTailColumns = "id, uuid, created_at, updated_at, read_at, " +
+const messageTailColumnList = "id, uuid, created_at, updated_at, read_at, " +
 	"sender_id, receiver_id, data_type, chat_id, text, tool_calls, meta_data"
+
+// messageTailColumns is the unaliased form for the GORM single-chat read (that
+// query has no table alias).
+const messageTailColumns = messageTailColumnList
+
+// tailColumnsFor prefixes the column list with a table alias. The batch query
+// joins the ranking subquery with `messages m`, where an unprefixed `id` is
+// ambiguous (SQLite: "ambiguous column name: id").
+func tailColumnsFor(alias string) string {
+	columns := strings.Split(messageTailColumnList, ", ")
+	for i, column := range columns {
+		columns[i] = alias + "." + column
+	}
+	return strings.Join(columns, ", ")
+}
 
 // recentMessagesByChatLimit loads the newest `limit` messages of every chat in
 // one query (ci#801 / the batch form of recentMessagesForChat).
@@ -507,7 +522,7 @@ func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint
 	) ranked
 	JOIN messages m ON m.id = ranked.id
 	WHERE ranked.rn <= ?
-	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, messageTailColumns, placeholders)
+	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, tailColumnsFor("m"), placeholders)
 	var messages []database.Message
 	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
 		return nil, err
