@@ -175,6 +175,38 @@ input and the closure instruction. Agent-facing working notes - including the
 full set of PR conventions (base, draft state, labels, tracker line, truthful
 test reporting) - live in [`AGENTS.md`](AGENTS.md).
 
+### Attributing a relayed private-sandbox failure (ci#1174)
+
+A `Private sandbox lw` run that fails *every* confirmable/interaction job while
+reporting **no failed test names** is a stalled interaction, not a test failure:
+the job hits `interaction timed out` with `state=active` and no bot turn
+finishing. Classify it from the tested commit, not from the job text:
+
+| Tested commit contains | Relay line to expect in the backend log | Meaning |
+| --- | --- | --- |
+| no `backend/suspend/in_turn_park.go` (pre-ci#1178) | none | the ci#1116 in-turn park waits for a decision that only exists after the generation returns, so every confirmable round burns the suspension TTL - the run is stale, re-run on a commit that carries the gate |
+| the gate, `OCI_CONFIRMABLE_IN_TURN_PARK` unset/`false` | `In-turn confirmation park disabled (OCI_CONFIRMABLE_IN_TURN_PARK): ending the turn on <n> pending confirmable call(s) of chat <uuid>` | the turn took the pre-ci#1116 terminal pause; the approval starts an ordinary follow-up turn |
+| the gate, lever set to `1`/`true` | `Confirmable tool call <id> in chat <uuid> was not decided within <ttl>; dropping the park ...` on expiry | a live park is waiting on the TTL - set the lever back to unset/`false` unless the decider can deliver while the generation is parked |
+
+Both lines are emitted at `info` (they fire at most once per confirmable round),
+so they are visible at the deployment log level. `parkAndAwaitConfirmationRound`
+renders the first one through `inTurnParkDisabledLine`, pinned by
+`backend/api/msgmate/confirmable_round_test.go`.
+
+Do not let the log text alone decide the class: a probe log also echoes the
+`run:` block it executed, so the harness source lines that *print* annotations
+(`echo "::error::..."`, `printf '::error::...'`, `warn "::warning::..."`) appear
+in the log next to the real markers. `sandbox_turn_stall_class` in
+`development/scripts/sandbox_provider_failure.sh` therefore strips ANSI colour,
+ignores annotation markers quoted inside `echo`/`printf`/`warn`, and ignores the
+derived `##[error]Process completed with exit code` / `##[error]sandbox test ...
+failed` annotations before counting other failures; without that, a run whose
+only real signal is a stall reports `stalls=<n>, other_failures=<m>` and never
+classifies (ci#1171: eleven identical confirmable probes, `stalls=2`,
+`other_failures=9`, all nine echoed source text). Regression cases for both the
+plain and the ANSI-coloured shape live in
+`development/scripts/tests/test_sandbox_provider_failure.sh`.
+
 Agent coordination and operational runbooks are maintained outside this
 repository. Do not add agent runbooks, private integration documentation or
 deployment secrets to this repository.
@@ -401,3 +433,96 @@ User- and developer-facing documentation lives in the frontend docs pages at
 
 Also see [`development/build-tools/README.md`](development/build-tools/README.md)
 for the `openchat-integrations` CLI.
+
+## Confirmable confirmation stalls (ci#1172 / ci#1177 / ci#1178)
+
+Symptom: a long coder test (or an interactive chat) is left `state=active` with
+`last_message=false` until the probe harness reports
+`interaction timed out after 720s (runtime=native, state=active, messages=N,
+last_message=false|...)` - no assertion failure, no bot turn. This is the shape
+of the ci#1172 relay: eleven `Private Test msgmate_coder_*` jobs, one identical
+timeout each, no failed test name anywhere in the log.
+
+Reading the backend log, in order:
+
+1. `bot-reply generation finished: chat=<uuid> ok=true task=<id>
+   continuation=<bool> elapsed=<dur> err=<nil>` - turn 1 completed. If `elapsed`
+   is close to the in-turn park budget (ci#1177: about **20s** by default, set
+   with `OCI_CONFIRMABLE_PARK_WAIT` - the single lever since the ci#1175/ci#1177
+   consolidation; the ci#1175 spelling `OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET` is
+   still honoured as an alias - and never more than half the suspension
+   TTL), the generation burned an in-turn confirmation park instead of doing
+   provider work. On a build that predates ci#1177 the same comparison reads
+   against `suspend.DefaultTTL` (10m), because the park then awaited the whole
+   durable suspension instead of its own budget. The matching
+   `bot-reply generation start: chat=<uuid> budget=<dur> ...` line should be
+   present for every finished line (ci#1161/ci#1162 bracketing pair).
+2. `confirmable action <id> in chat <uuid>: continuation=continuation_queued
+   (event <name>)` (not `continuation=resumed_turn`) proves the park was already
+   gone when the approval landed - the pending `confirmable_actions` row is only
+   persisted *after* the generation returns, so a decider that reads durable
+   state can never satisfy a live in-turn park.
+3. `Confirmable tool call <id> in chat <uuid> was not decided within <budget>;
+   dropping the park and keeping the pause behaviour` is the explicit expiry
+   line (Info level since ci#1178; it used to be silent at Debug). Since ci#1177
+   the quoted duration is the park budget (~20s), not the suspension TTL; on an
+   older build it reads `10m0s` and matches `suspend.DefaultTTL`.
+
+The harness log carries the same fingerprint one layer up: an
+`[interaction] pending confirmable action approved` line that lands ~10m after
+`[sandbox-test] running interaction for ...` (the failing ci#1172 job approved
+at +10m08s). That lag is the park TTL, not harness slowness - the approval can
+only be read once the row exists. With the in-turn park enabled, every
+confirmable call of the round parks (ci#1147), so on the pre-ci#1177 code a
+two-call round burns 2 x 10m against a 720s probe timeout and the job cannot
+pass; with the ci#1177 budget the same round spends ~2 x 20s and the park is
+gone long before the probe gives up, so a park stuck at the full TTL family
+means the bound is not on the tip under test. That arithmetic, not a slow
+provider, is what a relay of this family means.
+
+Also check which code was actually under test before concluding "main is fixed":
+a private-sandbox run's title and `headBranch` say `main`, but the per-job
+`TARGET_REF` / `SOURCE_SHA` / `BACKEND_IMAGE_INPUT` env in the "Run private
+sandbox test" step name the commit that was built. The ci#1172 run tested
+`82a10647` (pre-gate); the green re-run `44926643459` tested `SOURCE_SHA
+09f7e01f` - the `dev` commit that carries the gate - even though its title says
+`main`. Gate presence on the tip itself is `git cat-file -e <sha>:backend/
+suspend/in_turn_park.go`.
+
+The in-turn park is bounded by its own budget since ci#1177 (about 20s,
+`OCI_CONFIRMABLE_PARK_WAIT`, capped at half the suspension TTL; the ci#1175
+`OCI_CONFIRMABLE_IN_TURN_PARK_BUDGET` is a documented alias of the same lever,
+with the canonical key winning when both are set) and additionally
+gated by `OCI_CONFIRMABLE_IN_TURN_PARK` (default **off**, see
+`backend/suspend/in_turn_park.go`, ci#1178). Leave the gate off: with the gate
+off a confirmable round ends the turn as before ci#1116, the handler persists
+the pending action, the approval misses the (absent) park and queues an
+ordinary ~2s continuation turn. Enable it only where a decision can be
+delivered while the generation is still parked - and only on a tip that carries
+the ci#1177 bound, otherwise the budget is the whole 10m TTL again.
+
+Diagnostics checklist for a recurrence:
+
+- `grep "was not decided within"` in the backend log: any hit means a park
+  waited out its budget, i.e. the flag is on somewhere it should not be. Check
+  the duration it prints: `10m0s` means the tip predates ci#1177's bound.
+- `grep "generation finished"` for the continuation turn: a `generation start
+  ... continuation=true` with no matching `generation finished` means the
+  continuation itself is wedged - re-open with that run id rather than
+  re-triaging the park.
+- `grep -c "can't cd to"`: the workspace-root family (ci#1166) always logs at
+  least one such line. **Zero** hits *plus* the stall fingerprint above means the
+  run belongs to this section, not to workspace-root, whatever the relay ticket
+  claims: the ci#1171 relay (run `44837783519`, checkout `a6ad3ea5`) was filed as
+  workspace-root, yet its log carries 0 `can't cd to` lines and 20
+  `interaction timed out after 720s (... state=active ... last_message=false)`
+  lines across ten of the eleven failing jobs, and the tested commit predates the
+  gate (`git cat-file -e a6ad3ea5:backend/suspend/in_turn_park.go` fails) and is
+  not even an ancestor of `origin/main`. Such a relay is stale, not a new defect:
+  close it against a green re-run on a gated tip and put new evidence on ci#1166.
+- One job of that run is *not* a stall: `msgmate_coder_command_confirmation` got a
+  clean `READY` reply (`interaction state: finished`) in 617s and then died in the
+  verifier with `msgmate_coder_interactions.sh: line 133: echo: write error:
+  Broken pipe`, so `sandbox_turn_stall_class` correctly stays empty for it. That is
+  a SIGPIPE/`pipefail` bug in the harness helper, which lives in
+  `open-chat-go-ci` - do not chase it here as a model regression.

@@ -161,6 +161,100 @@ new_case
 printf '{"text":"ok"}\n' > "$case_dir/not-a-reply.txt"
 assert_class "" "files that are not *.last_bot.json are ignored"
 
+# --- turn_stall: the turn never started (ci#1172) ---------------------------
+# assert_stall <expected> <description> -- same contract as assert_class but for
+# sandbox_turn_stall_class, which reads attempt/probe logs instead of replies.
+assert_stall() {
+  local expected="$1" description="$2"
+  case_no=$(( case_no + 1 ))
+  local actual
+  actual="$(sandbox_turn_stall_class "$case_dir")"
+  if [ "$actual" = "$expected" ]; then
+    printf 'ok %d - %s\n' "$case_no" "$description"
+  else
+    printf 'not ok %d - %s (expected=%q actual=%q)\n' "$case_no" "$description" "$expected" "$actual"
+    failures=$(( failures + 1 ))
+  fi
+}
+
+# The ci#1172 fingerprint as the probe writes it: a timeout of a chat that is
+# still active with no bot turn, so no reply exists to classify.
+stall_log() {
+  printf '::warning::sandbox test ran\n'
+  printf '##[error]interaction timed out after 720s (runtime=native, state=active, messages=4, last_message=false) the interaction is still active with no bot turn\n'
+}
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "an active chat with no bot turn is a stalled turn, not variance"
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt2.log"
+assert_stall turn_stall "every attempt stalling is still a stalled turn"
+
+new_case
+stall_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+printf 'FAIL: the marker was never printed\n' > "$case_dir/msgmate_coder_bugfix.attempt2.log"
+assert_stall "" "a stall mixed with a real assertion failure stays a code failure"
+
+# The probe appends every attempt of one test to the same <test>.out, so a stall
+# of attempt 1 and an assertion failure of attempt 2 can share a single file; the
+# later real failure must still win over the earlier stall.
+new_case
+{ stall_log; printf 'FAIL: the marker was never printed\n'; } > "$case_dir/msgmate_coder_bugfix.out"
+assert_stall "" "a stall and a later real failure inside one out file is a code failure"
+
+new_case
+printf '##[error]interaction timed out after 720s (runtime=native, state=active, messages=4, last_message=true)\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "a timeout after the bot already answered keeps the ordinary verdict"
+
+new_case
+printf 'FAIL: unexpected behaviour\n' > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "an ordinary failing attempt is not a stalled turn"
+
+# ci#1171: a probe log also carries the `run:` block it executed, so the
+# annotation markers of the harness *source* appear in the log. Those lines are
+# not failures; counting them turned eleven identical ci#1171 probes into
+# "stalls=2, other_failures=9" and the stall never classified.
+echoed_source_log() {
+  stall_log
+  printf '  echo "::error::bot token cannot read ${REPO}@${REF}: ${body}"\n'
+  printf "  printf '::error::interaction timed out after %ss' \"\$timeout\"\n"
+  printf '  warn "::warning::no bot reply in %ss"\n'
+}
+
+new_case
+echoed_source_log > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "echoed harness source is not an extra failure marker"
+
+# The same block as GitHub renders it when the runner is configured with colour:
+# ANSI-wrapped source lines still must not mask the stall.
+new_case
+{
+  stall_log
+  printf '  \033[36;1mecho "::error::sandbox test ${name} failed" \033[0m\n'
+  printf '  \033[36;1mprintf %s %s \033[0m\n' "'::error::no bot reply'" '"$name"'
+} > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "ANSI-coloured echoed source is not an extra failure marker"
+
+# A rendered annotation (not echoed source) is still a real failure marker.
+new_case
+{ stall_log; printf '::error::assertion failed: expected 3 got 4\n'; } > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall "" "a rendered ::error annotation still beats a stall"
+
+# The harness's own derived verdict annotation must not mask the stall either.
+new_case
+{ stall_log; printf '##[error]Process completed with exit code 1.\n'; } > "$case_dir/msgmate_coder_bugfix.attempt1.log"
+assert_stall turn_stall "the runner's exit-code annotation is not an extra failure marker"
+
+new_case
+assert_stall "" "an empty results dir has no stalled turn"
+
+new_case
+printf 'ok\n' > "$case_dir/msgmate_coder_bugfix.out"
+assert_stall "" "a passing run is not a stalled turn"
+
 if [ "$failures" -ne 0 ]; then
   printf 'test_sandbox_provider_failure: FAILED (%d/%d)\n' "$failures" "$case_no" >&2
   exit 1

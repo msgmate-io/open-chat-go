@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,9 +236,12 @@ func TestInTurnParkDisabledByDefaultEndsTurn(t *testing.T) {
 }
 
 // TestParkExpiryForgetsKeySoLateDecisionCannotResume is the ci#1178 TTL-expiry
-// regression with the flag ON: a park whose decision never arrives must expire on
-// the registry TTL, drop the key, and leave a late decision unable to resume the
-// finished generation (the handler then logs continuation=continuation_queued).
+// regression with the flag ON: a park whose decision never arrives must expire,
+// drop the key, and leave a late decision unable to resume the finished
+// generation (the handler then logs continuation=continuation_queued). Since
+// ci#1177 the park waits suspend.ParkWaitBudget(ttl) rather than the whole TTL,
+// so the wait is bounded below the registry TTL and the durable suspension still
+// outlives the park.
 func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	t.Setenv(suspend.InTurnParkEnvKey, "1")
 	const chatUUID = "ci1178-ttl-expiry-chat"
@@ -259,8 +263,17 @@ func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	if decided {
 		t.Fatal("an expired park was reported as decided; the turn must keep the pause behaviour")
 	}
-	if elapsed < 50*time.Millisecond {
-		t.Fatalf("round returned after %s, want it to wait for the 50ms TTL", elapsed)
+	// ci#1177: the in-turn park no longer waits for the whole registry TTL; it
+	// waits for suspend.ParkWaitBudget(ttl), which stays strictly below the TTL
+	// so the durable suspension outlives the park. Pin that bound instead of the
+	// old full-TTL wait this regression test used to assert, allowing a
+	// scheduler-tick tolerance below the budget.
+	parkBudget := suspend.ParkWaitBudget(registry.TTL())
+	if parkBudget >= registry.TTL() {
+		t.Fatalf("park budget %s must stay below the registry TTL %s (ci#1177)", parkBudget, registry.TTL())
+	}
+	if tolerance := 5 * time.Millisecond; elapsed+tolerance < parkBudget {
+		t.Fatalf("round returned after %s, want it to wait for the %s park budget (registry TTL %s)", elapsed, parkBudget, registry.TTL())
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("round returned after %s, want it bounded by the registry TTL, not the turn context", elapsed)
@@ -278,5 +291,170 @@ func TestParkExpiryForgetsKeySoLateDecisionCannotResume(t *testing.T) {
 	}
 	if resumed {
 		t.Fatal("a late decision resumed an expired park, want resumed=false so the handler queues a continuation instead (ci#1178)")
+	}
+}
+
+// TestInTurnParkDisabledLine pins the ci#1174 triage line: the private-sandbox
+// relay has to be able to attribute a confirmable interaction that ended without
+// an approval to the disabled in-turn park (pre-ci#1116 terminal pause) instead
+// of guessing that the turn blocked inside a live park.
+//
+// The line names the lever and the number of pending calls, so a grep over a
+// relayed job log yields "park disabled ... ending the turn on 2 pending
+// confirmable call(s)" together with the chat, which is what distinguishes a
+// healthy pause from a stall.
+func TestInTurnParkDisabledLine(t *testing.T) {
+	line := inTurnParkDisabledLine("chat-uuid", 2)
+	want := "In-turn confirmation park disabled (" + suspend.InTurnParkEnvKey + "): ending the turn on 2 pending confirmable call(s) of chat chat-uuid"
+	if line != want {
+		t.Fatalf("inTurnParkDisabledLine() = %q, want %q", line, want)
+	}
+	if !strings.Contains(line, "chat-uuid") {
+		t.Fatalf("line %q omits the chat, so a relayed log cannot attribute the stall", line)
+	}
+}
+
+// TestParkWaitBudgetNeverExceedsTTL pins the single ci#1175/ci#1177 bound
+// resolver: the in-turn park waits for its own (short) budget and is always
+// capped strictly below the registry TTL, so neither a long TTL nor a
+// misconfigured budget can make a parked generation block for the whole
+// interaction window.
+func TestParkWaitBudgetNeverExceedsTTL(t *testing.T) {
+	t.Setenv(suspend.ParkWaitEnvKey, "")
+	t.Setenv(suspend.ParkWaitEnvKeyAlias, "")
+	if got := suspend.ParkWaitBudget(10 * time.Minute); got != suspend.DefaultParkWaitBudget {
+		t.Fatalf("ParkWaitBudget = %s, want the park budget %s (ci#1175: never the 10m suspension TTL)", got, suspend.DefaultParkWaitBudget)
+	}
+
+	// A short registry TTL still caps the budget down, and the result stays
+	// strictly below the TTL so the durable suspension outlives the park.
+	short := 50 * time.Millisecond
+	if got := suspend.ParkWaitBudget(short); got >= short {
+		t.Fatalf("ParkWaitBudget(%s) = %s, want it capped strictly below the TTL", short, got)
+	}
+
+	// An explicit budget shorter than the TTL wins.
+	t.Setenv(suspend.ParkWaitEnvKey, "5s")
+	if got := suspend.ParkWaitBudget(10 * time.Minute); got != 5*time.Second {
+		t.Fatalf("ParkWaitBudget = %s, want the configured 5s budget", got)
+	}
+}
+
+// TestParkBoundedByBudgetNotTTL is the ci#1175 regression: a confirmable round
+// whose decision never arrives has to give up after the park budget, not after
+// the whole suspension TTL. The relay showed generations blocking until the
+// private sandbox harness killed the interaction, with the approval then
+// falling back to continuation=continuation_queued.
+func TestParkBoundedByBudgetNotTTL(t *testing.T) {
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
+	t.Setenv(suspend.ParkWaitEnvKey, "1s")
+	t.Setenv(suspend.ParkWaitEnvKeyAlias, "")
+	const chatUUID = "ci1175-bounded-park-chat"
+	// A long suspension TTL must NOT be what the in-turn park waits for.
+	registry := suspend.NewWithTTL(10*time.Minute, nil)
+	registry.Forget(chatUUID, "call_a")
+
+	appended := []executedToolCall{
+		{id: "call_a", name: "coder_bash", status: ToolCallStatusPendingConfirmation},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_, _, decided := parkAndAwaitConfirmationRound(
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
+	)
+	elapsed := time.Since(started)
+
+	if decided {
+		t.Fatal("an undecided park was reported as decided; the turn must keep the pause behaviour")
+	}
+	if elapsed < 500*time.Millisecond {
+		t.Fatalf("round returned after %s, want it to wait for the 1s park budget", elapsed)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("round waited %s, want it bounded by the park budget (1s) instead of the 10m suspension TTL (ci#1175)", elapsed)
+	}
+	if registry.Parked(chatUUID, "call_a") {
+		t.Fatal("the expired in-turn suspension is still registered; a late click would deliver into a finished generation")
+	}
+}
+
+// TestInTurnParkBoundedByBudget is the ci#1174 regression: with the in-turn park
+// explicitly ENABLED and a long suspension TTL, a park whose decision never
+// arrives must return after the park budget, not after the full TTL.
+//
+// On main every confirmable private sandbox test burned an exact 10m03s park
+// (the whole per-test window) because the await used registry.TTL() and the
+// approving client could only decide after the generation had returned. ci#1174
+// originally shipped this bound behind its own env key; the consolidation folded
+// it into the single ci#1175/ci#1177 lever, so this test drives the canonical
+// OCI_CONFIRMABLE_PARK_WAIT key.
+func TestInTurnParkBoundedByBudget(t *testing.T) {
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
+	t.Setenv(suspend.ParkWaitEnvKey, "120ms")
+	t.Setenv(suspend.ParkWaitEnvKeyAlias, "")
+	const chatUUID = "ci1174-bounded-park-chat"
+	// A long TTL: without the budget the round would park for 10s here.
+	registry := suspend.NewWithTTL(10*time.Second, nil)
+	registry.Forget(chatUUID, "call_a")
+
+	appended := []executedToolCall{
+		{id: "call_a", name: "coder_bash", status: ToolCallStatusPendingConfirmation},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_, _, decided := parkAndAwaitConfirmationRound(
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
+	)
+	elapsed := time.Since(started)
+
+	if decided {
+		t.Fatal("an undecided park was reported as decided; the turn must keep the pause behaviour")
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("round returned after %s, want it to wait for the 120ms budget (a park that returns instantly could not be decided at all)", elapsed)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("round returned after %s, want it bounded by the park budget (120ms), not the 10s registry TTL (ci#1174)", elapsed)
+	}
+	if registry.Parked(chatUUID, "call_a") {
+		t.Fatal("the expired suspension is still registered; a late click could deliver into a finished generation")
+	}
+}
+
+// TestParkWaitBudgetCannotExceedRegistryTTL pins that an over-long configured
+// budget is still capped by the registry TTL, so the lever can only ever shorten
+// the wait (ci#1174 via the canonical ci#1175/ci#1177 key).
+func TestParkWaitBudgetCannotExceedRegistryTTL(t *testing.T) {
+	t.Setenv(suspend.InTurnParkEnvKey, "1")
+	t.Setenv(suspend.ParkWaitEnvKey, "1h")
+	t.Setenv(suspend.ParkWaitEnvKeyAlias, "")
+	const chatUUID = "ci1174-budget-clamp-chat"
+	registry := suspend.NewWithTTL(80*time.Millisecond, nil)
+	registry.Forget(chatUUID, "call_a")
+
+	appended := []executedToolCall{
+		{id: "call_a", name: "coder_bash", status: ToolCallStatusPendingConfirmation},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_, _, decided := parkAndAwaitConfirmationRound(
+		ctx, registry, chatUUID, appended, nil, nil, ToolResultLimits{},
+	)
+	elapsed := time.Since(started)
+
+	if decided {
+		t.Fatal("an undecided park was reported as decided; the turn must keep the pause behaviour")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("round returned after %s, want it capped by the 80ms registry TTL (ci#1174)", elapsed)
+	}
+	if registry.Parked(chatUUID, "call_a") {
+		t.Fatal("the expired suspension is still registered after the TTL cap")
 	}
 }
