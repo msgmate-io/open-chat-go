@@ -473,8 +473,13 @@ func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Mess
 // (jsonb, the second largest column on ci.msgmate.io) are stored in TOAST and
 // are not read by the state/action resolvers, so selecting them made every
 // list request detoast megabytes it never looked at.
-const messageTailColumns = "m.id, m.uuid, m.created_at, m.updated_at, m.read_at, " +
-	"m.sender_id, m.receiver_id, m.data_type, m.chat_id, m.text, m.tool_calls, m.meta_data"
+// The columns are unprefixed on purpose: the same constant feeds the raw window
+// query (FROM messages m) and the GORM single-chat read, which has no alias -
+// a prefixed list silently broke the latter with
+// `missing FROM-clause entry for table "m"`, and the swallowed error made the
+// resolver skip the pending-confirmation check (PR CI shard 2/4).
+const messageTailColumns = "id, uuid, created_at, updated_at, read_at, " +
+	"sender_id, receiver_id, data_type, chat_id, text, tool_calls, meta_data"
 
 // recentMessagesByChatLimit loads the newest `limit` messages of every chat in
 // one query (ci#801 / the batch form of recentMessagesForChat).
