@@ -465,6 +465,20 @@ func latestPendingActionMessage(DB *gorm.DB, chatID uint) (database.Message, []A
 // works on both SQLite (>= 3.25) and PostgreSQL; the result is grouped into
 // per-chat slices, newest first, matching latestPendingActionMessage's window.
 func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Message, error) {
+	return recentMessagesByChatLimit(DB, chatIDs, confirmationScanLimit)
+}
+
+// messageTailColumns is the projection every transcript-tail reader uses. The
+// full row is deliberately NOT selected: `content` (bytea) and `reasoning`
+// (jsonb, the second largest column on ci.msgmate.io) are stored in TOAST and
+// are not read by the state/action resolvers, so selecting them made every
+// list request detoast megabytes it never looked at.
+const messageTailColumns = "m.id, m.uuid, m.created_at, m.updated_at, m.read_at, " +
+	"m.sender_id, m.receiver_id, m.data_type, m.chat_id, m.text, m.tool_calls, m.meta_data"
+
+// recentMessagesByChatLimit loads the newest `limit` messages of every chat in
+// one query (ci#801 / the batch form of recentMessagesForChat).
+func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint][]database.Message, error) {
 	out := make(map[uint][]database.Message, len(chatIDs))
 	if len(chatIDs) == 0 {
 		return out, nil
@@ -474,12 +488,12 @@ func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Mess
 	for _, id := range chatIDs {
 		args = append(args, id)
 	}
-	args = append(args, confirmationScanLimit)
+	args = append(args, limit)
 	sql := fmt.Sprintf(`SELECT * FROM (
-		SELECT m.*, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
+		SELECT %s, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
 		FROM messages m
 		WHERE deleted_at IS NULL AND chat_id IN (%s)
-	) t WHERE rn <= ? ORDER BY chat_id, created_at DESC, id DESC`, placeholders)
+	) t WHERE rn <= ? ORDER BY chat_id, created_at DESC, id DESC`, messageTailColumns, placeholders)
 	var messages []database.Message
 	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
 		return nil, err

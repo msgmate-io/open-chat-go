@@ -80,10 +80,26 @@ func ResolveChatStates(DB *gorm.DB, inspector *asynq.Inspector, chats []database
 	// queue once per chat inside resolveInteractionStatus, which made a list of
 	// N chats cost O(N x queue size) Redis scans.
 	queue := snapshotQueueActivity{snapshot: workqueue.SnapshotBotReplyActivity(inspector)}
+	// One transcript-tail query for the batch instead of one per chat.
+	tails := loadChatMessageTails(DB, chats)
+	// States resolved by the /api/v1/chats/states poll moments ago are reused
+	// (see state_cache.go): the sidebar asks for the same 100 chats on every
+	// poll, so re-deriving them was the dominant cost of the list request.
+	cached := cachedChatStates(chats)
 	for i := range chats {
+		if row, ok := cached[chats[i].UUID]; ok && row.State != "" {
+			states[chats[i].UUID] = row.State
+			continue
+		}
 		state := string(chatstate.StateIdle)
-		if status, err := resolveInteractionStatusWithQueue(DB, chats[i], queue); err == nil && status.State != "" {
+		if status, err := resolveInteractionStatusWithQueue(DB, chats[i], queue, tails); err == nil && status.State != "" {
 			state = status.State
+			storeChatState(ChatStateRow{
+				ChatUUID: chats[i].UUID,
+				IsActive: status.IsActive,
+				State:    status.State,
+				Source:   status.Source,
+			})
 		}
 		states[chats[i].UUID] = state
 	}
