@@ -97,6 +97,13 @@ func NewCoderCompactTool() Tool {
 	return NewToolFromDefinition(tooldefs.CoderCompactToolDef)
 }
 
+// NewCoderDispatchAgentTool is the ci#1189 step 4 sibling-dispatch tool: a lead
+// agent starts the next agent itself (coder_dispatch_agent) instead of asking
+// the operator, scoped to the repo/issue pinned on the running interaction.
+func NewCoderDispatchAgentTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderDispatchAgentToolDef)
+}
+
 // NewGitHubPREditTool is the ci#1035 typed pull-request edit tool: it PATCHes an
 // existing PR (title/body/state/base), applies label additions/removals, and
 // re-reads the PR so the write is verified instead of claimed.
