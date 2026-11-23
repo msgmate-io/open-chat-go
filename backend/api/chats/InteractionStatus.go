@@ -871,6 +871,19 @@ var nonFaultTerminalFailureReasons = map[string]bool{
 // turn rather than being a dead end.
 const InteractionStatusProviderBackpressureContinuationsKey = "ci1179_backpressure_continuations"
 
+// IsNonFaultTerminalFailureReason reports whether a recorded terminal failure
+// reason describes a capacity stop the server performed on itself, so it must
+// never settle an interaction as failed.
+//
+// It is exported so the msgmate layer, which owns the canonical reason
+// constants, can assert in one test that the two definitions agree. The
+// exemption is duplicated here on purpose: chats must not import msgmate
+// (msgmate imports chats), and the check also has to cover messages persisted
+// before the msgmate exemption landed.
+func IsNonFaultTerminalFailureReason(reason string) bool {
+	return nonFaultTerminalFailureReasons[reason]
+}
+
 // interactionStateForFinishedMetadata decides the settled state of a finished
 // interaction from the metadata of its newest message.
 //
