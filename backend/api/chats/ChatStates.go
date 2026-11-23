@@ -65,6 +65,7 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 	// ci#850: one queue snapshot for the whole batch instead of a queue listing
 	// per chat.
 	queue := snapshotQueueActivity{snapshot: workqueue.SnapshotBotReplyActivity(inspector)}
+	accessible := make([]database.Chat, 0, len(chatUUIDs))
 	for _, chatUUID := range chatUUIDs {
 		chat, err := findAccessibleChat(DB, user, chatUUID)
 		if err != nil {
@@ -73,7 +74,13 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 		if browserToken && !isInteractionChatType(chat.ChatType) {
 			continue
 		}
-		status, err := resolveInteractionStatusWithQueue(DB, chat, queue)
+		accessible = append(accessible, chat)
+	}
+	// One transcript-tail query for every chat of the poll rather than one per
+	// chat (the poll resolves up to chatStatesMaxChats chats every few seconds).
+	tails := loadChatMessageTails(DB, accessible)
+	for _, chat := range accessible {
+		status, err := resolveInteractionStatusWithQueue(DB, chat, queue, tails)
 		if err != nil {
 			continue
 		}
