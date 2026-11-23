@@ -127,6 +127,29 @@ func TestIndexMigrationUsesMessageChatSortIndex(t *testing.T) {
 	}
 }
 
+// TestIndexMigrationUsesMessageCreatedSortIndex pins the ci#1190 transcript-tail
+// window: the batched chat-state poll ranks each chat by `created_at DESC,
+// id DESC`. The (chat_id, id DESC) index above cannot serve that ordering unless
+// `id` and `created_at` happen to be monotonic together (the tails are written
+// out of order and several messages share a created_at), so the ranking window
+// fell back to a per-chat temp B-tree; idx_messages_chat_deleted_created_id
+// carries the exact window ordering and removes it.
+func TestIndexMigrationUsesMessageCreatedSortIndex(t *testing.T) {
+	db := setupIndexMigrationTestDB(t)
+	seedIndexMigrationRows(t, db)
+
+	plan := explainQueryPlan(t, db,
+		"SELECT * FROM messages WHERE chat_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 5",
+		1,
+	)
+	if !strings.Contains(plan, "idx_messages_chat_deleted_created_id") {
+		t.Fatalf("expected the transcript tail to use idx_messages_chat_deleted_created_id, plan was:\n%s", plan)
+	}
+	if strings.Contains(plan, "USE TEMP B-TREE FOR") {
+		t.Fatalf("transcript tail still sorts in a temp b-tree, plan was:\n%s", plan)
+	}
+}
+
 // TestIndexMigrationUsesCreatedAtIndex pins the cross-chat `created_at`
 // subquery used by the chats/list `time_from`/`time_to` filters: it must be
 // served by idx_messages_created_at (covering), not by a table scan.
