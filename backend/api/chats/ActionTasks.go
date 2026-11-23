@@ -496,6 +496,43 @@ func tailColumnsFor(alias string) string {
 	return strings.Join(columns, ", ")
 }
 
+// messageTailBatchQuery builds the single batched transcript-tail query used by
+// the sidebar list and the /api/v1/chats/states poll (ci#801, ci#1190).
+//
+// Rank first, fetch second: the window reads only id/chat_id/created_at and the
+// heavy projection (tool_calls, meta_data - the two largest messages columns,
+// 437 MB on ci.msgmate.io) is detoasted only for the surviving rows.
+//
+// The ranking filter `rn <= limit` deliberately lives INSIDE the derived table:
+// an outer `WHERE ranked.rn <= ?` cannot be pushed into a window subquery, so
+// with the predicate above the join Postgres still joined every message of every
+// chat in the batch and the rank-then-fetch split bought nothing. Filtering
+// before the join limits it to `limit` rows per chat.
+//
+// It is a separate builder so the runner and the EXPLAIN test assert the same
+// SQL instead of two drifting copies.
+func messageTailBatchQuery(chatIDs []uint, limit int) (string, []interface{}) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chatIDs)), ",")
+	args := make([]interface{}, 0, len(chatIDs)+1)
+	for _, id := range chatIDs {
+		args = append(args, id)
+	}
+	args = append(args, limit)
+	query := fmt.Sprintf(`SELECT %s
+	FROM (
+		SELECT w.id
+		FROM (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
+			FROM messages
+			WHERE deleted_at IS NULL AND chat_id IN (%s)
+		) w
+		WHERE w.rn <= ?
+	) ranked
+	JOIN messages m ON m.id = ranked.id
+	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, tailColumnsFor("m"), placeholders)
+	return query, args
+}
+
 // recentMessagesByChatLimit loads the newest `limit` messages of every chat in
 // one query (ci#801 / the batch form of recentMessagesForChat).
 func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint][]database.Message, error) {
@@ -503,28 +540,9 @@ func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint
 	if len(chatIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chatIDs)), ",")
-	args := make([]interface{}, 0, len(chatIDs)+1)
-	for _, id := range chatIDs {
-		args = append(args, id)
-	}
-	args = append(args, limit)
-	// Rank first, fetch second: the window reads only id/chat_id/created_at
-	// (served by idx_messages_chat_deleted_id) and the heavy columns (tool_calls,
-	// meta_data - the two largest messages columns) are detoasted only for the
-	// `limit` surviving rows per chat. Ranking over the full row made this
-	// statement cost ~740 ms per request on ci.msgmate.io.
-	sql := fmt.Sprintf(`SELECT %s
-	FROM (
-		SELECT id, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
-		FROM messages
-		WHERE deleted_at IS NULL AND chat_id IN (%s)
-	) ranked
-	JOIN messages m ON m.id = ranked.id
-	WHERE ranked.rn <= ?
-	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, tailColumnsFor("m"), placeholders)
+	query, args := messageTailBatchQuery(chatIDs, limit)
 	var messages []database.Message
-	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
+	if err := DB.Raw(query, args...).Scan(&messages).Error; err != nil {
 		return nil, err
 	}
 	for _, message := range messages {
