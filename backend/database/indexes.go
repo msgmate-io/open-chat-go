@@ -91,6 +91,18 @@ var hotPathIndexes = []indexStatement{
 		Why:   "messages/list: chat_id filter + id DESC sort without soft-deleted rows",
 	},
 	{
+		// The transcript-tail window ranks each chat by
+		// `ORDER BY created_at DESC, id DESC`, so the (chat_id, id DESC) index
+		// above still forced a per-chat temp B-tree for the two newest rows
+		// (measured: "USE TEMP B-TREE FOR LAST 2 TERMS OF ORDER BY" on the
+		// ranking subquery of the /chats/states poll). This index carries the
+		// exact window ordering, which removes that sort (ci#1190).
+		Name:  "idx_messages_chat_deleted_created_id",
+		Table: "messages",
+		SQL:   "CREATE INDEX IF NOT EXISTS idx_messages_chat_deleted_created_id ON messages(chat_id, created_at DESC, id DESC) WHERE deleted_at IS NULL",
+		Why:   "chat state/stall guard: batched transcript tail ranks (chat_id, created_at DESC, id DESC) without a temp B-tree",
+	},
+	{
 		Name:  "idx_messages_created_at",
 		Table: "messages",
 		SQL:   "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)",
@@ -128,6 +140,11 @@ var hotPathIndexes = []indexStatement{
 //     always resolve through the single-column `idx_messages_chat_id`, with or
 //     without this index. The cross-chat `created_at` subquery is served by
 //     idx_messages_created_at as a covering index.
+//     The ci#1190 transcript-tail window changed the query shape: it ranks by
+//     `created_at DESC, id DESC` per chat, so the ASC two-column form is still
+//     not the right key - `idx_messages_chat_deleted_created_id`
+//     (`chat_id, created_at DESC, id DESC WHERE deleted_at IS NULL`) is, and it
+//     now lives in hotPathIndexes.
 //   - `chats(user1_id, id DESC)` / `chats(user2_id, id DESC)`: never chosen.
 //     `user1_id = ? OR user2_id = ? ORDER BY id DESC` keeps resolving to
 //     `MULTI-INDEX OR` over the AutoMigrate-created single-column
