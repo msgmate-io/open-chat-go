@@ -175,7 +175,7 @@ func resolveReadableModelByUUID(db *gorm.DB, user *database.User, modelUUID stri
 //	@Tags			models
 //	@Produce		json
 //	@Param			page query int false "Page number" minimum(1)
-//	@Param			page_size query int false "Page size" minimum(1) maximum(100)
+//	@Param			page_size query int false "Page size" minimum(1) maximum(1000)
 //	@Param			hoster query string false "Filter by backend hoster"
 //	@Param			source query string false "Filter by model source prefix"
 //	@Param			q query string false "Search by title/model/description"
@@ -194,17 +194,12 @@ func (h *ModelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	isAdmin := user != nil && user.IsAdmin
 
 	page := 1
-	pageSize := 12
 	if pageParam := strings.TrimSpace(r.URL.Query().Get("page")); pageParam != "" {
 		if parsed, parseErr := strconv.Atoi(pageParam); parseErr == nil && parsed > 0 {
 			page = parsed
 		}
 	}
-	if limitParam := strings.TrimSpace(r.URL.Query().Get("page_size")); limitParam != "" {
-		if parsed, parseErr := strconv.Atoi(limitParam); parseErr == nil && parsed > 0 && parsed <= 100 {
-			pageSize = parsed
-		}
-	}
+	pageSize := parseModelsListPageSize(r.URL.Query().Get("page_size"))
 
 	hosterFilter := strings.TrimSpace(r.URL.Query().Get("hoster"))
 	sourceFilter := strings.TrimSpace(r.URL.Query().Get("source"))
