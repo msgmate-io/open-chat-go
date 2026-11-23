@@ -494,11 +494,20 @@ func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint
 		args = append(args, id)
 	}
 	args = append(args, limit)
-	sql := fmt.Sprintf(`SELECT * FROM (
-		SELECT %s, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
-		FROM messages m
+	// Rank first, fetch second: the window reads only id/chat_id/created_at
+	// (served by idx_messages_chat_deleted_id) and the heavy columns (tool_calls,
+	// meta_data - the two largest messages columns) are detoasted only for the
+	// `limit` surviving rows per chat. Ranking over the full row made this
+	// statement cost ~740 ms per request on ci.msgmate.io.
+	sql := fmt.Sprintf(`SELECT %s
+	FROM (
+		SELECT id, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
+		FROM messages
 		WHERE deleted_at IS NULL AND chat_id IN (%s)
-	) t WHERE rn <= ? ORDER BY chat_id, created_at DESC, id DESC`, messageTailColumns, placeholders)
+	) ranked
+	JOIN messages m ON m.id = ranked.id
+	WHERE ranked.rn <= ?
+	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, messageTailColumns, placeholders)
 	var messages []database.Message
 	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
 		return nil, err
