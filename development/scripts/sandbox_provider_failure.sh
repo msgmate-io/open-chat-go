@@ -152,8 +152,26 @@ sandbox_turn_stall_class() {
   for file in "${files[@]}"; do
     found="$(grep -ciE "$sandbox_turn_stall_pattern" "$file")"
     stalls=$(( stalls + found ))
-    found="$(grep -iE '^FAIL|^not ok|::error|assertion failed|AssertionError' "$file" \
-      | grep -viE "$sandbox_turn_stall_pattern" | wc -l)"
+    # Echoed workflow/harness *source* is not a failure marker. A probe log
+    # carries the `run:` block it executed (ANSI-coloured), so lines such as
+    # `  echo "::error::bot token cannot read ${REPO}@${REF}: ..."` or
+    # `printf '::error::...'` would otherwise be counted as N real failures and
+    # a genuine stall would never classify - exactly what made the ci#1171 relay
+    # of eleven identical probes look like eleven unrelated regressions
+    # (stalls=2, other_failures=9, all nine of them echoed script text).
+    # Strip ANSI colour first (a real ESC byte, so no sed-specific \xHH escape is
+    # needed), then drop lines whose annotation marker is quoted inside an
+    # echo/printf/warn instead of being a rendered `##[error]`. The two derived
+    # annotations the runner and the harness emit *because* the step failed
+    # ("Process completed with exit code", "sandbox test ... failed") are not
+    # independent evidence either - they are present in every failing job.
+    found="$(sed -E $'s/\033\\[[0-9;]*[A-Za-z]//g' "$file" \
+      | grep -iE '^FAIL|^not ok|##\[error\]|::error|assertion failed|AssertionError' \
+      | grep -viE "$sandbox_turn_stall_pattern" \
+      | grep -viE '(^|[[:space:]])(echo|printf|warn|say|log)[[:space:]]+["'"'"']?.*::(error|warning)' \
+      | grep -viE '(^|[[:space:]])["'"'"']::(error|warning)' \
+      | grep -viE '##\[error\](sandbox test .* failed|Process completed with exit code)' \
+      | wc -l)"
     other_failures=$(( other_failures + found ))
   done
 
