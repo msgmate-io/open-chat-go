@@ -193,6 +193,20 @@ so they are visible at the deployment log level. `parkAndAwaitConfirmationRound`
 renders the first one through `inTurnParkDisabledLine`, pinned by
 `backend/api/msgmate/confirmable_round_test.go`.
 
+Do not let the log text alone decide the class: a probe log also echoes the
+`run:` block it executed, so the harness source lines that *print* annotations
+(`echo "::error::..."`, `printf '::error::...'`, `warn "::warning::..."`) appear
+in the log next to the real markers. `sandbox_turn_stall_class` in
+`development/scripts/sandbox_provider_failure.sh` therefore strips ANSI colour,
+ignores annotation markers quoted inside `echo`/`printf`/`warn`, and ignores the
+derived `##[error]Process completed with exit code` / `##[error]sandbox test ...
+failed` annotations before counting other failures; without that, a run whose
+only real signal is a stall reports `stalls=<n>, other_failures=<m>` and never
+classifies (ci#1171: eleven identical confirmable probes, `stalls=2`,
+`other_failures=9`, all nine echoed source text). Regression cases for both the
+plain and the ANSI-coloured shape live in
+`development/scripts/tests/test_sandbox_provider_failure.sh`.
+
 Agent coordination and operational runbooks are maintained outside this
 repository. Do not add agent runbooks, private integration documentation or
 deployment secrets to this repository.
@@ -496,5 +510,19 @@ Diagnostics checklist for a recurrence:
   ... continuation=true` with no matching `generation finished` means the
   continuation itself is wedged - re-open with that run id rather than
   re-triaging the park.
-- `grep -c "can't cd to"`: the workspace-root family (ci#1166 / ci#1171) always
-  logs at least one such line and is unrelated.
+- `grep -c "can't cd to"`: the workspace-root family (ci#1166) always logs at
+  least one such line. **Zero** hits *plus* the stall fingerprint above means the
+  run belongs to this section, not to workspace-root, whatever the relay ticket
+  claims: the ci#1171 relay (run `44837783519`, checkout `a6ad3ea5`) was filed as
+  workspace-root, yet its log carries 0 `can't cd to` lines and 20
+  `interaction timed out after 720s (... state=active ... last_message=false)`
+  lines across ten of the eleven failing jobs, and the tested commit predates the
+  gate (`git cat-file -e a6ad3ea5:backend/suspend/in_turn_park.go` fails) and is
+  not even an ancestor of `origin/main`. Such a relay is stale, not a new defect:
+  close it against a green re-run on a gated tip and put new evidence on ci#1166.
+- One job of that run is *not* a stall: `msgmate_coder_command_confirmation` got a
+  clean `READY` reply (`interaction state: finished`) in 617s and then died in the
+  verifier with `msgmate_coder_interactions.sh: line 133: echo: write error:
+  Broken pipe`, so `sandbox_turn_stall_class` correctly stays empty for it. That is
+  a SIGPIPE/`pipefail` bug in the harness helper, which lives in
+  `open-chat-go-ci` - do not chase it here as a model regression.
