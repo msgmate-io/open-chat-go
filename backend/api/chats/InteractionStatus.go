@@ -537,11 +537,7 @@ func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue ch
 	// A finished bot message that still carries a pending user confirmation was
 	// already handled by the early needs_confirmation check above.
 	if finished {
-		if errFlag, _ := meta["error"].(bool); errFlag {
-			response.State = string(chatstate.StateFailed)
-		} else {
-			response.State = string(chatstate.StateFinished)
-		}
+		response.State = string(interactionStateForFinishedMetadata(meta))
 		response.IsActive = false
 		return response, nil
 	}
@@ -843,6 +839,85 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 		}
 	}
 	return actions
+}
+
+// nonFaultTerminalFailureReasons lists the recorded terminal failure reasons
+// that must never settle an interaction as failed even when the `error` flag is
+// set on the message.
+//
+// tool_call_budget_exhausted: the server stopped the turn by design to protect
+// the chat and the sandbox (ci#1160).
+//
+// provider_backpressure: the turn never reached the provider because OpenChat's
+// own per-key admission queue was saturated, so the server refused the request
+// itself instead of a provider failing it; ci#1179 schedules one bounded
+// recovery continuation for it.
+//
+// msgmate.failureReasonExemptFromErrorFlag keeps both reasons out of the error
+// surface for new turns; the check here also covers messages persisted before
+// that exemption landed, so a healthy capacity stop is never displayed as a
+// defect.
+var nonFaultTerminalFailureReasons = map[string]bool{
+	// msgmate.FailureReasonToolCallBudget
+	"tool_call_budget_exhausted": true,
+	// msgmate.FailureReasonProviderBackpressure
+	"provider_backpressure": true,
+}
+
+// InteractionStatusProviderBackpressureContinuationsKey mirrors
+// msgmate.ProviderBackpressureContinuationsMetadataKey (ci#1179): the number of
+// bounded provider-backpressure recovery continuations already spent on the
+// turn. A non-zero value means the stop was recovered by scheduling a recovery
+// turn rather than being a dead end.
+const InteractionStatusProviderBackpressureContinuationsKey = "ci1179_backpressure_continuations"
+
+// IsNonFaultTerminalFailureReason reports whether a recorded terminal failure
+// reason describes a capacity stop the server performed on itself, so it must
+// never settle an interaction as failed.
+//
+// It is exported so the msgmate layer, which owns the canonical reason
+// constants, can assert in one test that the two definitions agree. The
+// exemption is duplicated here on purpose: chats must not import msgmate
+// (msgmate imports chats), and the check also has to cover messages persisted
+// before the msgmate exemption landed.
+func IsNonFaultTerminalFailureReason(reason string) bool {
+	return nonFaultTerminalFailureReasons[reason]
+}
+
+// interactionStateForFinishedMetadata decides the settled state of a finished
+// interaction from the metadata of its newest message.
+//
+// `finished && error` is a failure, but only for reasons that are actually
+// faults: a capacity stop (a reached tool-call budget or a provider-backpressure
+// refusal, recovered or not) ended the turn without anything being broken, so it
+// settles `finished` and stays fully inspectable through `failure_reason` /
+// `turn_ended` / `capacity_stop` (ci#1160, ci#1179).
+func interactionStateForFinishedMetadata(meta map[string]interface{}) chatstate.State {
+	errFlag, _ := meta["error"].(bool)
+	if !errFlag {
+		return chatstate.StateFinished
+	}
+	if reason, _ := meta["failure_reason"].(string); nonFaultTerminalFailureReasons[reason] {
+		return chatstate.StateFinished
+	}
+	// ci#1160/ci#1179: a stamped capacity stop (tool-call budget or provider
+	// backpressure) is never a fault, whatever the failure reason says.
+	if stop, _ := meta["capacity_stop"].(string); stop != "" {
+		return chatstate.StateFinished
+	}
+	// ci#1179: a back-pressure stop whose single bounded recovery turn was
+	// actually enqueued is a recovered turn, not a dead end.
+	switch recovery := meta[InteractionStatusProviderBackpressureContinuationsKey].(type) {
+	case float64:
+		if recovery > 0 {
+			return chatstate.StateFinished
+		}
+	case int:
+		if recovery > 0 {
+			return chatstate.StateFinished
+		}
+	}
+	return chatstate.StateFailed
 }
 
 func isQueueStateActive(state string) bool {
