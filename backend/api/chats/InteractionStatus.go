@@ -592,11 +592,18 @@ func chatBackendName(DB *gorm.DB, chat database.Chat) (string, bool) {
 // deterministic for the status/stall resolvers (ci#609).
 func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
 	var message database.Message
-	err := DB.Where("chat_id = ?", chatID).
+	// Same projection as the tail read: `content`/`reasoning` are TOAST-resident
+	// and this runs once per interaction chat from the stall guard.
+	err := DB.Select(messageTailColumns).
+		Where("chat_id = ?", chatID).
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
 		Order("id DESC").
-		First(&message).Error
+		Limit(1).
+		Find(&message).Error
+	if err == nil && message.ID == 0 {
+		return message, gorm.ErrRecordNotFound
+	}
 	return message, err
 }
 
