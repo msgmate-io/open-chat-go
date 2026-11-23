@@ -1662,6 +1662,46 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if backend != "" {
 			metadata["backend"] = backend
 		}
+
+		// ci#747 RC2/RC3 + ci#1179: the automatic continuation is decided and
+		// dispatched *before* the terminal failure metadata is written. A turn
+		// that stopped on the tool-call cap or on provider admission
+		// back-pressure is resumable, so the interaction must carry the
+		// scheduled continuation instead of only a failure; every lane is
+		// bounded (one cap continuation, one back-pressure continuation), and
+		// only a turn whose lane already spent its attempt falls through to
+		// applyTerminalFailureMetadata below. ci#1179 extends the guard with the
+		// back-pressure decision: it is recoverable even when no transient tool
+		// failure was counted, because the request never reached the provider.
+		continuationAttempts := ContinuationAttempts{}
+		if outcome != nil {
+			if message.Content.MetaData != nil {
+				continuationAttempts.Cap = ContinuationAttemptsFromMetadata(*message.Content.MetaData)
+				continuationAttempts.ProviderBackpressure = ProviderBackpressureContinuationsFromMetadata(*message.Content.MetaData)
+			}
+			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0 ||
+				streamFailure.Reason == FailureReasonProviderBackpressure
+			dispatch, dispatchErr := DispatchCapContinuation(
+				coderScheduleRunner{}, message.Content.ChatUUID, outcome, streamFailure, transientInfra,
+				continuationAttempts, message.Content.ChatUUID, 0,
+			)
+			if dispatchErr != nil {
+				metadata["continuation_error"] = dispatchErr.Error()
+			} else if continuationMetadata := CapContinuationVisibleMetadata(dispatch, message.Content.ChatUUID); len(continuationMetadata) > 0 {
+				for key, value := range continuationMetadata {
+					metadata[key] = value
+				}
+				if dispatch.Reason == ContinuationReasonProviderBackpressure {
+					// ci#1179: the back-pressure lane is tracked on its own
+					// counter, so it never consumes (or is consumed by) the
+					// cap lane.
+					metadata[ProviderBackpressureContinuationsMetadataKey] = 1
+				} else {
+					metadata["ci747_continuation_attempts"] = 1
+				}
+			}
+		}
+
 		if streamErr != nil {
 			// ci#1160: a reached tool-call budget is a capacity stop, so
 			// applyTerminalFailureMetadata records it without flagging the
@@ -1776,40 +1816,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if outcome.EmptyFinalStreak > 0 {
 				metadata[emptyFinalStreakMetadata] = outcome.EmptyFinalStreak
 			}
-			// ci#747 RC2/RC3: a cap or a transient provider/workspace failure
-			// must not leave the interaction waiting for a human. Enqueue exactly
-			// one scheduled continuation of this chat, with a stable correlation
-			// id so a repeated decision cancels instead of duplicating it.
-			continuationAttempts := 0
-			if message.Content.MetaData != nil {
-				continuationAttempts = ContinuationAttemptsFromMetadata(*message.Content.MetaData)
-			}
-			// ci#1179: a provider-admission back-pressure stop is recoverable by a
-			// single bounded retry just like a transient provider failure - the
-			// request never reached the provider. The classification marks it in
-			// the metadata (see applyTerminalFailureMetadata), so the ordinary
-			// bounded continuation path (TurnContinuationMaxAttempts) picks it up
-			// instead of leaving the interaction failed with no recovery turn.
-			backpressureRecoverable := outcome.ProviderBackpressure || isRecoverableBackpressureStop(metadata)
-			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0 || backpressureRecoverable
-			dispatch, dispatchErr := DispatchCapContinuation(
-				coderScheduleRunner{}, message.Content.ChatUUID, outcome, transientInfra,
-				continuationAttempts, message.Content.ChatUUID, 0,
-			)
-			if dispatchErr != nil {
-				metadata["continuation_error"] = dispatchErr.Error()
-			} else if continuationMetadata := CapContinuationVisibleMetadata(dispatch, message.Content.ChatUUID); len(continuationMetadata) > 0 {
-				for key, value := range continuationMetadata {
-					metadata[key] = value
-				}
-				metadata["ci747_continuation_attempts"] = 1
-				// ci#1179: only now that the bounded recovery retry is really
-				// scheduled is the back-pressure stop no longer a failure. If the
-				// chain already spent TurnContinuationMaxAttempts (or the enqueue
-				// above failed) nothing is cleared, so the interaction settles
-				// failed with the real reason in its text.
-				clearRecoverableBackpressureFailure(metadata, dispatch.Scheduled)
-			}
 		}
 
 		// ci#809: a successful all_tasks_completed call is the machine-readable
@@ -1833,13 +1839,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		// The resolution runs last (after the confirmable-action prompt) so it
 		// only ever fills a genuinely blank message.
 		text = ResolveTerminalAssistantText(text, len(allToolCalls), isCancelled, streamErr, outcome)
-
-		// ci#1179: when the bounded recovery continuation of a provider
-		// back-pressure stop was actually scheduled, the message must not keep
-		// telling the user to retry by hand - the retry is already in flight.
-		if metadata["provider_backpressure_recovery"] == BackpressureRecoveryContinuationScheduled {
-			text = withBackpressureRecoveryNotice(text)
-		}
 
 		if len(reasoningEntries) > 0 {
 			aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{

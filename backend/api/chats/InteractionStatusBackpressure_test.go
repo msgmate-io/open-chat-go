@@ -6,10 +6,11 @@ import (
 	"backend/chatstate"
 )
 
-// ci#1179: `finished && error` settles the interaction failed, and only the
-// reasons that are genuine capacity stops (a reached tool-call budget, or a
-// provider-backpressure stop whose single bounded recovery turn was actually
-// scheduled) are exempt.
+// ci#1179 (follow-up to ci#1160): `finished && error` still settles the
+// interaction failed, but a capacity stop the server performed on itself - a
+// reached tool-call budget, or a provider-backpressure refusal from OpenChat's
+// own admission queue - must settle `finished` so the recovery continuation it
+// scheduled stays visible instead of the turn being reported as a defect.
 func TestInteractionStateForFinishedMetadata(t *testing.T) {
 	cases := []struct {
 		name string
@@ -31,24 +32,32 @@ func TestInteractionStateForFinishedMetadata(t *testing.T) {
 			want: chatstate.StateFinished,
 		},
 		{
-			name: "backpressure recovered by a scheduled continuation stays finished",
+			name: "exempted reason: provider backpressure stays finished",
 			meta: map[string]interface{}{
-				"finished":                       true,
-				"error":                          true,
-				"failure_reason":                 "provider_backpressure",
-				"provider_backpressure_recovery": "continuation_scheduled",
+				"finished":       true,
+				"error":          true,
+				"failure_reason": "provider_backpressure",
 			},
 			want: chatstate.StateFinished,
 		},
 		{
-			name: "backpressure with the bounded retry exhausted settles failed",
+			name: "backpressure with a scheduled recovery continuation stays finished",
 			meta: map[string]interface{}{
-				"finished":                          true,
-				"error":                             true,
-				"failure_reason":                    "provider_backpressure",
-				"provider_backpressure_recoverable": true,
+				"finished":       true,
+				"error":          true,
+				"failure_reason": "provider_backpressure",
+				InteractionStatusProviderBackpressureContinuationsKey: float64(1),
 			},
-			want: chatstate.StateFailed,
+			want: chatstate.StateFinished,
+		},
+		{
+			name: "stamped capacity stop stays finished",
+			meta: map[string]interface{}{
+				"finished":      true,
+				"error":         true,
+				"capacity_stop": "provider_backpressure",
+			},
+			want: chatstate.StateFinished,
 		},
 		{
 			name: "non-exempted provider error settles failed",
@@ -56,6 +65,14 @@ func TestInteractionStateForFinishedMetadata(t *testing.T) {
 				"finished":       true,
 				"error":          true,
 				"failure_reason": "provider_error",
+			},
+			want: chatstate.StateFailed,
+		},
+		{
+			name: "error without a capacity marker settles failed",
+			meta: map[string]interface{}{
+				"finished": true,
+				"error":    true,
 			},
 			want: chatstate.StateFailed,
 		},
