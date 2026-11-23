@@ -43,14 +43,6 @@ type TurnOutcome struct {
 	// (ci#688, ci#691).
 	TransientFailures       int
 	SandboxCapacityFailures int
-	// ProviderBackpressure is true when this server's own provider-admission
-	// back-pressure stopped the turn (the per-key in-flight cap was exhausted
-	// and no slot freed up within the queue timeout) instead of a provider
-	// fault (ci#1179). It consumes no tool-call budget, so it can never be
-	// derived from the counters above: it is recorded from the terminal
-	// failure classification and is what makes a saturation stop recoverable
-	// by one bounded continuation.
-	ProviderBackpressure bool
 	// BudgetExemptCalls counts the calls of the turn that were bookkeeping
 	// rather than work (`coder_schedule`, ci#724) and therefore did not consume
 	// the total tool-call budget.
@@ -258,97 +250,48 @@ func applyTerminalFailureMetadata(metadata map[string]interface{}, streamErr err
 		return
 	}
 	metadata["failure_reason"] = classification.Reason
-	if classification.Reason == FailureReasonToolCallBudget {
+	// ci#1160 + ci#1179: one predicate decides whether a terminal reason is a
+	// capacity stop. failureReasonExemptFromErrorFlag is the single source of
+	// truth (tool-call budget and provider backpressure); IsCapacityStopReason
+	// delegates to it so the ci#1160 native-coder self-check and this metadata
+	// stamp can never drift apart during a consolidation.
+	if failureReasonExemptFromErrorFlag(classification.Reason) {
 		// Capacity stop, not a fault: keep it out of the error surface.
+		//
+		// ci#1160: provider admission backpressure (*ProviderSaturationError) is
+		// a capacity refusal the server performed on itself, exactly like a
+		// tool-call budget stop: the turn never reached the provider because the
+		// per-key admission queue was saturated. Stamping `error: true` made the
+		// interaction settle as state=failed with no recovery path, which is what
+		// the ci#622 native-coder self-check reported as "the agent turn reported
+		// an internal error" for every role. It is a capacity stop, so it stays
+		// out of the error surface and remains inspectable via turn_ended.
 		metadata["turn_ended"] = outcome.reason()
+		metadata["capacity_stop"] = classification.Reason
 		return
 	}
 	metadata["error"] = true
 	metadata["error_detail"] = streamErr.Error()
-	// ci#1179: provider admission back-pressure is a server-performed capacity
-	// stop too - the provider was never asked - but unlike a tool-call budget it
-	// is recoverable: the very next turn usually gets a slot. The turn therefore
-	// starts out looking failed and the recovery seam clears the flag when (and
-	// only when) it actually schedules the one bounded continuation
-	// (see clearRecoverableBackpressureFailure). After that single retry is
-	// spent nothing clears it, so the interaction settles failed with the real
-	// reason in the message text instead of pretending it recovered.
-	if classification.Reason == FailureReasonProviderBackpressure {
-		metadata[BackpressureRecoverableMetadataKey] = true
-		// The outcome carries the same fact as structured state (it consumes
-		// no tool-call budget, so it cannot be derived from the counters), so
-		// the recovery seam and the transcript can decide on the outcome
-		// without re-parsing metadata.
-		if outcome != nil {
-			outcome.ProviderBackpressure = true
-		}
-	}
 }
 
-// BackpressureRecoverableMetadataKey marks a provider-backpressure stop that is
-// still eligible for the single bounded recovery continuation, so the settle
-// path can tell "stopped, recovery scheduled" from "stopped, retry exhausted".
-const BackpressureRecoverableMetadataKey = "provider_backpressure_recoverable"
-
-// clearRecoverableBackpressureFailure drops the `error` flag of a
-// provider-backpressure stop once the bounded recovery continuation for it has
-// actually been scheduled (ci#1179).
+// failureReasonExemptFromErrorFlag reports whether a terminal failure reason
+// describes a capacity/back-pressure stop the server performed by design rather
+// than a fault, and therefore must not be flagged with `error: true`.
 //
-// A back-pressure stop is not a fault: the request never reached the provider,
-// and one bounded backoff continuation is dispatched instead of settling the
-// interaction as failed. Only when no continuation is scheduled - because the
-// chain already spent its single attempt, or the enqueue failed - does the stop
-// stay an explicit failure, which is what makes the second, unrecoverable
-// saturation visible to the user and to the native-coder self-check.
-//
-// It returns true when the flag was cleared, so the caller can record the
-// decision in the transcript.
-func clearRecoverableBackpressureFailure(metadata map[string]interface{}, continuationScheduled bool) bool {
-	if len(metadata) == 0 || !continuationScheduled {
+// ci#1179 (follow-up to ci#1160): provider backpressure joins the tool-call
+// budget here. Back-pressure means the request never reached the provider
+// because OpenChat's own admission cap was exhausted, and ci#1179 schedules a
+// bounded recovery continuation for it. Flagging it as an error is what made
+// the finished message resolve StateFailed (see chats.InteractionStatus), which
+// in turn hid the recovery continuation from the user and made a healthy
+// self-inflicted capacity stop look like a defect.
+func failureReasonExemptFromErrorFlag(reason string) bool {
+	switch reason {
+	case FailureReasonToolCallBudget, FailureReasonProviderBackpressure:
+		return true
+	default:
 		return false
 	}
-	if recoverable, _ := metadata[BackpressureRecoverableMetadataKey].(bool); !recoverable {
-		return false
-	}
-	delete(metadata, "error")
-	delete(metadata, "error_detail")
-	delete(metadata, BackpressureRecoverableMetadataKey)
-	metadata["provider_backpressure_recovery"] = BackpressureRecoveryContinuationScheduled
-	return true
-}
-
-// BackpressureRecoveryContinuationScheduled records in the interaction that the
-// bounded recovery continuation of a backpressure stop was actually enqueued, so
-// the decision is visible in the transcript instead of being implied by the
-// absence of the error flag.
-const BackpressureRecoveryContinuationScheduled = "continuation_scheduled"
-
-// isRecoverableBackpressureStop reports whether this turn's metadata marks a
-// provider-backpressure stop that is still eligible for its single bounded
-// recovery continuation (ci#1179).
-func isRecoverableBackpressureStop(metadata map[string]interface{}) bool {
-	if len(metadata) == 0 {
-		return false
-	}
-	recoverable, _ := metadata[BackpressureRecoverableMetadataKey].(bool)
-	return recoverable
-}
-
-// backpressureRecoveryNotice is the sentence appended to the terminal text of a
-// backpressure stop whose bounded recovery continuation was actually scheduled.
-// The back-pressure guidance alone tells the user to retry by hand, which is
-// exactly what the scheduled continuation makes unnecessary (ci#1179).
-const backpressureRecoveryNotice = "A recovery turn has been scheduled automatically, so no action is needed unless the work has to be re-dispatched after that retry."
-
-// withBackpressureRecoveryNotice appends the recovery notice to the terminal
-// text of a scheduled backpressure recovery, so the message never asks the user
-// for a manual retry that is already in flight.
-func withBackpressureRecoveryNotice(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return backpressureRecoveryNotice
-	}
-	return text + "\n\n" + backpressureRecoveryNotice
 }
 
 // wrapTerminalResponseAlreadySent marks a turn that already persisted its own
@@ -361,15 +304,15 @@ func withBackpressureRecoveryNotice(text string) string {
 // performed by design reached the task as an opaque error and was classified
 // (and settled) as an internal failure even though the turn is resumable.
 //
-// A cap error is therefore wrapped with %w so errors.As keeps matching it
-// through the "response already sent" marker; every other error keeps the exact
-// historic wrapping and wording, so no unrelated classification changes.
+// ci#1160: every classified terminal error is wrapped with %w for the same
+// reason, not just the cap error. The historic %v form flattened the whole
+// terminal error into a string, so the task re-classifying the turn saw an
+// opaque error and rendered the generic "internal error" instead of the real
+// reason (provider saturation, a provider fault, a cancelled context). With %w
+// the user-visible text keeps the concrete reason *and* errors.Is/errors.As
+// keep working downstream. The cap error behaves exactly as before.
 func wrapTerminalResponseAlreadySent(err error) error {
-	var capErr *toolCallCapError
-	if errors.As(err, &capErr) {
-		return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
-	}
-	return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
+	return fmt.Errorf("%w: %w", ErrResponseAlreadySent, err)
 }
 
 // toolCallCapError is the typed terminal error of a turn that hit its per-chat

@@ -106,3 +106,76 @@ sandbox_provider_failure_class() {
     printf 'empty_reply\n'
   fi
 }
+
+# A turn that never started. The probe gives up after its full window on a chat
+# that is still `state=active`: the user message is stored, no bot message ever
+# appeared, so there is no reply at all. That is the ci#1172 fingerprint - a
+# relay of N private-sandbox jobs of the same run, one identical probe timeout
+# each, and no failed test name anywhere in the logs.
+#
+# Note what this is NOT: no bot reply was ever recorded, so the provider
+# classifiers (`account`/`unreachable`/`empty_reply`) have nothing to look at,
+# and a retry just buys a second identical probe window without new evidence.
+sandbox_turn_stall_pattern='interaction timed out after [0-9]+s'
+sandbox_turn_stall_pattern+='.*state=active'
+sandbox_turn_stall_pattern+='.*(last_message=false|no bot message|bot_messages=0)'
+
+# sandbox_turn_stall_class <attempt-log-or-results-dir>
+#
+#   turn_stall  every attempt log that shows a probe timeout shows the ci#1172
+#               stall (chat stayed active, no bot turn) and no other failure
+#               marker is present, so the turn provably never started.
+#   (empty)     anything else - a passing run, a real assertion failure, or a
+#               timeout of a chat that had already produced a bot turn - so the
+#               ordinary verdict and retry behaviour stand.
+sandbox_turn_stall_class() {
+  local target="${1:-}"
+  [ -n "$target" ] || return 0
+
+  local files=() file
+  if [ -d "$target" ]; then
+    for file in "$target"/*.attempt*.log "$target"/*.out; do
+      [ -f "$file" ] && files+=( "$file" )
+    done
+  elif [ -f "$target" ]; then
+    files=( "$target" )
+  fi
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  # Count per line, not per file: the probe appends every attempt of a test to
+  # the same `<test>.out`, so one file can hold a stall of attempt 1 and a real
+  # assertion failure of attempt 2. Classifying per file would let the earlier
+  # stall swallow the later failure and turn a code regression into "the turn
+  # never started". The stall lines themselves carry the harness's `::error`
+  # annotation, so they are removed before looking for other failure markers.
+  local stalls=0 other_failures=0 found
+  for file in "${files[@]}"; do
+    found="$(grep -ciE "$sandbox_turn_stall_pattern" "$file")"
+    stalls=$(( stalls + found ))
+    # Echoed workflow/harness *source* is not a failure marker. A probe log
+    # carries the `run:` block it executed (ANSI-coloured), so lines such as
+    # `  echo "::error::bot token cannot read ${REPO}@${REF}: ..."` or
+    # `printf '::error::...'` would otherwise be counted as N real failures and
+    # a genuine stall would never classify - exactly what made the ci#1171 relay
+    # of eleven identical probes look like eleven unrelated regressions
+    # (stalls=2, other_failures=9, all nine of them echoed script text).
+    # Strip ANSI colour first (a real ESC byte, so no sed-specific \xHH escape is
+    # needed), then drop lines whose annotation marker is quoted inside an
+    # echo/printf/warn instead of being a rendered `##[error]`. The two derived
+    # annotations the runner and the harness emit *because* the step failed
+    # ("Process completed with exit code", "sandbox test ... failed") are not
+    # independent evidence either - they are present in every failing job.
+    found="$(sed -E $'s/\033\\[[0-9;]*[A-Za-z]//g' "$file" \
+      | grep -iE '^FAIL|^not ok|##\[error\]|::error|assertion failed|AssertionError' \
+      | grep -viE "$sandbox_turn_stall_pattern" \
+      | grep -viE '(^|[[:space:]])(echo|printf|warn|say|log)[[:space:]]+["'"'"']?.*::(error|warning)' \
+      | grep -viE '(^|[[:space:]])["'"'"']::(error|warning)' \
+      | grep -viE '##\[error\](sandbox test .* failed|Process completed with exit code)' \
+      | wc -l)"
+    other_failures=$(( other_failures + found ))
+  done
+
+  if [ "$stalls" -gt 0 ] && [ "$other_failures" -eq 0 ]; then
+    printf 'turn_stall\n'
+  fi
+}
