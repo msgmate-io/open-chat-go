@@ -15,6 +15,18 @@ import (
 // nowhere else (ci#1049).
 const ToolNameGithubIssueComment = "github_issue_comment"
 
+// ToolNameDispatchAgent is the second pinned write tool: it starts a bot
+// interaction from the dispatching issue, so its target is server-bound the same
+// way the comment tool's is (ci#1189).
+const ToolNameDispatchAgent = "coder_dispatch_agent"
+
+// pinnedWriteToolNames lists every write tool the server grants only together
+// with a server-owned pin. Keeping them in one slice means a new pinned tool is
+// a one-line addition and can never be granted without its pin.
+func pinnedWriteToolNames() []string {
+	return []string{ToolNameGithubIssueComment, ToolNameDispatchAgent}
+}
+
 // ToolInitPinsFromTrigger derives the server-owned tool-init pins for an
 // interaction from its dispatch trigger: the `repo:<owner/name>` and
 // `issue:<n>` / `ci#<n>` dispatch tags first (the values the dispatcher stamped
@@ -29,6 +41,10 @@ func ToolInitPinsFromTrigger(tags []string, config map[string]interface{}) map[s
 	}
 	return map[string]map[string]interface{}{
 		ToolNameGithubIssueComment: {
+			database.ToolInitPinnedFieldRepo:        repo,
+			database.ToolInitPinnedFieldIssueNumber: number,
+		},
+		ToolNameDispatchAgent: {
 			database.ToolInitPinnedFieldRepo:        repo,
 			database.ToolInitPinnedFieldIssueNumber: number,
 		},
@@ -149,41 +165,52 @@ func bindInteractionToolInitPins(config map[string]interface{}, tags []string) m
 	return config
 }
 
-// grantPinnedWriteTool adds the pinned write tool to the interaction's tool list
-// when it is resolvable for this deployment. The grant is the whole point of the
-// pin: the tool is only handed out *because* its target is server-bound, so an
-// interaction without a pin never gets it (fail closed). A name this deployment
-// does not implement is skipped rather than injected, so the grant can never
-// turn into a validation failure.
+// grantPinnedWriteTool adds every pinned write tool to the interaction's tool
+// list when it is resolvable for this deployment. The grant is the whole point of
+// the pin: a tool is only handed out *because* its target is server-bound, so an
+// interaction without a pin never gets it (fail closed). A tool is skipped when it
+// has no pin, when this deployment does not implement it, or when it is already
+// granted, so the grant can never turn into a validation failure.
 func grantPinnedWriteTool(config map[string]interface{}, pins map[string]map[string]interface{}) {
 	if config == nil || len(pins) == 0 {
 		return
 	}
-	if _, pinned := pins[ToolNameGithubIssueComment]; !pinned {
-		return
-	}
-	// The write tool is served by the integration module and registered at
-	// startup, so it only resolves when this deployment actually provides it. A
-	// name that does not resolve here is skipped rather than injected, so the
-	// grant can never turn into a validation failure.
-	if _, found := msgmate.NewToolByName(ToolNameGithubIssueComment); !found {
-		return
-	}
 	names, err := collectToolNames(config["tools"])
 	if err != nil {
+		names = nil
+	}
+	for _, toolName := range pinnedWriteToolNames() {
+		if _, pinned := pins[toolName]; !pinned {
+			continue
+		}
+		// The tools are served by the integration module and registered at
+		// startup, so they only resolve when this deployment provides them.
+		if _, found := msgmate.NewToolByName(toolName); !found {
+			continue
+		}
+		if toolNameGranted(names, toolName) {
+			continue
+		}
+		names = append(names, toolName)
+	}
+	if len(names) == 0 {
 		return
 	}
-	for _, name := range names {
-		if strings.EqualFold(strings.TrimSpace(name), ToolNameGithubIssueComment) {
-			return
-		}
-	}
-	granted := make([]interface{}, 0, len(names)+1)
+	granted := make([]interface{}, 0, len(names))
 	for _, name := range names {
 		granted = append(granted, name)
 	}
-	granted = append(granted, ToolNameGithubIssueComment)
 	config["tools"] = granted
+}
+
+// toolNameGranted reports whether name is already part of the tool list.
+func toolNameGranted(names []string, toolName string) bool {
+	for _, name := range names {
+		if strings.EqualFold(strings.TrimSpace(name), toolName) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyInteractionToolInitPins is the single entry point the interaction-creation
