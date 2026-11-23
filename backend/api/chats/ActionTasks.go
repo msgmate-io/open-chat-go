@@ -478,8 +478,60 @@ func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Mess
 // a prefixed list silently broke the latter with
 // `missing FROM-clause entry for table "m"`, and the swallowed error made the
 // resolver skip the pending-confirmation check (PR CI shard 2/4).
-const messageTailColumns = "id, uuid, created_at, updated_at, read_at, " +
+const messageTailColumnList = "id, uuid, created_at, updated_at, read_at, " +
 	"sender_id, receiver_id, data_type, chat_id, text, tool_calls, meta_data"
+
+// messageTailColumns is the unaliased form for the GORM single-chat read (that
+// query has no table alias).
+const messageTailColumns = messageTailColumnList
+
+// tailColumnsFor prefixes the column list with a table alias. The batch query
+// joins the ranking subquery with `messages m`, where an unprefixed `id` is
+// ambiguous (SQLite: "ambiguous column name: id").
+func tailColumnsFor(alias string) string {
+	columns := strings.Split(messageTailColumnList, ", ")
+	for i, column := range columns {
+		columns[i] = alias + "." + column
+	}
+	return strings.Join(columns, ", ")
+}
+
+// messageTailBatchQuery builds the single batched transcript-tail query used by
+// the sidebar list and the /api/v1/chats/states poll (ci#801, ci#1190).
+//
+// Rank first, fetch second: the window reads only id/chat_id/created_at and the
+// heavy projection (tool_calls, meta_data - the two largest messages columns,
+// 437 MB on ci.msgmate.io) is detoasted only for the surviving rows.
+//
+// The ranking filter `rn <= limit` deliberately lives INSIDE the derived table:
+// an outer `WHERE ranked.rn <= ?` cannot be pushed into a window subquery, so
+// with the predicate above the join Postgres still joined every message of every
+// chat in the batch and the rank-then-fetch split bought nothing. Filtering
+// before the join limits it to `limit` rows per chat.
+//
+// It is a separate builder so the runner and the EXPLAIN test assert the same
+// SQL instead of two drifting copies.
+func messageTailBatchQuery(chatIDs []uint, limit int) (string, []interface{}) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chatIDs)), ",")
+	args := make([]interface{}, 0, len(chatIDs)+1)
+	for _, id := range chatIDs {
+		args = append(args, id)
+	}
+	args = append(args, limit)
+	query := fmt.Sprintf(`SELECT %s
+	FROM (
+		SELECT w.id
+		FROM (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
+			FROM messages
+			WHERE deleted_at IS NULL AND chat_id IN (%s)
+		) w
+		WHERE w.rn <= ?
+	) ranked
+	JOIN messages m ON m.id = ranked.id
+	ORDER BY m.chat_id, m.created_at DESC, m.id DESC`, tailColumnsFor("m"), placeholders)
+	return query, args
+}
 
 // recentMessagesByChatLimit loads the newest `limit` messages of every chat in
 // one query (ci#801 / the batch form of recentMessagesForChat).
@@ -488,19 +540,9 @@ func recentMessagesByChatLimit(DB *gorm.DB, chatIDs []uint, limit int) (map[uint
 	if len(chatIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chatIDs)), ",")
-	args := make([]interface{}, 0, len(chatIDs)+1)
-	for _, id := range chatIDs {
-		args = append(args, id)
-	}
-	args = append(args, limit)
-	sql := fmt.Sprintf(`SELECT * FROM (
-		SELECT %s, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
-		FROM messages m
-		WHERE deleted_at IS NULL AND chat_id IN (%s)
-	) t WHERE rn <= ? ORDER BY chat_id, created_at DESC, id DESC`, messageTailColumns, placeholders)
+	query, args := messageTailBatchQuery(chatIDs, limit)
 	var messages []database.Message
-	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
+	if err := DB.Raw(query, args...).Scan(&messages).Error; err != nil {
 		return nil, err
 	}
 	for _, message := range messages {
