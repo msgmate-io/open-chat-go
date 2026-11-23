@@ -3,6 +3,8 @@ package msgmate
 import (
 	"errors"
 	"testing"
+
+	"backend/api/chats"
 )
 
 // TestIsCapacityStopReason covers the ci#1160 regression: a capacity stop is a
@@ -25,6 +27,38 @@ func TestIsCapacityStopReason(t *testing.T) {
 	for reason, want := range cases {
 		if got := IsCapacityStopReason(reason); got != want {
 			t.Errorf("IsCapacityStopReason(%q) = %v, want %v", reason, got, want)
+		}
+	}
+}
+
+// TestCI1179CapacityStopExemptionParity is the drift guard for the two copies of
+// the capacity-stop exemption (ci#1179). msgmate owns the canonical reason
+// constants and predicates; api/chats keeps its own copy because it must not
+// import msgmate (msgmate imports chats) and because it also has to settle
+// messages persisted before the exemption landed. A new exempted reason added
+// on one side only would silently re-introduce the ci#1160 regression
+// (`finished && error` settling state=failed), so this test asserts both
+// predicates agree on every reason the codebase records.
+func TestCI1179CapacityStopExemptionParity(t *testing.T) {
+	reasons := []string{
+		FailureReasonToolCallBudget,
+		FailureReasonProviderBackpressure,
+		FailureReasonProviderError,
+		FailureReasonContextWindow,
+		FailureReasonTransientNetwork,
+		FailureReasonTimeout,
+		FailureReasonInternal,
+		FailureReasonLeakedCompaction,
+		FailureReasonRepetitionLoop,
+		"",
+		"something_unexpected",
+	}
+
+	for _, reason := range reasons {
+		msgmate := IsCapacityStopReason(reason)
+		chatsSide := chats.IsNonFaultTerminalFailureReason(reason)
+		if msgmate != chatsSide {
+			t.Errorf("capacity-stop exemption drifted for %q: msgmate.IsCapacityStopReason = %v, chats.IsNonFaultTerminalFailureReason = %v", reason, msgmate, chatsSide)
 		}
 	}
 }
