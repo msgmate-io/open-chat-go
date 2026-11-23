@@ -80,9 +80,11 @@ func ResolveChatStates(DB *gorm.DB, inspector *asynq.Inspector, chats []database
 	// queue once per chat inside resolveInteractionStatus, which made a list of
 	// N chats cost O(N x queue size) Redis scans.
 	queue := snapshotQueueActivity{snapshot: workqueue.SnapshotBotReplyActivity(inspector)}
+	// One transcript-tail query for the batch instead of one per chat.
+	tails := loadChatMessageTails(DB, chats)
 	for i := range chats {
 		state := string(chatstate.StateIdle)
-		if status, err := resolveInteractionStatusWithQueue(DB, chats[i], queue); err == nil && status.State != "" {
+		if status, err := resolveInteractionStatusWithQueue(DB, chats[i], queue, tails); err == nil && status.State != "" {
 			state = status.State
 		}
 		states[chats[i].UUID] = state

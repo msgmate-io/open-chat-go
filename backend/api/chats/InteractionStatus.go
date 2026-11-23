@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/chatstate"
 	"backend/database"
+	"backend/logging"
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
@@ -413,9 +414,11 @@ func ResolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 // whole listing.
 func ResolveInteractionStatusesWithSnapshot(DB *gorm.DB, snapshot *workqueue.BotReplyActivity, chats []database.Chat) []InteractionStatusResponse {
 	queue := snapshotQueueActivity{snapshot: snapshot}
+	// One transcript-tail query for the whole batch instead of one per chat.
+	tails := loadChatMessageTails(DB, chats)
 	out := make([]InteractionStatusResponse, len(chats))
 	for i, chat := range chats {
-		status, err := resolveInteractionStatusWithQueue(DB, chat, queue)
+		status, err := resolveInteractionStatusWithQueue(DB, chat, queue, tails)
 		if err != nil {
 			out[i] = InteractionStatusResponse{
 				ChatUUID: chat.UUID,
@@ -430,10 +433,10 @@ func ResolveInteractionStatusesWithSnapshot(DB *gorm.DB, snapshot *workqueue.Bot
 }
 
 func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
-	return resolveInteractionStatusWithQueue(DB, chat, inspectorQueueActivity{inspector: inspector})
+	return resolveInteractionStatusWithQueue(DB, chat, inspectorQueueActivity{inspector: inspector}, nil)
 }
 
-func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue chatQueueActivity) (InteractionStatusResponse, error) {
+func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue chatQueueActivity, tails chatMessageTails) (InteractionStatusResponse, error) {
 	response := InteractionStatusResponse{
 		ChatUUID: chat.UUID,
 		IsActive: false,
@@ -456,7 +459,10 @@ func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue ch
 	// ci#850: read the transcript tail once and reuse it for both questions the
 	// resolver asks of it - "is the newest message a pending user action?" and
 	// "what is the newest message?" - instead of two separate round-trips.
-	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
+	recent, recentErr, tailKnown := tails.lookup(chat.ID)
+	if !tailKnown {
+		recent, recentErr = recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
+	}
 
 	// ci#1100: the agent-maintained todo list of this interaction run rides the
 	// same status read, so the chat details "Todos" tab is a pure render of the
@@ -598,9 +604,63 @@ func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
 // first. It is the single transcript-tail read shared by the interaction-status
 // and pending-confirmation resolvers (ci#850): the ordering matches
 // latestMessageForChat, so the head of the slice is the latest message.
+// chatMessageTails carries the transcript tail of every chat of a batch, so a
+// listing of N chats costs ONE message query instead of N (each per-chat read
+// was a separate round-trip with its own planning, and the chat list plus the
+// /api/v1/chats/states poll resolve up to 100 chats per request - that N+1 was
+// the dominant cost of the sidebar).
+//
+// A chat whose tail was loaded but which has no messages is present with an
+// empty slice, so the resolver does not fall back to a per-chat query for it.
+type chatMessageTails map[uint][]database.Message
+
+// lookup returns the tail for a chat. ok is false when the batch does not
+// cover that chat (no batch, or a load failure), in which case the caller reads
+// it per chat.
+func (t chatMessageTails) lookup(chatID uint) ([]database.Message, error, bool) {
+	if t == nil {
+		return nil, nil, false
+	}
+	messages, ok := t[chatID]
+	if !ok {
+		return nil, nil, false
+	}
+	return messages, nil, true
+}
+
+// loadChatMessageTails reads the transcript tails for a batch of chats. A
+// failure is logged and reported as "no batch" so callers degrade to the
+// per-chat reads instead of failing the request.
+func loadChatMessageTails(DB *gorm.DB, chats []database.Chat) chatMessageTails {
+	if DB == nil || len(chats) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(chats))
+	for _, chat := range chats {
+		if chat.ID != 0 {
+			ids = append(ids, chat.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	tails, err := recentMessagesByChatLimit(DB, ids, confirmationScanLimit)
+	if err != nil {
+		logging.Errorf("Failed to batch-load chat transcript tails (%d chats), falling back to per-chat reads: %v", len(ids), err)
+		return nil
+	}
+	for _, id := range ids {
+		if _, ok := tails[id]; !ok {
+			tails[id] = []database.Message{}
+		}
+	}
+	return chatMessageTails(tails)
+}
+
 func recentMessagesForChat(DB *gorm.DB, chatID uint, limit int) ([]database.Message, error) {
 	var messages []database.Message
-	err := DB.Where("chat_id = ?", chatID).
+	err := DB.Select(messageTailColumns).
+		Where("chat_id = ?", chatID).
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
 		Order("id DESC").
