@@ -1589,6 +1589,13 @@ func createBotInteraction(
 	// choose (or suppress) the target of a granted write tool; without a
 	// trigger-derived target nothing is pinned and the tool is not granted.
 	effectiveConfig = applyInteractionToolInitPins(effectiveConfig, req.Tags)
+	// ci#1189 step 2: merge the role catalog (msgmate.RoleToolGrants) into the
+	// tool selection, so a role bot never runs without the read, result and
+	// handoff tools its role requires. The role is read from the *stored* bot
+	// config only - a per-interaction config override must never be able to
+	// grant a role (and with it GitHub write / dispatch capability) to a bot
+	// that was not configured with it. A bot without a role is unchanged.
+	effectiveConfig = applyRoleToolGrants(effectiveConfig, botRoleFromConfig(decodeSharedConfig(runtime.DefaultSharedConfig)))
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(toolInitStagePrefix, err)}
 	}
