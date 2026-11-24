@@ -72,6 +72,11 @@ func init() {
 	// re-injected on later turns so a long interaction survives the context
 	// window. Integration tool keeps ownership under the same free-name rule.
 	registerToolConstructorIfFree("coder_compact", nil, NewCoderCompactTool)
+	// ci#1189 step 4: `coder_dispatch_agent` lets a plan/lead bot dispatch the
+	// next agent itself. Its repo/issue scope comes from the interaction's
+	// tool-init pin, never from the model's arguments. Same free-name rule: an
+	// integration shipping its own `coder_dispatch_agent` keeps ownership.
+	registerToolConstructorIfFree("coder_dispatch_agent", nil, NewCoderDispatchAgentTool)
 	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
 	// task; the turn reader promotes its call into `task_completed` metadata.
 	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
