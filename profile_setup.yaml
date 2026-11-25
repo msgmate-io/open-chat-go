@@ -19,7 +19,7 @@ repos:
   # same path a full ci checkout would use, so Docker build contexts and the
   # manager both find it without the CI tooling.
   ci_fragment:
-    repo: https://github.com/msgmate-io/open-chat-go-ci
+    repo: https://git.msgmate.io/msgmate-io/open-chat-go-ci
     path: development/ci
     ref: main
     fragment: true
@@ -28,26 +28,26 @@ repos:
 
   # Full private CI tooling (bot templates, e2e, sandbox and AI process tests).
   ci:
-    repo: https://github.com/msgmate-io/open-chat-go-ci
+    repo: https://git.msgmate.io/msgmate-io/open-chat-go-ci
     path: development/ci
     ref: main
     fragment: true
 
   # Deployment Helm chart.
   helm:
-    repo: https://github.com/msgmate-io/open-chat-go-helm-chart
+    repo: https://git.msgmate.io/msgmate-io/open-chat-go-helm-chart
     path: development/helm
     ref: main
 
   # Android client (gomobile bindings + host app).
   gomobile:
-    repo: https://github.com/msgmate-io/open-chat-go-mobile
+    repo: https://git.msgmate.io/msgmate-io/open-chat-go-mobile
     path: clients/gomobile
     ref: main
 
   # Optional LLM coding context (developer documentation).
   llm_coding_agents:
-    repo: https://github.com/msgmate-io/open-chat-go-llm-coding-context
+    repo: https://git.msgmate.io/msgmate-io/open-chat-go-llm-coding-context
     path: clients/llm_coding_agents
     ref: main
 

@@ -1,0 +1,108 @@
+name: PR CI
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-core:
+    name: Backend (core-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet ./development/build-tools
+          .venv/bin/openchat-integrations --help >/dev/null
+
+      - name: Materialize core-only workspace
+        run: |
+          set -euo pipefail
+          .venv/bin/openchat-integrations sync --frozen --profile core-only
+          .venv/bin/openchat-integrations resolve --profile core-only
+          echo "GOWORK=$PWD/backend/go.work" >> "$GITHUB_ENV"
+          tags="$(cat backend/.generated/build_tags 2>/dev/null || true)"
+          if [ -n "$tags" ]; then
+            echo "GOFLAGS=-tags=$tags" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install and start Redis
+        run: |
+          set -euo pipefail
+          apt-get update -qq
+          apt-get install -y -qq redis-server
+          redis-server --daemonize yes --port 6380
+          for i in $(seq 1 30); do
+            if redis-cli -p 6380 ping >/dev/null 2>&1; then
+              echo "Redis is ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Redis did not start on port 6380"
+          exit 1
+
+      - name: Run Go tests
+        env:
+          REDIS_URL: redis://127.0.0.1:6380/0
+          ASYNQ_REDIS_ADDR: 127.0.0.1:6380
+        run: |
+          set -euo pipefail
+          cd backend
+          go test -count=1 ./...
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build

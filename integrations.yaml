@@ -71,7 +71,7 @@ integrations:
     module: github.com/msgmate-io/open-chat-go-community-coder-integration
     import: github.com/msgmate-io/open-chat-go-community-coder-integration/integration
     source: git
-    repo: https://github.com/msgmate-io/open-chat-go-community-coder-integration
+    repo: https://git.msgmate.io/open-chat/open-chat-go-community-coder-integration
     ref: main
     path: clients/integrations/community_coder_integration
     private: false
@@ -82,7 +82,7 @@ integrations:
     module: github.com/msgmate-io/mcp-integration
     import: github.com/msgmate-io/mcp-integration
     source: git
-    repo: https://github.com/msgmate-io/open-chat-go-mcp-integration
+    repo: https://git.msgmate.io/open-chat/open-chat-go-mcp-integration
     ref: main
     path: clients/integrations/mcp_integration
     private: false
@@ -95,7 +95,7 @@ integrations:
     module: github.com/msgmate-io/rest-api-tool-integration
     import: github.com/msgmate-io/rest-api-tool-integration
     source: git
-    repo: https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
+    repo: https://git.msgmate.io/open-chat/open-chat-go-rest-api-tool-integration
     ref: main
     path: clients/integrations/rest_api_tool_integration
     private: false
@@ -106,7 +106,7 @@ integrations:
     module: github.com/msgmate-io/go-client-integration
     import: github.com/msgmate-io/go-client-integration
     source: git
-    repo: https://github.com/msgmate-io/open-chat-go-golang-client
+    repo: https://git.msgmate.io/open-chat/open-chat-go-golang-client
     ref: main
     path: clients/integrations/go_client_integration
     private: false
