@@ -40,6 +40,7 @@ jobs:
           rm -rf /usr/local/go
           tar -C /usr/local -xzf /tmp/go.tar.gz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/local/go/bin:$PATH"
           go version
 
       - name: Install build tools
