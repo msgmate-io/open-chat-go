@@ -112,17 +112,9 @@ on:
     secrets:
       BOT_TOKEN:
         required: false
-      AI_TEST_API_HOST:
+      AI_API_HOST:
         required: false
-      AI_TEST_API_KEY:
-        required: false
-      OPENROUTER_API_KEY:
-        required: false
-      SANDBOX_OPENROUTER_API_KEY:
-        required: false
-      DEEPINFRA_API_KEY:
-        required: false
-      IONOS_API_KEY:
+      AI_API_KEY:
         required: false
       SANDBOX_GH_TOKEN:
         required: false
@@ -419,11 +411,8 @@ jobs:
       SANDBOX_INTERACTION_BACKEND: openrouter
       SANDBOX_INTERACTION_MODEL: ${{ inputs.opencode_model }}
       SANDBOX_INTERACTION_REPLACE_BACKEND: deepinfra
-      LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
-      LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
-      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
-      IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
+      AI_API_HOST: ${{ secrets.AI_API_HOST }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
       # gh_pr_comment test: the git integration pre-authenticates the gh CLI on
       # the sandbox VM with this token and the verification re-reads the posted
