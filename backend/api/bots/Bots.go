@@ -214,11 +214,44 @@ func decodeSharedConfig(raw []byte) map[string]interface{} {
 	return result
 }
 
+// errWorkspaceSelectorModeConflict marks a per-interaction
+// `coder_select_workspace` override whose `mode` contradicts the mode the bot
+// itself pinned (ci#1192).
+var errWorkspaceSelectorModeConflict = errors.New("coder_select_workspace: conflicting mode")
+
+// errWorkspaceSelectorOverrideInvalid marks a per-interaction
+// `coder_select_workspace` override that is not a JSON object, so it cannot be
+// deep-merged (ci#1192).
+var errWorkspaceSelectorOverrideInvalid = errors.New("coder_select_workspace: override must be an object")
+
 func applyInteractionConfigOverrides(
 	effectiveConfig map[string]interface{},
 	configOverrides map[string]interface{},
 	toolInit map[string]interface{},
 ) map[string]interface{} {
+	config, err := applyInteractionConfigOverridesChecked(effectiveConfig, configOverrides, toolInit)
+	if err != nil {
+		// The pre-existing call sites cannot fail on the shapes they produce
+		// (a scalar `mode` that contradicts the bot default, or a non-object
+		// selector). Keeping the map-returning signature for them means a
+		// conflicting mode is *not* applied instead of being silently
+		// last-writer-wins; the interaction path uses the checked variant and
+		// rejects the request outright.
+		return effectiveConfig
+	}
+	return config
+}
+
+// applyInteractionConfigOverridesChecked is applyInteractionConfigOverrides with
+// the ci#1192 merge contract surfaced as an error.
+func applyInteractionConfigOverridesChecked(
+	effectiveConfig map[string]interface{},
+	configOverrides map[string]interface{},
+	toolInit map[string]interface{},
+) (map[string]interface{}, error) {
+	if effectiveConfig == nil {
+		effectiveConfig = map[string]interface{}{}
+	}
 	for key, value := range configOverrides {
 		// tool_init has a dedicated request field. Ignoring it here avoids an
 		// override bypass and lets an omitted field preserve the bot default.
@@ -235,7 +268,7 @@ func applyInteractionConfigOverrides(
 		// accidentally drop a required tool_init the bot itself depends on.
 		if len(toolInit) == 0 {
 			effectiveConfig["tool_init"] = toolInit
-			return effectiveConfig
+			return effectiveConfig, nil
 		}
 		merged := map[string]interface{}{}
 		if existing, ok := effectiveConfig["tool_init"].(map[string]interface{}); ok {
@@ -246,9 +279,112 @@ func applyInteractionConfigOverrides(
 		for key, value := range toolInit {
 			merged[key] = value
 		}
+		// ci#1192: the nested `coder_select_workspace` selector is DEEP-merged
+		// instead of replaced wholesale. A per-interaction override (eg a git
+		// trigger forwarding the repository it was dispatched for) contributes
+		// only the keys it names - `git_repo`, `workspace_name`, ... - while
+		// the bot keeps its own `mode`/`interaction`/`auto_sandbox`. This is
+		// the monorepo prerequisite for ci#1194.
+		if selectorOverride, overridden := toolInit[agentdefaults.WorkspaceSelectorTool]; overridden {
+			selector, err := mergeWorkspaceSelectorOverride(merged[agentdefaults.WorkspaceSelectorTool], selectorOverride)
+			if err != nil {
+				return effectiveConfig, err
+			}
+			merged[agentdefaults.WorkspaceSelectorTool] = selector
+		}
 		effectiveConfig["tool_init"] = merged
 	}
-	return effectiveConfig
+	return effectiveConfig, nil
+}
+
+// mergeWorkspaceSelectorOverride deep-merges a per-interaction
+// `coder_select_workspace` selector into the bot default (ci#1192).
+//
+// The override contributes only the keys it names - a git trigger forwards the
+// repository it was dispatched for (`git_repo` / `workspace_name`) - while the
+// bot keeps its own `mode`/`interaction`/`auto_sandbox`. That is the monorepo
+// prerequisite for ci#1194 (a plan bot keeps `mode: plan` and still runs in the
+// dispatched repository).
+//
+// The merge fails closed instead of silently picking a winner:
+//   - a scalar override keeps the documented "replace the whole selector"
+//     behaviour, but a `mode` in it that contradicts the bot default is an
+//     error, not last-writer-wins;
+//   - a non-object override that is not a scalar is an error;
+//   - a stale workspace identity of the bot default (`workspace`,
+//     `workspace_uuid`, ...) is dropped when the override names a `git_repo`,
+//     so the selector cannot hand the agent the pre-selected checkout
+//     (ci#1048).
+func mergeWorkspaceSelectorOverride(base interface{}, override interface{}) (interface{}, error) {
+	overrideMap, ok := override.(map[string]interface{})
+	if !ok {
+		if override == nil || isScalarSelectorValue(override) {
+			// A scalar selector value replaces the whole selector; a
+			// contradicting mode is still refused.
+			if mode, hasMode := scalarSelectorMode(base, override); hasMode {
+				return nil, fmt.Errorf("%w: bot default and override disagree (%q)", errWorkspaceSelectorModeConflict, mode)
+			}
+			return override, nil
+		}
+		return nil, fmt.Errorf("%w: got %T", errWorkspaceSelectorOverrideInvalid, override)
+	}
+
+	merged := map[string]interface{}{}
+	baseMap, baseIsMap := base.(map[string]interface{})
+	if baseIsMap {
+		for key, value := range baseMap {
+			merged[key] = value
+		}
+	}
+	if repo, ok := overrideMap[agentdefaults.WorkspaceRepoConfigKey]; ok && repo != nil && repo != "" {
+		if _, overrideHasIdentity := overrideMap["workspace"]; !overrideHasIdentity {
+			for _, key := range agentdefaults.WorkspaceIdentityConfigKeys {
+				if _, overrideNames := overrideMap[key]; overrideNames {
+					continue
+				}
+				delete(merged, key)
+			}
+		}
+	}
+	for key, value := range overrideMap {
+		if key == "mode" {
+			if baseMode, hasBase := merged["mode"]; hasBase {
+				if !selectorValuesEqual(baseMode, value) {
+					return nil, fmt.Errorf("%w: bot default %#v, override %#v", errWorkspaceSelectorModeConflict, baseMode, value)
+				}
+			}
+		}
+		merged[key] = value
+	}
+	return merged, nil
+}
+
+// isScalarSelectorValue reports whether a selector value is a JSON scalar, ie a
+// shape that replaces the selector wholesale instead of merging into it.
+func isScalarSelectorValue(value interface{}) bool {
+	switch value.(type) {
+	case string, bool, float64, float32, int, int64, json.Number:
+		return true
+	}
+	return false
+}
+
+// scalarSelectorMode returns the `mode` carried by a scalar selector value (a
+// plain string selector is the mode itself) and whether one was found.
+func scalarSelectorMode(base interface{}, override interface{}) (interface{}, bool) {
+	if s, ok := override.(string); ok && s != "" {
+		if baseMap, ok := base.(map[string]interface{}); ok {
+			if baseMode, has := baseMap["mode"]; has && !selectorValuesEqual(baseMode, s) {
+				return s, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// selectorValuesEqual compares two JSON-decoded selector values.
+func selectorValuesEqual(a interface{}, b interface{}) bool {
+	return fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b)
 }
 
 var (
@@ -1552,7 +1688,13 @@ func createBotInteraction(
 	}
 
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
-	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
+	effectiveConfig, overridesErr := applyInteractionConfigOverridesChecked(effectiveConfig, req.ConfigOverrides, req.ToolInit)
+	if overridesErr != nil {
+		// ci#1192: a per-interaction `coder_select_workspace` override that
+		// contradicts the bot's own selector mode (or is not an object) is
+		// refused instead of silently winning.
+		return BotInteractionResponse{}, fmt.Errorf("invalid interaction config override: %w", overridesErr)
+	}
 	// A bot may default every interaction to require explicit user confirmation
 	// via default_shared_config.require_confirmation (eg CI/coding bots that must
 	// never start work without an approval). An explicit request field asking for

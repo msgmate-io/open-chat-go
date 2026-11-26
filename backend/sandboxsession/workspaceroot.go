@@ -66,6 +66,17 @@ type WorkspaceRootSpec struct {
 	// Home is the workspace's per-agent HOME. When empty or equal to Root it
 	// needs no separate materialisation.
 	Home string
+	// Temp marks a per-chat temp sandbox workspace root (`auto_sandbox`,
+	// ci#1192). Materialisation for a temp root is UNCONDITIONAL: the root is
+	// always created and always made a usable git checkout, so a repo-less temp
+	// workspace no longer comes up as an empty directory that the first
+	// `cd /workspace/coder-<uuid>` cannot enter. Non-temp roots keep the plain
+	// mkdir/chown plan.
+	Temp bool
+	// Repo is the git remote a Temp workspace root is cloned from (ci#1192).
+	// Empty means the root is `git init`ed instead. It is ignored for a
+	// non-temp root.
+	Repo string
 }
 
 // WorkspaceRootPlan is the argv-level materialisation plan for one workspace
@@ -118,7 +129,31 @@ func NewWorkspaceRootPlan(spec WorkspaceRootSpec) (WorkspaceRootPlan, error) {
 			plan.Commands = append(plan.Commands, []string{"chown", "-R", plan.OSUser, home})
 		}
 	}
+	// ci#1192: a per-chat temp sandbox root is made a usable checkout
+	// unconditionally. `git init` is a no-op on an existing repository and the
+	// clone step is guarded on the presence of `.git`, so double provisioning of
+	// the same root stays a no-op for a healthy workspace.
+	if spec.Temp {
+		plan.Commands = append(plan.Commands, tempRootGitCommand(root, spec.Repo))
+	}
 	return plan, nil
+}
+
+// tempRootGitCommand is the git step that turns a materialised temp workspace
+// root into a usable checkout (ci#1192): clone the repo when the request names
+// one and the root does not hold a checkout yet, otherwise initialise an empty
+// repository.
+func tempRootGitCommand(root, repo string) []string {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return []string{"git", "-C", root, "init", "--quiet"}
+	}
+	// Cloning into a non-empty directory fails with
+	// `destination path ... already exists`, which is not a provisioning error
+	// for a root that is already correct, so the step is guarded on `.git`.
+	return []string{
+		"sh", "-c", `test -e "$1/.git" || git clone --quiet -- "$2" "$1"`, "sh", root, repo,
+	}
 }
 
 // PlanWorkspaceRoot builds the materialisation plan for a provisioned pool
