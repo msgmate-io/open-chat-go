@@ -4176,6 +4176,17 @@ jobs:
     # `GITHUB_TOKEN` merge raises no push run - that case is covered by
     # `deploy-main-promotion-bridge.yaml`). `production` is deliberately absent:
     # `msgmate-io-production` stays merge-event-only.
+    # ci#1196: a merge performed by an identity whose events GitHub does not
+    # turn into workflow runs (the default `GITHUB_TOKEN`, ie
+    # `app/github-actions`, or any token without workflow-triggering rights)
+    # raises NEITHER the `pull_request: closed` event NOR the `push` event.
+    # Both arms above then stay silent and the dev -> main hop is stranded:
+    # `dev` moves on, no `[Dev promotion]` PR exists, and nothing notices.
+    # The `workflow_dispatch` arm below re-drives the hop from the live state of
+    # `dev` and is the ONLY dispatch mode that reaches the promotion opener
+    # (`refresh-dev-promotion-pr.yaml` dispatches it; an operator may do the
+    # same). Keep this scalar expression-only: a `#` line inside the `if: |`
+    # block becomes part of the expression and breaks workflow parsing.
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
@@ -4184,16 +4195,6 @@ jobs:
       (github.event_name == 'push' &&
        (github.ref_name == 'dev' || github.ref_name == 'main') &&
        github.event.deleted != true) ||
-      # ci#1196: a merge performed by an identity whose events GitHub does not
-      # turn into workflow runs (the default `GITHUB_TOKEN`, ie
-      # `app/github-actions`, or any token without workflow-triggering rights)
-      # raises NEITHER the `pull_request: closed` event NOR the `push` event.
-      # Both arms above then stay silent and the dev -> main hop is stranded:
-      # `dev` moves on, no `[Dev promotion]` PR exists, and nothing notices.
-      # This explicit dispatch mode re-drives the hop from the live state of
-      # `dev` and is the ONLY dispatch mode that reaches the promotion opener
-      # (`refresh-dev-promotion-pr.yaml` dispatches it; an operator may do the
-      # same).
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.callback_action == 'dev_promotion_hop')
     outputs:
