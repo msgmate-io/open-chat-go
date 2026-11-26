@@ -105,7 +105,7 @@ func configSetCli() *cli.Command {
 			&cli.StringFlag{
 				Name:    "api-token",
 				Usage:   "admin access token used as Authorization: Bearer",
-				Sources: cli.EnvVars("OPEN_CHAT_API_TOKEN"),
+				Sources: cli.EnvVars("OPEN_CHAT_API_KEY", "OPEN_CHAT_API_TOKEN"),
 			},
 			&cli.StringFlag{
 				Name:    "username",

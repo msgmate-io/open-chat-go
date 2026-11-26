@@ -218,7 +218,8 @@ open-chat client hash-password --password "$NEW_PASSWORD"
 ```
 
 Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
-`--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
+`--api-token` (`OPEN_CHAT_API_KEY`, falling back to the legacy
+`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
 their own `open-chat client ...` subcommands.
 
 ## `open-chat code`
