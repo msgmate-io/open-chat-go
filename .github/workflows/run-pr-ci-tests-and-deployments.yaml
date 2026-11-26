@@ -2212,7 +2212,7 @@ jobs:
       - name: Relay the failure to the development lead
         env:
           OPEN_CHAT_API_KEY: ${{ secrets.OPEN_CHAT_API_KEY }}
-          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          OPEN_CHAT_HOST: ${{ secrets.OPEN_CHAT_HOST || vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
           OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
           OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
           GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
