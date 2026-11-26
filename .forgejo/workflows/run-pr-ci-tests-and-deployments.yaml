@@ -33,7 +33,7 @@ on:
       BOT_USER:
         description: GitHub username that owns the bot comments
         required: false
-        default: cur1ousdude
+        default: tims-ci
       callback_action:
         description: Optional callback mode for post-release comment updates
         required: false
@@ -164,7 +164,7 @@ permissions:
 env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
-  BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+  BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
   DEPLOYMENT_PR: msgmate-io-pr-deployment
   DEPLOYMENT_STAGING: msgmate-io-staging
   DEPLOYMENT_CI: msgmate-io-ci
@@ -179,7 +179,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == 'release_comment' && github.event.inputs.source_pr_number != ''
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
     steps:
       - name: Install CI prerequisites
         run: |
@@ -2056,7 +2056,7 @@ jobs:
       results_target: pr
       pr_number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
       source_repo: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
-      bot_user: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      bot_user: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
       gh_pr_repo: ${{ github.repository }}
       gh_pr_number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
     secrets: inherit
@@ -2102,7 +2102,7 @@ jobs:
           SOURCE_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
           PRIVATE_SANDBOX_TAGS: ${{ vars.PRIVATE_SANDBOX_TAGS || 'lw' }}
           LW_REF: ${{ vars.LITTLE_WORLD_REF || 'main' }}
         run: |
@@ -2167,7 +2167,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && github.event.action != 'closed'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
     steps:
       - name: Install CI prerequisites
         run: |
@@ -4229,7 +4229,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' && needs.approve-and-dispatch-deploy.result == 'success'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
     steps:
       - name: Install CI prerequisites
         run: |
@@ -4286,7 +4286,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && (needs.run-pr-ci-ai-real-after-deploy.result == 'success' || needs.run-pr-ci-ai-real-after-deploy.result == 'failure')
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'tims-ci' }}
     steps:
       - name: Install CI prerequisites
         run: |

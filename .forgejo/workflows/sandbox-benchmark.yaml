@@ -72,7 +72,7 @@ on:
       bot_user:
         description: GitHub login that owns the bot comments
         required: false
-        default: cur1ousdude
+        default: tims-ci
 
 permissions:
   contents: read

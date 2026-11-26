@@ -98,7 +98,7 @@ on:
         description: GitHub login that owns the bot comments
         required: false
         type: string
-        default: cur1ousdude
+        default: tims-ci
       gh_pr_repo:
         description: Repository for the gh_pr_comment test; defaults to source_repo/current repo
         required: false

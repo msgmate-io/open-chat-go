@@ -13,7 +13,7 @@ permissions:
 env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
-  BOT_USER: cur1ousdude
+  BOT_USER: tims-ci
   DEPLOYMENT_NAME: msgmate-io-pr-deployment
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
