@@ -1602,9 +1602,11 @@ jobs:
       - name: Install Python AI process test dependencies
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r development/ci/ai_process_tests/requirements.txt
-          python3 -m pip install -e ./clients/oc_python_client
+          python3 -m venv .venv-ai
+          .venv-ai/bin/pip install --upgrade pip
+          .venv-ai/bin/pip install -r development/ci/ai_process_tests/requirements.txt
+          .venv-ai/bin/pip install -e ./clients/oc_python_client
+          echo "$PWD/.venv-ai/bin" >> "$GITHUB_PATH"
 
       - name: Login to GHCR for backend image pull
         run: |
@@ -4402,9 +4404,11 @@ jobs:
       - name: Install Python AI process test dependencies
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r development/ci/ai_process_tests/requirements.txt
-          python3 -m pip install -e ./clients/oc_python_client
+          python3 -m venv .venv-ai
+          .venv-ai/bin/pip install --upgrade pip
+          .venv-ai/bin/pip install -r development/ci/ai_process_tests/requirements.txt
+          .venv-ai/bin/pip install -e ./clients/oc_python_client
+          echo "$PWD/.venv-ai/bin" >> "$GITHUB_PATH"
 
       - name: Login to GHCR for backend image pull
         run: |
