@@ -1,0 +1,563 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Git ref or SHA to build
+        required: false
+        default: main
+      release_kind:
+        description: Release type (pr-alpha, staging, production, manual)
+        required: false
+        default: manual
+      source_pr_number:
+        description: Source PR number (for pr-alpha releases)
+        required: false
+        default: ""
+      source_branch:
+        description: Source branch name (for metadata)
+        required: false
+        default: ""
+      source_run_url:
+        description: Source orchestration run URL for PR progress comment
+        required: false
+        default: ""
+      deploy_url:
+        description: Deployment URL for final PR progress comment
+        required: false
+        default: ""
+      bot_user:
+        description: GitHub username that owns bot comments
+        required: false
+        default: cur1ousdude
+      release_tag:
+        description: Explicit release tag override
+        required: false
+        default: ""
+      release_name:
+        description: Explicit release name override
+        required: false
+        default: ""
+      prerelease:
+        description: Mark release as prerelease (true/false)
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact_name: backend-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            artifact_name: backend-linux-arm64
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            artifact_name: backend-windows-amd64.exe
+          - os: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            artifact_name: backend-windows-arm64.exe
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            artifact_name: backend-darwin-amd64
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: arm64
+            artifact_name: backend-darwin-arm64
+
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
+          submodules: recursive
+
+      - name: Materialize core-only integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Node.js (for frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build backend
+        working-directory: backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          INTEGRATION_PROFILE: core-only
+          # Static binaries keep the portable .AppImage working on older
+          # glibc distributions (Ubuntu 22.04, Fedora) without bundling glibc.
+          CGO_ENABLED: "0"
+          OPEN_CHAT_RELEASE_BUILD: "1"
+        run: |
+          chmod +x ./full_build.sh
+          ./full_build.sh
+
+      - name: Read version from metrics handler
+        id: get_version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          mkdir -p dist
+          echo "$VERSION" > dist/version.txt
+
+      - name: Prepare artifacts
+        if: ${{ success() }}
+        shell: bash
+        working-directory: backend
+        run: |
+          mkdir -p ../dist
+          
+          # Prepare final artifact name
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+            SOURCE_BIN="backend"
+          else
+            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            SOURCE_BIN="backend"
+          fi
+          
+          # Copy the pre-built binary to the dist directory with final name
+          cp -f "$SOURCE_BIN" "../dist/$OUT_NAME"
+          
+          echo "Prepared artifacts:"
+          echo "  Backend: $OUT_NAME"
+
+      - name: Upload artifacts
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/open-chat*${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}*
+            dist/version.txt
+          if-no-files-found: error
+
+  package-deb:
+    name: Package .deb (${{ matrix.deb_arch }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            deb_arch: amd64
+          - goarch: arm64
+            deb_arch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Profile setup
+        uses: ./.forgejo/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open-chat-*-linux-${{ matrix.goarch }}
+          path: packaged-artifact
+
+      - name: Build .deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_FILE="$(find packaged-artifact -type f -name version.txt -print -quit)"
+          if [ -z "$VERSION_FILE" ]; then
+            echo "::error::version.txt not found in build artifact"
+            exit 1
+          fi
+          VERSION="$(cat "$VERSION_FILE")"
+          BIN="$(find packaged-artifact -type f -name "open-chat-*-linux-${{ matrix.goarch }}" -print -quit)"
+          if [ -z "$BIN" ]; then
+            echo "::error::linux binary not found in build artifact"
+            exit 1
+          fi
+          chmod +x "$BIN"
+          ARCH="${{ matrix.goarch }}" VERSION="$VERSION" BIN="$BIN" OUT_DIR="$PWD/deb-out" \
+            development/ci/packaging/build-deb.sh
+          ls -la deb-out
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-chat-deb-${{ matrix.deb_arch }}
+          path: deb-out/open-chat_*.deb
+          if-no-files-found: error
+
+  package-appimage:
+    name: Package .AppImage (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+          - goarch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Profile setup
+        uses: ./.forgejo/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open-chat-*-linux-${{ matrix.goarch }}
+          path: packaged-artifact
+
+      - name: Build .AppImage
+        shell: bash
+        env:
+          ARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          BIN="$(find packaged-artifact -type f -name "open-chat-*-linux-${{ matrix.goarch }}" -print -quit)"
+          if [ -z "$BIN" ]; then
+            echo "::error::linux binary not found in build artifact"
+            exit 1
+          fi
+          chmod +x "$BIN"
+          VERSION="$(basename "$BIN" | sed -E "s/^open-chat-(.*)-linux-${{ matrix.goarch }}\$/\1/")"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$(basename "$BIN")" ]; then
+            echo "::error::could not determine version from $BIN"
+            exit 1
+          fi
+          ARCH="$ARCH" VERSION="$VERSION" BIN="$BIN" OUT_DIR="$PWD/appimage-out" \
+            development/ci/packaging/appimage/build-appimage.sh
+          ls -la appimage-out
+
+      - name: Smoke test AppImage (amd64, no FUSE)
+        if: matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(find appimage-out -type f -name '*.AppImage' -print -quit)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::AppImage not found"
+            exit 1
+          fi
+          chmod +x "$APPIMAGE"
+          export HOME="$(mktemp -d)"
+          export XDG_DATA_HOME="$HOME/.local/share"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          # FUSE is unavailable on GitHub-hosted runners, so exercise the
+          # documented --appimage-extract-and-run fallback.
+          "$APPIMAGE" --appimage-extract-and-run >"$HOME/appimage.log" 2>&1 &
+          APP_PID=$!
+          status=""
+          for _ in $(seq 1 90); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$APP_PID" 2>/dev/null || true
+          if [ "$status" != "200" ]; then
+            echo "::error::AppImage server did not become reachable (last status: ${status:-none})"
+            tail -50 "$HOME/appimage.log" || true
+            exit 1
+          fi
+          echo "AppImage server reachable at http://127.0.0.1:1984 (HTTP ${status})"
+          test -f "$XDG_CONFIG_HOME/open-chat/root-credentials" || {
+            echo "::error::expected generated root credentials under the XDG config dir"
+            exit 1
+          }
+          test -f "$XDG_DATA_HOME/open-chat/data.db" || {
+            echo "::error::expected sqlite database under the XDG data dir"
+            exit 1
+          }
+          tail -20 "$HOME/appimage.log" || true
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-chat-appimage-${{ matrix.goarch }}
+          path: appimage-out/*.AppImage
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build, package-deb, package-appimage]
+    if: always()
+    outputs:
+      tag_name: ${{ steps.release_meta.outputs.tag_name }}
+      version: ${{ steps.release_meta.outputs.version }}
+      prerelease: ${{ steps.release_meta.outputs.prerelease }}
+    steps:
+      - name: Checkout repository (for source archive)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
+          submodules: recursive
+
+      - name: Profile setup
+        uses: ./.forgejo/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          # Merge into one directory so the per-artifact version.txt files
+          # collapse into a single release asset (duplicate asset names make
+          # action-gh-release fail on upload/overwrite).
+          merge-multiple: true
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_FILE="$(find all-artifacts -type f -name version.txt -print -quit 2>/dev/null || true)"
+          VERSION=""
+          if [ -n "$VERSION_FILE" ]; then
+            VERSION="$(cat "$VERSION_FILE")"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)"
+          fi
+          echo "Resolved release version: $VERSION"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+
+          RELEASE_KIND="${{ github.event.inputs.release_kind || 'manual' }}"
+          SOURCE_PR_NUMBER="${{ github.event.inputs.source_pr_number || '' }}"
+          SOURCE_BRANCH="${{ github.event.inputs.source_branch || '' }}"
+
+          TAG_NAME="build-${{ github.run_number }}"
+          RELEASE_NAME="Build ${{ github.run_number }}"
+          PRERELEASE_VALUE="false"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            case "$RELEASE_KIND" in
+              pr-alpha)
+                TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${SHORT_SHA}"
+                if [ -n "$SOURCE_PR_NUMBER" ]; then
+                  RELEASE_NAME="PR Alpha Release ${VERSION} (PR #${SOURCE_PR_NUMBER})"
+                else
+                  RELEASE_NAME="PR Alpha Release ${VERSION}"
+                fi
+                PRERELEASE_VALUE="true"
+                ;;
+              staging)
+                TAG_NAME="open-chat-staging-${VERSION}"
+                RELEASE_NAME="Staging Release ${VERSION}"
+                PRERELEASE_VALUE="true"
+                ;;
+              production)
+                TAG_NAME="open-chat-${VERSION}"
+                RELEASE_NAME="Production Release ${VERSION}"
+                PRERELEASE_VALUE="false"
+                ;;
+              *)
+                TAG_NAME="build-${{ github.run_number }}"
+                RELEASE_NAME="Manual Build ${{ github.run_number }}"
+                PRERELEASE_VALUE="${{ github.event.inputs.prerelease || 'true' }}"
+                ;;
+            esac
+          fi
+
+          if [ -n "${{ github.event.inputs.release_tag || '' }}" ]; then
+            TAG_NAME="${{ github.event.inputs.release_tag }}"
+          fi
+          if [ -n "${{ github.event.inputs.release_name || '' }}" ]; then
+            RELEASE_NAME="${{ github.event.inputs.release_name }}"
+          fi
+
+          if [ -n "$SOURCE_BRANCH" ]; then
+            RELEASE_NAME="${RELEASE_NAME} [${SOURCE_BRANCH}]"
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE_VALUE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize collected artifacts
+        run: |
+          echo "Artifacts collected:" || true
+          ls -R all-artifacts || true
+
+      - name: Create source archive
+        run: |
+          git archive --format=zip --output=code.zip HEAD -- .
+          echo "Created code.zip including the in-tree frontend source"
+          ls -la code.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: always()
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_name }}
+          draft: false
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
+          files: |
+            all-artifacts/**/*
+            code.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update PR progress comment from template
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          BOT_USER: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+          SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          CLIENT_REPOSITORY: msgmate-io/open-chat-go-python-client
+          BINARY_NAME: open-chat-${{ steps.release_meta.outputs.version }}-linux-amd64
+        run: |
+          set -euo pipefail
+          comments_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments")"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -z "$comment_id" ]; then
+            echo "::error::Could not find existing PR progress comment to update."
+            exit 1
+          fi
+
+          SOURCE_RUN_URL="${{ github.event.inputs.source_run_url || '' }}"
+          if [ -n "$SOURCE_RUN_URL" ]; then
+            TPL_RUN_URL="$SOURCE_RUN_URL"
+          else
+            TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          fi
+          TPL_RELEASE_TAG="$RELEASE_TAG"
+          TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
+          TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
+          TPL_BINARY_NAME="$BINARY_NAME"
+          DEPLOY_URL="${{ github.event.inputs.deploy_url || '' }}"
+          if [ -z "$DEPLOY_URL" ]; then
+            DEPLOY_URL="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // ""' <<< "$comments_json" | sed -n 's/.*`(3) deploy` \[`url=[^`]*`\](\(https:[^)]*\)).*/\1/p')"
+          fi
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "::error::deploy_url is required to generate the dynamic Go tests docs link."
+            exit 1
+          fi
+          TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
+          existing_step_test="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(4) test`"))) | .[0] // ""' <<< "$comments_json")"
+          if [ -n "$existing_step_test" ]; then
+            TPL_STEP_TEST="$existing_step_test"
+          else
+            TPL_STEP_TEST="- [x] \`(4) test\` \`passed\`"
+          fi
+
+          existing_step_build="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(2) build`"))) | .[0] // ""' <<< "$comments_json")"
+          if [ -n "$existing_step_build" ]; then
+            TPL_STEP_BUILD="$existing_step_build"
+          else
+            TPL_STEP_BUILD='- [x] `(2) build`'
+          fi
+
+          existing_step_android_release="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(6) android release`"))) | .[0] // ""' <<< "$comments_json")"
+          if [ -n "$existing_step_android_release" ]; then
+            TPL_STEP_ANDROID_RELEASE="$existing_step_android_release"
+          else
+            TPL_STEP_ANDROID_RELEASE='- [ ] ~~`(6) android release` `skipped`~~'
+          fi
+
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP TPL_STEP_TEST TPL_STEP_BUILD TPL_STEP_ANDROID_RELEASE
+          python3 development/ci/scripts/ci-flows/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md > /tmp/pr_comment_body.md
+
+          payload="$(jq -Rs '{body: .}' < /tmp/pr_comment_body.md)"
+          status_code="$(curl -s -o /tmp/pr_comment_update.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+            -d "$payload")"
+          if [ "$status_code" != "200" ]; then
+            echo "::error::Failed to update PR progress comment (status $status_code)."
+            cat /tmp/pr_comment_update.json || true
+            exit 1
+          fi
+
+  homebrew:
+    name: Bump Homebrew formula
+    needs: [release]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_kind == 'production' && needs.release.outputs.tag_name != '' }}
+    uses: ./.forgejo/workflows/homebrew-formula.yaml
+    with:
+      release_tag: ${{ needs.release.outputs.tag_name }}
+      source_repository: ${{ github.repository }}
+      tap_repository: msgmate-io/homebrew-tap
+      bot_user: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+      source_pr_number: ${{ github.event.inputs.source_pr_number }}
+    secrets:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
