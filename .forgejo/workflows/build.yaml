@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ success() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -207,7 +207,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           pattern: open-chat-*-linux-${{ matrix.goarch }}
           path: packaged-artifact
@@ -233,7 +233,7 @@ jobs:
           ls -la deb-out
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: open-chat-deb-${{ matrix.deb_arch }}
           path: deb-out/open-chat_*.deb
@@ -267,7 +267,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends file
 
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           pattern: open-chat-*-linux-${{ matrix.goarch }}
           path: packaged-artifact
@@ -337,7 +337,7 @@ jobs:
           tail -20 "$HOME/appimage.log" || true
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: open-chat-appimage-${{ matrix.goarch }}
           path: appimage-out/*.AppImage
@@ -366,7 +366,7 @@ jobs:
           profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           path: all-artifacts
           # Merge into one directory so the per-artifact version.txt files

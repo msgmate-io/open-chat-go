@@ -1952,7 +1952,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always() && steps.playwright_tests.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: playwright-e2e-report-shard-${{ matrix.shard }}
           path: development/ci/e2e/playwright-report/
@@ -2184,7 +2184,7 @@ jobs:
 
       - name: Upload Android build artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: android-build-artifacts
           path: |
