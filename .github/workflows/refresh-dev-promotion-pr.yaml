@@ -1,0 +1,101 @@
+# ci#1196: keep the `dev` -> `main` promotion hop from being stranded.
+#
+# `Run PR CI Tests and Deployments` opens/refreshes the automatic
+# `[Dev promotion] Promote dev -> main` pull request from `resolve-merged-deployment`,
+# which until now only reacted to
+#   * `pull_request: closed` (merged into `dev`/`main`/`production`), and
+#   * `push` to `dev`/`main`.
+#
+# Both of those events are suppressed by GitHub when the actor is the default
+# `GITHUB_TOKEN`. Consolidation PRs are merged by `app/github-actions`
+# (`.github/workflows/auto-approve-consolidation.yaml`), i.e. by exactly such an
+# identity, so a consolidation merge can advance `dev` without raising either
+# event: no run is created, the promotion opener never runs, no `[Dev promotion]`
+# PR exists, and `dev` silently drifts ahead of `main`.
+#
+# This bridge is the state-driven safety net. It reacts to the *completion of a
+# run* (`workflow_run` fires even for `GITHUB_TOKEN`-caused runs, unlike the
+# suppressed branch events) and, whenever `dev` is ahead of `main` with no
+# promotion PR open, re-drives only the promotion opener through the documented
+# `dev_promotion_hop` dispatch mode of `Run PR CI Tests and Deployments`.
+#
+# It never merges anything, never touches `[Dev promotion]` itself (the opener
+# owns that pull request and refreshes it in place), never deploys (the `dev`
+# merge target cannot deploy - `should_deploy` is `false`), and never pushes to
+# `dev` or `main`.
+name: Refresh Dev Promotion PR
+
+on:
+  workflow_run:
+    workflows:
+      - "Auto-approve consolidation PRs"
+      - "Run PR CI Tests and Deployments"
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: refresh-dev-promotion-pr
+  cancel-in-progress: false
+
+jobs:
+  refresh-dev-promotion-pr:
+    runs-on: ubuntu-latest
+    # `workflow_dispatch` is the manual path (an operator or a bot that noticed a
+    # stranded hop). Runs we started ourselves via `dev_promotion_hop` must not
+    # be re-dispatched: that would be a self-feeding loop.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'workflow_dispatch')
+    env:
+      # `gh workflow run` picks the token up from GH_TOKEN; the explicit bearer
+      # header below is used for the read-only API calls.
+      GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Re-drive the dev -> main promotion hop when it was stranded
+        run: |
+          set -euo pipefail
+
+          api() {
+            curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}$1"
+          }
+
+          ahead_by="$(api "/compare/main...dev" | jq -r '.ahead_by // 0')"
+          if [ "${ahead_by}" = "0" ]; then
+            echo "dev is not ahead of main; the promotion hop has nothing to do."
+            exit 0
+          fi
+
+          existing_pr_number="$(
+            api "/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
+              | jq -r '.[0].number // ""'
+          )"
+          if [ -n "${existing_pr_number}" ]; then
+            echo "The [Dev promotion] PR #${existing_pr_number} is already open; nothing to re-drive."
+            exit 0
+          fi
+
+          dev_sha="$(api "/git/ref/heads/dev" | jq -r '.object.sha')"
+          echo "dev @ ${dev_sha} is ${ahead_by} commit(s) ahead of main and no [Dev promotion] PR is open."
+          echo "Re-driving only the promotion opener (callback_action=dev_promotion_hop)."
+
+          # The opener resolves the promoted commit from live state, so this
+          # dispatch cannot promote a stale ref. `--ref dev` selects the `dev`
+          # version of the workflow (where the promotion opener lives).
+          gh workflow run run-pr-ci-tests-and-deployments.yaml \
+            --repo "${REPOSITORY}" \
+            --ref dev \
+            -f callback_action=dev_promotion_hop
