@@ -78,6 +78,13 @@ jobs:
     name: build ${{ inputs.workspace_path }}
     runs-on: ubuntu-latest
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Check out the integration (PR) checkout
         uses: actions/checkout@v4
         with:

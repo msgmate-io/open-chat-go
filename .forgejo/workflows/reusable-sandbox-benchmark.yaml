@@ -134,6 +134,13 @@ jobs:
     outputs:
       tests: ${{ steps.discover.outputs.tests }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -215,6 +222,13 @@ jobs:
     outputs:
       image_url: ${{ steps.resolve.outputs.image_url }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         if: inputs.backend_image == ''
         uses: actions/checkout@v4
@@ -276,6 +290,13 @@ jobs:
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout sandbox-integration submodule
         if: inputs.sandbox_image_url == ''
         uses: actions/checkout@v4
@@ -421,6 +442,13 @@ jobs:
       SANDBOX_GH_PR_REPO: ${{ inputs.gh_pr_repo || inputs.source_repo || github.repository }}
       SANDBOX_GH_PR_NUMBER: ${{ inputs.gh_pr_number || inputs.pr_number }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -621,6 +649,13 @@ jobs:
       PR_NUMBER: ${{ inputs.pr_number }}
       ISSUE_NUMBER: ${{ inputs.issue_number }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Download sandbox test results
         uses: actions/download-artifact@v4
         with:

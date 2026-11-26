@@ -181,6 +181,13 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -269,6 +276,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') && !contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -406,6 +420,13 @@ jobs:
       AI_API_HOST: ${{ secrets.AI_API_HOST }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Cancel superseded workflow runs for this PR
         # Forgejo has no workflow-scoped run listing/cancel API; the job
         # concurrency group already cancels superseded runs.
@@ -898,6 +919,13 @@ jobs:
       image_url: ${{ steps.image.outputs.image_url }}
       image_digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -1044,6 +1072,13 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_test_core_only != ''
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository (public submodules only)
         uses: actions/checkout@v4
         with:
@@ -1154,6 +1189,13 @@ jobs:
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
@@ -1376,6 +1418,13 @@ jobs:
       AI_API_HOST: ${{ secrets.AI_API_HOST }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
@@ -1522,6 +1571,13 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       # Cheap planning job (no checkout/profile/backend): translates the
       # E2E_SHARD_COUNT repo variable into a shard matrix. Unset defaults to 4
       # parallel runner jobs; set the variable (1-8) to override. Each shard runs
@@ -1564,6 +1620,13 @@ jobs:
       matrix:
         shard: ${{ fromJson(needs.run-pr-ci-e2e-plan.outputs.matrix) }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       # No disk-reclamation step here: the E2E shard only installs Playwright
       # and pulls one prebuilt backend image (<5 GB), which comfortably fits the
       # runner's default free space. The `jlumbroso/free-disk-space` action
@@ -1746,6 +1809,13 @@ jobs:
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       # The Android SDK + NDK + emulator + system image is multi-GB; reclaim
       # the runner's preinstalled toolchains before pulling/building it.
 
@@ -1843,6 +1913,13 @@ jobs:
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
         (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
 
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -1962,6 +2039,13 @@ jobs:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Dispatch private sandbox workflow in CI repository
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
@@ -2037,6 +2121,13 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -2131,6 +2222,13 @@ jobs:
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -2205,6 +2303,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.DRY_RUN == 'true'
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -2254,6 +2359,13 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action != 'closed'
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       # ci#659: the superseded-run reconciliation below executes a repository
       # script, so the workspace must be checked out first. Without this the step
       # failed with "python3: can't open file .../pr_ci_superseded_reconcile.py"
@@ -2666,6 +2778,13 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.base.ref == 'production'
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Require all requested suites to pass
         run: |
           set -euo pipefail
@@ -2722,6 +2841,13 @@ jobs:
       github.event.action != 'closed' &&
       needs.run-pr-ci-tests-and-deployments.result != 'skipped'
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -3219,6 +3345,13 @@ jobs:
       dispatch_response: ${{ steps.dispatch_ci_deploy.outputs.dispatch_response }}
       dispatch_target_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_target_ref }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -3576,6 +3709,13 @@ jobs:
       DISPATCH_RESPONSE: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_response }}
       DISPATCH_TARGET_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_target_ref }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Wait for dispatched CI deployment workflow
         timeout-minutes: 30
         env:
@@ -3833,6 +3973,13 @@ jobs:
       AI_API_HOST: ${{ secrets.AI_API_HOST }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -4000,6 +4147,13 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -4046,6 +4200,13 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -4098,6 +4259,13 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Cancel superseded merged-deployment runs
         run: |
           set -euo pipefail
@@ -4167,6 +4335,13 @@ jobs:
       merge_target: ${{ steps.context.outputs.merge_target }}
       helm_values_file: ${{ steps.context.outputs.helm_values_file }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Resolve merged deployment context
         id: context
         run: |
@@ -4244,6 +4419,13 @@ jobs:
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Open or refresh main to production promotion PR
         env:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -4366,6 +4548,13 @@ jobs:
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Open or refresh dev to main promotion PR
         env:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -4575,6 +4764,13 @@ jobs:
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Assert a dev/main divergence has an open promotion PR
         run: |
           set -euo pipefail
@@ -4647,6 +4843,13 @@ jobs:
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -4778,6 +4981,13 @@ jobs:
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Cancel superseded CI deployment runs for this branch
         env:
           CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
@@ -5263,6 +5473,13 @@ jobs:
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ci-merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Cancel superseded CI deployment runs for this branch
         env:
           CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
@@ -5520,6 +5737,13 @@ jobs:
       ISSUE_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       DISPATCH_RESULT: ${{ needs.dispatch-merged-deployment.result }}
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       - name: Close deployment approval issue for this run
         run: |
           set -euo pipefail
@@ -5579,6 +5803,13 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true
     steps:
+      - name: Ensure jq is available
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq jq
+          fi
       # ci#1034: the body is parsed by the same repository script the gate uses,
       # so this job needs the workspace; the base branch is the merged tree.
       - name: Checkout base branch for the linked-issue parser
