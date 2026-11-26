@@ -271,10 +271,16 @@ func applyInteractionConfigOverridesChecked(
 			return effectiveConfig, nil
 		}
 		merged := map[string]interface{}{}
+		// baseSelector is the bot's own default selector, captured BEFORE the
+		// override keys are copied in: after the loop below merged[selector]
+		// already holds the override, so merging from there would silently be
+		// a no-op (ci#1192).
+		var baseSelector interface{}
 		if existing, ok := effectiveConfig["tool_init"].(map[string]interface{}); ok {
 			for key, value := range existing {
 				merged[key] = value
 			}
+			baseSelector = existing[agentdefaults.WorkspaceSelectorTool]
 		}
 		for key, value := range toolInit {
 			merged[key] = value
@@ -286,7 +292,7 @@ func applyInteractionConfigOverridesChecked(
 		// the bot keeps its own `mode`/`interaction`/`auto_sandbox`. This is
 		// the monorepo prerequisite for ci#1194.
 		if selectorOverride, overridden := toolInit[agentdefaults.WorkspaceSelectorTool]; overridden {
-			selector, err := mergeWorkspaceSelectorOverride(merged[agentdefaults.WorkspaceSelectorTool], selectorOverride)
+			selector, err := mergeWorkspaceSelectorOverride(baseSelector, selectorOverride)
 			if err != nil {
 				return effectiveConfig, err
 			}
