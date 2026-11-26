@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           missing=()
           command -v jq >/dev/null 2>&1 || missing+=(jq)
-          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -c 'import ensurepip' >/dev/null 2>&1 || missing+=(python3-venv)
           python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
           if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
