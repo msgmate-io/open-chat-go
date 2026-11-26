@@ -89,6 +89,16 @@ jobs:
             apt-get update -qq
             apt-get install -y -qq "${missing[@]}"
           fi
+          if ! command -v docker >/dev/null 2>&1; then
+            curl -fsSL -o /tmp/docker-static.tgz https://download.docker.com/linux/static/stable/x86_64/docker-29.3.1.tgz
+            tar -xzf /tmp/docker-static.tgz -C /tmp
+            install -m 0755 /tmp/docker/docker /usr/local/bin/docker
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-buildx ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
       - name: Check out the integration (PR) checkout
         uses: actions/checkout@v4
         with:
