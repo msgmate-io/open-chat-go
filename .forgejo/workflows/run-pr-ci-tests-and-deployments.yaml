@@ -246,34 +246,34 @@ jobs:
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments"
           })"
-          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""' <<< "$comments_json")"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""' <<< "$comments_json")"
           if [ -z "$comment_id" ]; then
             echo "::error::Could not find existing progress comment to update."
             exit 1
           fi
           if [ -z "$DEPLOY_URL" ]; then
-            DEPLOY_URL="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // ""' <<< "$comments_json" | sed -n 's/.*`(3) deploy` \[`url=[^`]*`\](\(https:[^)]*\)).*/\1/p')"
+            DEPLOY_URL="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // ""' <<< "$comments_json" | sed -n 's/.*`(3) deploy` \[`url=[^`]*`\](\(https:[^)]*\)).*/\1/p')"
           fi
           if [ -z "$DEPLOY_URL" ]; then
             echo "::error::deploy_url is required to generate the dynamic Go tests docs link."
             exit 1
           fi
           TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
-          existing_step_test="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(4) test`"))) | .[0] // ""' <<< "$comments_json")"
+          existing_step_test="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(4) test`"))) | .[0] // ""' <<< "$comments_json")"
           if [ -n "$existing_step_test" ]; then
             TPL_STEP_TEST="$existing_step_test"
           else
             TPL_STEP_TEST="- [x] \`(4) test\` \`passed\`"
           fi
 
-          existing_step_build="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(2) build`"))) | .[0] // ""' <<< "$comments_json")"
+          existing_step_build="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(2) build`"))) | .[0] // ""' <<< "$comments_json")"
           if [ -n "$existing_step_build" ]; then
             TPL_STEP_BUILD="$existing_step_build"
           else
             TPL_STEP_BUILD='- [x] `(2) build`'
           fi
 
-          existing_step_android_release="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(6) android release`"))) | .[0] // ""' <<< "$comments_json")"
+          existing_step_android_release="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(6) android release`"))) | .[0] // ""' <<< "$comments_json")"
           if [ -n "$existing_step_android_release" ]; then
             TPL_STEP_ANDROID_RELEASE="$existing_step_android_release"
           else
@@ -345,7 +345,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+              | jq -r --arg bot_user "$BOT_USER" '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
           )"
           for comment in $comments; do
             curl -fsSL -X DELETE \
@@ -369,7 +369,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")))][0].id // ""'
           )"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
@@ -808,7 +808,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+              | jq -r --arg bot_user "$BOT_USER" '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
           )"
           for comment in $comments; do
             curl -fsSL -X DELETE \
@@ -840,7 +840,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
           )"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
@@ -898,7 +898,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
           )"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
@@ -942,7 +942,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
           )"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
@@ -2398,6 +2398,7 @@ jobs:
           # event context so repository/PR number are always populated.
           SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
+          API_URL: ${{ github.server_url }}/api/v1
         run: |
           set -euo pipefail
           # ci#745 fail-safe: never 404-loop on an empty comment target.
@@ -2430,7 +2431,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
           })"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
@@ -4601,6 +4602,7 @@ jobs:
           # collapse the URL to `repos//issues//comments` (404, curl 22).
           SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
+          API_URL: ${{ github.server_url }}/api/v1
         run: |
           set -euo pipefail
           TPL_RUN_URL="${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}"
@@ -4673,6 +4675,7 @@ jobs:
           # collapse the URL to `repos//issues//comments` (404, curl 22).
           SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
+          API_URL: ${{ github.server_url }}/api/v1
         run: |
           set -euo pipefail
           TPL_RUN_URL="${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}"
@@ -5446,7 +5449,7 @@ jobs:
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${MERGED_PR_NUMBER}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-merged-deploy-comment -->")))][0].id // ""'
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select((.body | contains("<!-- open-chat-merged-deploy-comment -->")))][0].id // ""'
           )"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
