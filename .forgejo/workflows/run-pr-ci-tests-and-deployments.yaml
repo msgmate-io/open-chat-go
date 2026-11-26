@@ -202,6 +202,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -310,6 +315,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -468,6 +478,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Cancel superseded workflow runs for this PR
         # Forgejo has no workflow-scoped run listing/cancel API; the job
@@ -982,6 +997,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -1149,6 +1169,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository (public submodules only)
         uses: actions/checkout@v4
         with:
@@ -1279,6 +1304,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Resolve the pull request's live labels
         id: live_labels
@@ -1523,6 +1553,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
@@ -1690,6 +1725,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       # Cheap planning job (no checkout/profile/backend): translates the
       # E2E_SHARD_COUNT repo variable into a shard matrix. Unset defaults to 4
       # parallel runner jobs; set the variable (1-8) to override. Each shard runs
@@ -1752,6 +1792,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       # No disk-reclamation step here: the E2E shard only installs Playwright
       # and pulls one prebuilt backend image (<5 GB), which comfortably fits the
@@ -1956,6 +2001,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       # The Android SDK + NDK + emulator + system image is multi-GB; reclaim
       # the runner's preinstalled toolchains before pulling/building it.
 
@@ -2073,6 +2123,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
 
       - name: Checkout source repository
@@ -2214,6 +2269,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Dispatch private sandbox workflow in CI repository
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
@@ -2309,6 +2369,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -2425,6 +2490,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -2520,6 +2590,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -2589,6 +2664,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       # ci#659: the superseded-run reconciliation below executes a repository
       # script, so the workspace must be checked out first. Without this the step
@@ -3023,6 +3103,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Require all requested suites to pass
         run: |
           set -euo pipefail
@@ -3099,6 +3184,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -3618,6 +3708,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -3996,6 +4091,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Wait for dispatched CI deployment workflow
         timeout-minutes: 30
         env:
@@ -4274,6 +4374,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -4462,6 +4567,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
         with:
@@ -4528,6 +4638,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -4601,6 +4716,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Cancel superseded merged-deployment runs
         run: |
@@ -4691,6 +4811,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Resolve merged deployment context
         id: context
@@ -4789,6 +4914,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Open or refresh main to production promotion PR
         env:
@@ -4932,6 +5062,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Open or refresh dev to main promotion PR
         env:
@@ -5163,6 +5298,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Assert a dev/main divergence has an open promotion PR
         run: |
           set -euo pipefail
@@ -5255,6 +5395,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -5407,6 +5552,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Cancel superseded CI deployment runs for this branch
         env:
@@ -5914,6 +6064,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Cancel superseded CI deployment runs for this branch
         env:
           CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
@@ -6192,6 +6347,11 @@ jobs:
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
       - name: Close deployment approval issue for this run
         run: |
           set -euo pipefail
@@ -6271,6 +6431,11 @@ jobs:
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
             chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          fi
+          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       # ci#1034: the body is parsed by the same repository script the gate uses,
       # so this job needs the workspace; the base branch is the merged tree.
