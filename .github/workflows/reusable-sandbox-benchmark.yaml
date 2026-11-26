@@ -109,17 +109,6 @@ on:
         required: false
         type: string
         default: ""
-    secrets:
-      BOT_TOKEN:
-        required: false
-      AI_API_HOST:
-        required: false
-      AI_API_KEY:
-        required: false
-      SANDBOX_GH_TOKEN:
-        required: false
-      GIST_TOKEN:
-        required: false
 
 permissions:
   contents: read
