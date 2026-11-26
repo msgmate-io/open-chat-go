@@ -78,12 +78,16 @@ jobs:
     name: build ${{ inputs.workspace_path }}
     runs-on: ubuntu-latest
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Check out the integration (PR) checkout
         uses: actions/checkout@v4
