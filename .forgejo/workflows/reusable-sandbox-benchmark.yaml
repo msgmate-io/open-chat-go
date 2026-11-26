@@ -134,12 +134,16 @@ jobs:
     outputs:
       tests: ${{ steps.discover.outputs.tests }}
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -222,12 +226,16 @@ jobs:
     outputs:
       image_url: ${{ steps.resolve.outputs.image_url }}
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Checkout source repository
         if: inputs.backend_image == ''
@@ -290,12 +298,16 @@ jobs:
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Checkout sandbox-integration submodule
         if: inputs.sandbox_image_url == ''
@@ -442,12 +454,16 @@ jobs:
       SANDBOX_GH_PR_REPO: ${{ inputs.gh_pr_repo || inputs.source_repo || github.repository }}
       SANDBOX_GH_PR_NUMBER: ${{ inputs.gh_pr_number || inputs.pr_number }}
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -649,12 +665,16 @@ jobs:
       PR_NUMBER: ${{ inputs.pr_number }}
       ISSUE_NUMBER: ${{ inputs.issue_number }}
     steps:
-      - name: Ensure jq is available
+      - name: Install CI prerequisites
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
+          missing=()
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          python3 -c 'import venv' >/dev/null 2>&1 || missing+=(python3-venv)
+          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
+          if [ "${#missing[@]}" -gt 0 ]; then
             apt-get update -qq
-            apt-get install -y -qq jq
+            apt-get install -y -qq "${missing[@]}"
           fi
       - name: Download sandbox test results
         uses: actions/download-artifact@v4
