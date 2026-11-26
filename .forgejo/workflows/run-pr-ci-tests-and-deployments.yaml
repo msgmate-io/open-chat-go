@@ -3681,6 +3681,9 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      # The deploy repository uses its own token; keep the comment attribution
+      # separate from the source-repo bot user.
+      DEPLOY_BOT_USER: ${{ vars.DEPLOY_BOT_USER || 'forgejo-admin' }}
     # ci#774 follow-up: record exactly what was dispatched - the ref, that
     # ref's commit, the HTTP status and the response body - so the waiter can
     # prove the run it observes is this dispatch and can print the response
@@ -3825,7 +3828,7 @@ jobs:
               --arg deployHost "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_host }}" \
               --arg namespace "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_namespace }}" \
               --arg helmRelease "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_helm_release }}" \
-              --arg botUser "$BOT_USER" \
+              --arg botUser "$DEPLOY_BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
                 ref: $ref,
@@ -5537,6 +5540,7 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
+      DEPLOY_BOT_USER: ${{ vars.DEPLOY_BOT_USER || 'forgejo-admin' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Install CI prerequisites
@@ -5627,7 +5631,7 @@ jobs:
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
               --arg imageUrl "${{ steps.built_image.outputs.image_url }}" \
               --arg sourceRepository "${{ github.repository }}" \
-              --arg botUser "$BOT_USER" \
+              --arg botUser "$DEPLOY_BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
                 ref: $ref,
@@ -6048,6 +6052,7 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
+      DEPLOY_BOT_USER: ${{ vars.DEPLOY_BOT_USER || 'forgejo-admin' }}
       DISPATCH_RUN_ID: ci-merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Install CI prerequisites
@@ -6115,7 +6120,7 @@ jobs:
               --arg deploymentName "${{ env.DEPLOYMENT_CI }}" \
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
               --arg sourceRepository "${{ github.repository }}" \
-              --arg botUser "$BOT_USER" \
+              --arg botUser "$DEPLOY_BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
                 ref: $ref,
