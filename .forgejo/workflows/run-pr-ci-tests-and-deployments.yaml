@@ -4177,32 +4177,56 @@ jobs:
               break
             fi
 
-            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
-              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+            # Forgejo exposes run listings at /actions/runs and filters with
+            # workflow_id; the GitHub-shaped /actions/workflows/<id>/runs path
+            # returns 404 and used to burn the whole wait window (ci#829 class).
+            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/runs?workflow_id=test-api-deploy.yaml&limit=30")"; then
+              echo "Attempt ${attempt}: Forgejo API request failed; retrying."
               interruptible_sleep "$poll_interval"
               continue
             fi
 
+            # Forgejo renders workflow_dispatch inputs into `event_payload`,
+            # not into the run `title` (run-name expressions are not evaluated
+            # there: every dispatched deploy is titled after the workflow, e.g.
+            # "Deploy Staging"). Match the dispatch id and deployment name from
+            # the payload, and keep title/head-field fallbacks for GitHub.
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" --argjson since "$match_since" '
+              def payload_inputs: ((.event_payload // "{}") | try fromjson catch {}) | .inputs // {};
+              def title: (.title // .display_title // .name // "");
+              def created_at: (.created // .created_at // "");
+              def ref: (.prettyref // .head_branch // "");
+              def sha: (.commit_sha // .head_sha // "");
+              def verdict: (.conclusion // .status // "");
+              def deployment_ok:
+                ((payload_inputs.DEPLOYMENT_NAME // "") == $deployment)
+                or ((title) | startswith("Deploy " + $deployment));
+              def dispatch_ok:
+                ((payload_inputs.DISPATCH_RUN_ID // "") == $dispatch_id)
+                or ((title) | endswith($dispatch_id));
+              def matches_pr:
+                if $pr != "" then
+                  ((payload_inputs.SOURCE_PR_NUMBER // "") == $pr)
+                  or ((title) | contains("PR#" + $pr))
+                else
+                  ((payload_inputs.SOURCE_PR_NUMBER // "") == "")
+                  and (((title) | contains("PR#")) | not)
+                end;
               def candidates:
                 (( [
                     .workflow_runs[]?
-                    | select((.display_title // .name // "") | endswith($dispatch_id))
-                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select(deployment_ok)
+                    | select(dispatch_ok)
                   ]
                   + [
                     .workflow_runs[]?
-                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
-                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                    | select(deployment_ok)
+                    | select(((created_at) | try fromdateiso8601 catch 0) >= $since)
                   ] ) | unique_by(.id));
-              (if $pr != "" then
-                [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
-                // candidates[0]
-              else
-                [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
-                // candidates[0]
-              end)
-              | if . == null then "" else [.id, .status, .html_url, (.head_branch // ""), (.head_sha // ""), (.conclusion // "")] | @tsv end
+              # Newest first: unique_by sorts ascending, and the deploy we
+              # just dispatched is the highest id among the candidates.
+              ((([candidates[] | select(matches_pr)] | max_by(.id)) // (candidates | max_by(.id))))
+              | if . == null then "" else [.id, .status, .html_url, (ref), (sha), (verdict)] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
@@ -4302,7 +4326,21 @@ jobs:
               esac
             fi
 
-            if [ "$run_status" != "completed" ]; then
+            # Forgejo reports the terminal verdict directly in `status`
+            # (success/failure/cancelled/skipped); GitHub reports
+            # status=completed plus a separate conclusion.
+            case "$run_status" in
+              success|failure|cancelled|skipped|timed_out|startup_failure)
+                [ "$run_conclusion" = "$run_status" ] || run_conclusion="$run_status"
+                ;;
+            esac
+            if [ "$run_status" != "completed" ] &&
+               [ "$run_status" != "success" ] &&
+               [ "$run_status" != "failure" ] &&
+               [ "$run_status" != "cancelled" ] &&
+               [ "$run_status" != "skipped" ] &&
+               [ "$run_status" != "timed_out" ] &&
+               [ "$run_status" != "startup_failure" ]; then
             # ci#832: GitHub can leave a run's top-level status at in_progress long after
             # every job of that run has finished (observed on the dispatched deploy: the run's
             # single job completed successfully 30+ minutes before the run record settled), so
@@ -5923,8 +5961,11 @@ jobs:
               break
             fi
 
-            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
-              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+            # Forgejo exposes run listings at /actions/runs and filters with
+            # workflow_id; the GitHub-shaped /actions/workflows/<id>/runs path
+            # returns 404 and used to burn the whole wait window (ci#829 class).
+            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/runs?workflow_id=test-api-deploy.yaml&limit=30")"; then
+              echo "Attempt ${attempt}: Forgejo API request failed; retrying."
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -6211,8 +6252,11 @@ jobs:
               break
             fi
 
-            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
-              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+            # Forgejo exposes run listings at /actions/runs and filters with
+            # workflow_id; the GitHub-shaped /actions/workflows/<id>/runs path
+            # returns 404 and used to burn the whole wait window (ci#829 class).
+            if ! runs_json="$(github_api_get "${{ github.server_url }}/api/v1/repos/${ci_repo}/actions/runs?workflow_id=test-api-deploy.yaml&limit=30")"; then
+              echo "Attempt ${attempt}: Forgejo API request failed; retrying."
               interruptible_sleep "$poll_interval"
               continue
             fi
