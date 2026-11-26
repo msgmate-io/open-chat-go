@@ -227,7 +227,7 @@ jobs:
           comments_json="$({
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments"
           })"
@@ -270,7 +270,7 @@ jobs:
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           curl -fsSL -X PATCH \
             -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
             -d "$payload" >/dev/null
@@ -312,7 +312,7 @@ jobs:
           comments="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
@@ -320,7 +320,7 @@ jobs:
           for comment in $comments; do
             curl -fsSL -X DELETE \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment}"
           done
@@ -336,7 +336,7 @@ jobs:
           comment_id="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")))][0].id // ""'
@@ -344,14 +344,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
               -d "$payload"
@@ -364,7 +364,7 @@ jobs:
           set -euo pipefail
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${LABEL_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
             -d '{"labels":["test"]}'
@@ -452,7 +452,7 @@ jobs:
           for status in in_progress queued; do
             runs_json="$(curl -fsSL \
               -H "Authorization: Bearer ${CANCEL_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/runs?status=${status}&per_page=30")"
             jq -r --arg current "$CURRENT_RUN_ID" --arg head_ref "$PR_HEAD_REF" \
@@ -464,7 +464,7 @@ jobs:
                 echo "Cancelling superseded workflow run ${run_id} (${status})."
                 curl -fsSL -X POST \
                   -H "Authorization: Bearer ${CANCEL_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
+                  -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/runs/${run_id}/cancel" \
                   >/dev/null || true
@@ -491,7 +491,7 @@ jobs:
           fi
           curl -fsSL \
             -H "Authorization: Bearer ${LABEL_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
@@ -717,7 +717,7 @@ jobs:
 
           status_code="$(curl -s -o /tmp/android_release_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${MOBILE_RELEASE_REPO}/actions/workflows/${MOBILE_RELEASE_WORKFLOW}/dispatches" \
             -d "$payload")"
@@ -760,7 +760,7 @@ jobs:
           comments="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
@@ -768,7 +768,7 @@ jobs:
           for comment in $comments; do
             curl -fsSL -X DELETE \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment}"
           done
@@ -792,7 +792,7 @@ jobs:
           comment_id="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
@@ -800,14 +800,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               -d "$payload"
@@ -850,7 +850,7 @@ jobs:
           comment_id="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
@@ -858,14 +858,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               -d "$payload"
@@ -894,7 +894,7 @@ jobs:
           comment_id="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
@@ -902,14 +902,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
               -d "$payload"
@@ -1234,7 +1234,7 @@ jobs:
           fi
           curl -fsSL \
             -H "Authorization: Bearer ${LABEL_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
@@ -1467,7 +1467,7 @@ jobs:
           fi
           curl -fsSL \
             -H "Authorization: Bearer ${LABEL_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
@@ -2142,7 +2142,7 @@ jobs:
           )"
           if ! curl -fsSL -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/workflows/private-sandbox-tests.yaml/dispatches" \
             -d "$payload"; then
@@ -2230,7 +2230,7 @@ jobs:
           comment_id="$({
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${PR_NUMBER}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
@@ -2238,14 +2238,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPOSITORY}/issues/${PR_NUMBER}/comments" \
               -d "$payload"
@@ -2302,7 +2302,7 @@ jobs:
           set -euo pipefail
           RUN_JOBS_JSON="$(curl -fsSL \
             -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
           # ci#606: the relayed `ci_failure` payload also carries a short excerpt
           # of each failed job's tail, so the development lead has an error line
@@ -2314,7 +2314,7 @@ jobs:
             [ -n "${job_id:-}" ] || continue
             job_tail="$(curl -fsSL -L \
               -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/jobs/${job_id}/logs" 2>/dev/null \
               | tail -c 1200 | tr -cd '\11\12\15\40-\176' || true)"
             if [ -n "$job_tail" ]; then
@@ -2463,7 +2463,7 @@ jobs:
           fi
           curl -fsSL \
             -H "Authorization: Bearer ${LABEL_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
@@ -2590,7 +2590,7 @@ jobs:
           for number in "${issues[@]}"; do
             issue="$(curl -fsSL \
               -H "Authorization: Bearer ${LINK_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/msgmate-io/open-chat-go-ci/issues/${number}")" || {
                 echo "::error::Linked issue ci#${number} was not found in msgmate-io/open-chat-go-ci."
@@ -3451,7 +3451,7 @@ jobs:
           for status in in_progress queued; do
             runs_json="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
             jq -r --arg pr "$PR_NUMBER" \
@@ -3462,7 +3462,7 @@ jobs:
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
                 curl -fsSL -X POST \
                   -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
+                  -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
                   >/dev/null || true
@@ -3503,7 +3503,7 @@ jobs:
           if [ -n "${PR_NUMBER:-}" ]; then
             PR_STATE="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SRC_REPO}/pulls/${PR_NUMBER}" \
               | jq -r '.state // ""')" || PR_STATE=""
@@ -3561,7 +3561,7 @@ jobs:
           if [ -n "${DISPATCH_PR_NUMBER:-}" ] && [ -n "${DISPATCH_TARGET_REF:-}" ]; then
             live_head_sha="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SRC_REPO}/pulls/${DISPATCH_PR_NUMBER}" \
               | jq -r '.head.sha // ""')" || live_head_sha=""
@@ -3580,7 +3580,7 @@ jobs:
           # run that was not created by this dispatch.
           dispatch_ref_sha="$(curl -fsSL \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${CI_REPO}/commits/${CI_REF}" \
             | jq -r '.sha // ""')" || dispatch_ref_sha=""
@@ -3591,7 +3591,7 @@ jobs:
           fi
           status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload")"
@@ -3633,7 +3633,7 @@ jobs:
             local status_code
             status_code="$(curl -s -o /tmp/build_workflow_content.json -w "%{http_code}" \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
@@ -3682,7 +3682,7 @@ jobs:
           )"
           status_code="$(curl -s -o /tmp/build_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/build.yaml/dispatches" \
             -d "$payload")"
@@ -3705,7 +3705,7 @@ jobs:
             local status_code
             status_code="$(curl -s -o /tmp/python_tag_workflow_content.json -w "%{http_code}" \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
@@ -3763,7 +3763,7 @@ jobs:
           )"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
             -d "$payload"
@@ -3817,7 +3817,7 @@ jobs:
           github_api_get() {
             curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$1"
           }
@@ -4373,7 +4373,7 @@ jobs:
           for status in queued in_progress waiting requested pending; do
             runs_json="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${repo}/actions/workflows/${workflow}/runs?event=pull_request&status=${status}&per_page=50")"
 
@@ -4395,7 +4395,7 @@ jobs:
               echo "Cancelling superseded merged-deployment run ${run_id} (status ${status})."
               curl -fsSL -X POST \
                 -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
+                -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "${{ github.server_url }}/api/v1/repos/${repo}/actions/runs/${run_id}/cancel" \
                 >/dev/null || echo "::warning::Failed to cancel run ${run_id}; continuing."
@@ -4541,7 +4541,7 @@ jobs:
           set -euo pipefail
           compare_json="$(curl -fsSL \
             -H "Authorization: Bearer ${PR_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/compare/production...main")"
           ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
@@ -4574,7 +4574,7 @@ jobs:
           existing_pr_number="$(
             curl -fsSL \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:main&base=production&per_page=1" \
               | jq -r '.[0].number // ""'
@@ -4592,13 +4592,13 @@ jobs:
             echo "Closing stale production promotion PR #${existing_pr_number} before opening a fresh one."
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
               -d '{"state":"closed"}'
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/issues/${existing_pr_number}/comments" \
               -d "$(jq -n --arg body 'Superseded by a newer merge to `main`. A fresh production promotion PR is being opened.' '{body: $body}')"
@@ -4608,7 +4608,7 @@ jobs:
           pr_number="$(
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/pulls" \
               -d "$(jq -n \
@@ -4622,7 +4622,7 @@ jobs:
 
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${PR_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
@@ -4678,7 +4678,7 @@ jobs:
           api="${GITHUB_API_URL:-${{ github.server_url }}/api/v1}"
           compare_json="$(curl -fsSL \
             -H "Authorization: Bearer ${PR_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}/repos/${REPOSITORY}/compare/main...dev")"
           ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
@@ -4696,7 +4696,7 @@ jobs:
           dev_head=""
           if head_json="$(curl -fsSL \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/git/ref/heads/dev" 2>/dev/null)"; then
             dev_head="$(jq -r '.object.sha // empty' <<< "$head_json" 2>/dev/null || true)"
@@ -4789,7 +4789,7 @@ jobs:
           existing_pr_number="$(
             curl -fsSL \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
               | jq -r '.[0].number // ""'
@@ -4799,13 +4799,13 @@ jobs:
             echo "Refreshing the existing promotion PR #${existing_pr_number} in place."
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
               -d "$promotion_patch_payload" >/dev/null
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
               -d "$labels_payload" >/dev/null
@@ -4830,7 +4830,7 @@ jobs:
           pr_number="$(
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${PR_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${api}/repos/${REPOSITORY}/pulls" \
               -d "$(jq -n --arg title "$title" --arg body "$body" --arg head "dev" --arg base "main" '{title: $title, body: $body, head: $head, base: $base}')" \
@@ -4838,7 +4838,7 @@ jobs:
           )"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${PR_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
             -d "$labels_payload" >/dev/null
@@ -4888,7 +4888,7 @@ jobs:
           set -euo pipefail
           api="${GITHUB_API_URL:-${{ github.server_url }}/api/v1}"
           auth=(-H "Authorization: Bearer ${PR_TOKEN}"
-                -H "Accept: application/vnd.github+json"
+                -H "Accept: application/vnd.github+json" -H "Content-Type: application/json"
                 -H "X-GitHub-Api-Version: 2022-11-28")
 
           compare_json="$(curl -fsSL "${auth[@]}" "${api}/repos/${REPOSITORY}/compare/main...dev")"
@@ -4998,7 +4998,7 @@ jobs:
           comment_id="$(
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${MERGED_PR_NUMBER}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-merged-deploy-comment -->")))][0].id // ""'
@@ -5006,14 +5006,14 @@ jobs:
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${MERGED_PR_NUMBER}/comments" \
               -d "$payload"
@@ -5050,7 +5050,7 @@ jobs:
           issue_id="$({
             curl -fsSL \
               -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues?state=open&per_page=100" \
               | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
@@ -5059,7 +5059,7 @@ jobs:
           if [ -n "$issue_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${issue_id}" \
               -d "$payload" >/dev/null
@@ -5067,7 +5067,7 @@ jobs:
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues" \
               -d "$payload" >/dev/null
@@ -5117,7 +5117,7 @@ jobs:
           for status in in_progress queued; do
             runs_json="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
             jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
@@ -5130,7 +5130,7 @@ jobs:
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
                 curl -fsSL -X POST \
                   -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
+                  -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
                   >/dev/null || true
@@ -5188,7 +5188,7 @@ jobs:
           echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
           status_code="$(curl -s -o /tmp/merged_ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload")"
@@ -5219,7 +5219,7 @@ jobs:
             local status_code
             status_code="$(curl -s -o /tmp/merged_build_workflow_content.json -w "%{http_code}" \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
@@ -5283,7 +5283,7 @@ jobs:
           )"
           status_code="$(curl -s -o /tmp/merged_build_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/build.yaml/dispatches" \
             -d "$payload")"
@@ -5300,7 +5300,7 @@ jobs:
           set -euo pipefail
           workflow_check_status="$(curl -s -o /tmp/python_tag_workflow_check.json -w "%{http_code}" \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml")"
           if [ "$workflow_check_status" = "404" ]; then
@@ -5329,7 +5329,7 @@ jobs:
             local status_code
             status_code="$(curl -s -o /tmp/merged_py_tag_workflow_content.json -w "%{http_code}" \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
@@ -5388,7 +5388,7 @@ jobs:
           )"
           status_code="$(curl -s -o /tmp/merged_py_tag_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
             -d "$payload")"
@@ -5419,7 +5419,7 @@ jobs:
           github_api_get() {
             curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$1"
           }
@@ -5613,7 +5613,7 @@ jobs:
           for status in in_progress queued; do
             runs_json="$(curl -fsSL \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
             jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
@@ -5626,7 +5626,7 @@ jobs:
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
                 curl -fsSL -X POST \
                   -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
+                  -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "${{ github.server_url }}/api/v1/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
                   >/dev/null || true
@@ -5660,7 +5660,7 @@ jobs:
           echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
           status_code="$(curl -s -o /tmp/merged_ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload")"
@@ -5691,7 +5691,7 @@ jobs:
           github_api_get() {
             curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$1"
           }
@@ -5880,7 +5880,7 @@ jobs:
           issue_number="$({
             curl -fsSL \
               -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues?state=open&per_page=100" \
               | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
@@ -5905,14 +5905,14 @@ jobs:
 
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${issue_number}/comments" \
             -d "$(jq -n --arg body "$closing_note" '{body: $body}')" >/dev/null
 
           curl -fsSL -X PATCH \
             -H "Authorization: Bearer ${ISSUE_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues/${issue_number}" \
             -d '{"state":"closed"}' >/dev/null
@@ -6002,7 +6002,7 @@ jobs:
             body="$(jq -n --arg body "⚠️ Linked-issue close did not complete for: ${list} (reason: ${reason}) — please close manually." '{body: $body}')"
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${LINK_TOKEN:-}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/${REPO}/issues/${PR}/comments" \
               -d "${body}" >/dev/null \
@@ -6064,7 +6064,7 @@ jobs:
           for number in "${issues[@]}"; do
             issue="$(curl -fsSL \
               -H "Authorization: Bearer ${LINK_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/msgmate-io/open-chat-go-ci/issues/${number}")" || {
                 echo "::warning::Linked issue ci#${number} was not found; skipping."
@@ -6087,13 +6087,13 @@ jobs:
               '{body: ("Closed by " + $pr + " (" + $url + "), merged as `" + $sha + "`.")}')"
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${LINK_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/msgmate-io/open-chat-go-ci/issues/${number}/comments" \
               -d "$comment" >/dev/null
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${LINK_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${{ github.server_url }}/api/v1/repos/msgmate-io/open-chat-go-ci/issues/${number}" \
               -d '{"state":"closed","state_reason":"completed"}' >/dev/null
