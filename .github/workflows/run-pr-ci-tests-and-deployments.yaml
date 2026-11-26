@@ -403,8 +403,8 @@ jobs:
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
       TARGET_REF_CUSTOM_INPUT: ${{ github.event.inputs.target_ref_custom }}
-      AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
-      AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+      AI_API_HOST: ${{ secrets.AI_API_HOST }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
       - name: Cancel superseded workflow runs for this PR
         if: github.event_name == 'pull_request' && github.event.action != 'closed'
@@ -1113,8 +1113,8 @@ jobs:
 
           cat > .ci-test.env <<EOF
           BACKEND_IMAGE=${BACKEND_IMAGE}
-          LITELLM_API_HOST=
-          LITELLM_API_KEY=
+          AI_API_HOST=
+          AI_API_KEY=
           EOF
 
           docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d redis
@@ -1381,8 +1381,8 @@ jobs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
     env:
-      AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
-      AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+      AI_API_HOST: ${{ secrets.AI_API_HOST }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
       - name: Resolve the pull request's live labels
         id: live_labels
@@ -1445,8 +1445,8 @@ jobs:
       - name: Start backend for AI process tests
         env:
           BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
-          LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
-          LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
+          AI_API_HOST: ${{ env.AI_API_HOST }}
+          AI_API_KEY: ${{ env.AI_API_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${BACKEND_IMAGE:-}" ]; then
@@ -1458,8 +1458,8 @@ jobs:
 
           cat > .ci-test.env <<EOF
           BACKEND_IMAGE=${BACKEND_IMAGE}
-          LITELLM_API_HOST=${LITELLM_API_HOST}
-          LITELLM_API_KEY=${LITELLM_API_KEY}
+          AI_API_HOST=${AI_API_HOST}
+          AI_API_KEY=${AI_API_KEY}
           EOF
 
           docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d redis
@@ -1668,8 +1668,8 @@ jobs:
           cat > .ci-e2e.env <<EOF
           BACKEND_IMAGE=${BACKEND_IMAGE}
           ROOT_CREDENTIALS=admin:password
-          LITELLM_API_HOST=
-          LITELLM_API_KEY=
+          AI_API_HOST=
+          AI_API_KEY=
           EOF
 
           docker compose --env-file .ci-e2e.env -f docker-compose.ci.yaml up -d redis
@@ -2211,8 +2211,8 @@ jobs:
 
       - name: Relay the failure to the development lead
         env:
-          OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
-          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          OPEN_CHAT_API_KEY: ${{ secrets.OPEN_CHAT_API_KEY }}
+          OPEN_CHAT_HOST: ${{ secrets.OPEN_CHAT_HOST || vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
           OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
           OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
           GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -3851,8 +3851,8 @@ jobs:
     outputs:
       ai_real_status: ${{ steps.finalize.outputs.ai_real_status }}
     env:
-      AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
-      AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+      AI_API_HOST: ${{ secrets.AI_API_HOST }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -3894,28 +3894,29 @@ jobs:
       - name: Start backend for real AI process tests
         env:
           BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
-          LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
-          LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+          AI_API_HOST: ${{ env.AI_API_HOST }}
+          AI_API_KEY: ${{ env.AI_API_KEY }}
+          OPENROUTER_API_HOST: ${{ env.AI_API_HOST }}
+          OPENROUTER_API_KEY: ${{ env.AI_API_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${BACKEND_IMAGE:-}" ]; then
             echo "::error::BACKEND_IMAGE output is empty for real AI tests."
             exit 1
           fi
-          if [ -z "${LITELLM_API_HOST:-}" ]; then
-            echo "::error::AI_TEST_API_HOST/LITELLM_API_HOST is empty for real AI tests."
+          if [ -z "${OPENROUTER_API_HOST:-}" ]; then
+            echo "::error::AI_API_HOST/OPENROUTER_API_HOST is empty for real AI tests."
             exit 1
           fi
-          if [ -z "${LITELLM_API_KEY:-}" ]; then
-            echo "::error::AI_TEST_API_KEY/LITELLM_API_KEY is empty for real AI tests."
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "::error::AI_API_KEY/OPENROUTER_API_KEY is empty for real AI tests."
             exit 1
           fi
 
-          echo "Real AI provider host (runner): ${LITELLM_API_HOST}"
-          provider_models_url="${LITELLM_API_HOST%/}/models"
+          echo "Real AI provider host (runner): ${OPENROUTER_API_HOST}"
+          provider_models_url="${OPENROUTER_API_HOST%/}/models"
           provider_http_code="$(curl -sS -o /tmp/provider_models.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${LITELLM_API_KEY}" \
+            -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
             -H "Content-Type: application/json" \
             --connect-timeout 10 \
             --max-time 30 \
@@ -3927,9 +3928,8 @@ jobs:
 
           cat > .ci-test.env <<EOF
           BACKEND_IMAGE=${BACKEND_IMAGE}
-          LITELLM_API_HOST=${LITELLM_API_HOST}
-          LITELLM_API_KEY=${LITELLM_API_KEY}
-          OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+          AI_API_HOST=${AI_API_HOST}
+          AI_API_KEY=${AI_API_KEY}
           EOF
 
           docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d redis
@@ -3955,16 +3955,16 @@ jobs:
           echo "Verifying provider env inside backend container..."
           docker compose --env-file .ci-test.env -f docker-compose.ci.yaml exec -T backend sh -lc '
             set -eu
-            if [ -z "${LITELLM_API_HOST:-}" ]; then
-              echo "::error::backend container missing LITELLM_API_HOST"
+            if [ -z "${OPENROUTER_API_HOST:-}" ]; then
+              echo "::error::backend container missing OPENROUTER_API_HOST"
               exit 1
             fi
-            if [ -z "${LITELLM_API_KEY:-}" ]; then
-              echo "::error::backend container missing LITELLM_API_KEY"
+            if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+              echo "::error::backend container missing OPENROUTER_API_KEY"
               exit 1
             fi
-            echo "backend LITELLM_API_HOST=${LITELLM_API_HOST}"
-            echo "backend LITELLM_API_KEY length=${#LITELLM_API_KEY}"
+            echo "backend OPENROUTER_API_HOST=${OPENROUTER_API_HOST}"
+            echo "backend OPENROUTER_API_KEY length=${#OPENROUTER_API_KEY}"
           '
 
       - name: Run real AI process tests
@@ -3974,11 +3974,10 @@ jobs:
           OPEN_CHAT_HOST: http://127.0.0.1:1984
           OPEN_CHAT_USERNAME: admin
           OPEN_CHAT_PASSWORD: password
-          AI_TEST_API_HOST: ${{ env.AI_TEST_API_HOST }}
-          AI_TEST_API_KEY: ${{ env.AI_TEST_API_KEY }}
-          LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
-          LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+          AI_API_HOST: ${{ env.AI_API_HOST }}
+          AI_API_KEY: ${{ env.AI_API_KEY }}
+          OPENROUTER_API_HOST: ${{ env.AI_API_HOST }}
+          OPENROUTER_API_KEY: ${{ env.AI_API_KEY }}
           AI_TEST_BASELINE_BACKEND: openrouter
           AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4.1-flash-1017
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"

@@ -20,8 +20,16 @@ runs:
   steps:
     - name: Materialize profile setup
       shell: bash
+      env:
+        PROFILE_TOKEN: ${{ inputs.token }}
+        SERVER_URL: ${{ github.server_url }}
       run: |
         set -euo pipefail
-        git config --global url."https://x-access-token:${{ inputs.token }}@github.com/".insteadOf "https://github.com/"
+        host="${SERVER_URL#https://}"
+        if [ "$host" = "github.com" ]; then
+          git config --global url."https://x-access-token:${PROFILE_TOKEN}@github.com/".insteadOf "https://github.com/"
+        else
+          git config --global url."https://oauth2:${PROFILE_TOKEN}@${host}/".insteadOf "${SERVER_URL}/"
+        fi
         BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
         "$BUILD_TOOLS" setup --profile "${{ inputs.profile }}"

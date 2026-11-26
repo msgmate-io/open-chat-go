@@ -34,7 +34,7 @@ if ! runnable "$CLI"; then
   if [ -d "$REPO_ROOT/development/build-tools/openchat_integrations" ]; then
     "$VENV/bin/pip" install --quiet "$REPO_ROOT/development/build-tools"
   else
-    "$VENV/bin/pip" install --quiet "git+https://github.com/msgmate-io/open-chat-go-build-tools.git"
+    "$VENV/bin/pip" install --quiet "git+https://git.msgmate.io/open-chat/open-chat-go-build-tools.git"
   fi
 fi
 
