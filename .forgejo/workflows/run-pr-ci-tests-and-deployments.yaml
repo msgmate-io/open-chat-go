@@ -3662,7 +3662,10 @@ jobs:
     # `update-progress-comment-after-tests`; the former separate
     # `post-deploy-approval-link` job only re-rendered the identical comment.
     # Wait for the test jobs here so the approval gate still opens after tests.
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests]
+    # E2E is label-gated and optional; do not list it in `needs`, otherwise a
+    # skipped E2E job also skips the deploy job on Forgejo even with
+    # `always()`.
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
