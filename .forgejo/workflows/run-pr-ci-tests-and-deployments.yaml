@@ -6103,15 +6103,14 @@ jobs:
     # no-op on Forgejo, so it must not be a dependency of the dispatch.
     needs: [resolve-merged-deployment]
     if: |
-      always() &&
       needs.resolve-merged-deployment.result == 'success' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
-    concurrency:
-      group: merged-deploy-dispatch-${{ needs.resolve-merged-deployment.outputs.ci_deployment_name }}
-      cancel-in-progress: true
-    environment:
-      name: ${{ needs.resolve-merged-deployment.outputs.ci_deployment_name }}
+    # Forgejo does not implement GitHub deployment environments, and a job-level
+    # concurrency group with cancel-in-progress cancelled this job while it was
+    # installing prerequisites (the runner logged "context canceled"). The CI
+    # repository's own per-deployment concurrency still serialises the actual
+    # deploy, so neither is needed here.
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
