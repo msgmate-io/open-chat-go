@@ -5013,7 +5013,7 @@ jobs:
             -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${{ github.server_url }}/api/v1/repos/${REPOSITORY}/compare/production...main")"
-          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          ahead_by="$(jq -r '(.ahead_by // .total_commits // 0)' <<< "$compare_json")"
           if [ "$ahead_by" = "0" ]; then
             echo "main is not ahead of production; skipping production promotion PR."
             exit 0
@@ -5165,7 +5165,7 @@ jobs:
             -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}/repos/${REPOSITORY}/compare/main...dev")"
-          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          ahead_by="$(jq -r '(.ahead_by // .total_commits // 0)' <<< "$compare_json")"
           if [ "$ahead_by" = "0" ]; then
             echo "dev is not ahead of main; skipping the dev to main promotion PR."
             exit 0
@@ -5391,7 +5391,7 @@ jobs:
                 -H "X-GitHub-Api-Version: 2022-11-28")
 
           compare_json="$(curl -fsSL "${auth[@]}" "${api}/repos/${REPOSITORY}/compare/main...dev")"
-          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          ahead_by="$(jq -r '(.ahead_by // .total_commits // 0)' <<< "$compare_json")"
           dev_head="$(jq -r '.commits[-1].sha // ""' <<< "$compare_json")"
 
           if [ "$ahead_by" = "0" ]; then
