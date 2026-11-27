@@ -6097,7 +6097,11 @@ jobs:
   dispatch-merged-ci-deployment:
     name: Dispatch Merged CI Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment, cancel-superseded-merged-deployment]
+    # Forgejo cancels a job whose `needs` includes a skipped job even with
+    # `if: always()` (observed: the job started, then the runner reported
+    # "context canceled" while installing prerequisites). The cancel job is a
+    # no-op on Forgejo, so it must not be a dependency of the dispatch.
+    needs: [resolve-merged-deployment]
     if: |
       always() &&
       needs.resolve-merged-deployment.result == 'success' &&
