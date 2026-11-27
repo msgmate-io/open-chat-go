@@ -15,14 +15,22 @@
 #
 # This bridge is the state-driven safety net. It reacts to the *completion of a
 # run* (`workflow_run` fires even for `GITHUB_TOKEN`-caused runs, unlike the
-# suppressed branch events) and, whenever `dev` is ahead of `main` with no
-# promotion PR open, re-drives only the promotion opener through the documented
+# suppressed branch events), to a manual `workflow_dispatch`, and (ci#1196) to a
+# periodic `schedule` sweep. Whenever `dev` is ahead of `main` with no promotion
+# PR open, it re-drives only the promotion opener through the documented
 # `dev_promotion_hop` dispatch mode of `Run PR CI Tests and Deployments`.
 #
 # It never merges anything, never touches `[Dev promotion]` itself (the opener
 # owns that pull request and refreshes it in place), never deploys (the `dev`
 # merge target cannot deploy - `should_deploy` is `false`), and never pushes to
 # `dev` or `main`.
+#
+# ci#1196 guard half: a stranded hop must never be silent. Once the bridge has
+# dispatched the opener it waits (bounded) for the promotion PR to appear and
+# fails the run with an `::error::` annotation + job summary when it does not.
+# The scheduled sweep makes that assertion independent of any merge event, so
+# "main is behind dev with no open promotion PR" is reported even when no run
+# exists at all for the `dev` push.
 name: Refresh Dev Promotion PR
 
 on:
@@ -33,6 +41,13 @@ on:
     types:
       - completed
   workflow_dispatch:
+  # ci#1196: `workflow_run` needs *a* run to complete, and both `push` and
+  # `pull_request` events are suppressed for `GITHUB_TOKEN` actors. This sweep
+  # depends on nothing but live state, so a hop stranded by any identity (or by
+  # a dropped/never-created run) is picked up by the next pass. Scheduled
+  # workflows always use the file from the default branch (`main`).
+  schedule:
+    - cron: "*/30 * * * *"
 
 permissions:
   actions: write
@@ -47,12 +62,22 @@ jobs:
   refresh-dev-promotion-pr:
     runs-on: ubuntu-latest
     # `workflow_dispatch` is the manual path (an operator or a bot that noticed a
-    # stranded hop). Runs we started ourselves via `dev_promotion_hop` must not
-    # be re-dispatched: that would be a self-feeding loop.
+    # stranded hop). The scheduled sweep (ci#1196) is state-only and therefore
+    # also allowed to re-drive. Runs we started ourselves via `dev_promotion_hop`
+    # must not be re-dispatched: that would be a self-feeding loop.
+    #
+    # The `Auto-approve consolidation PRs` arm ignores the conclusion on purpose:
+    # that run is what merges into `dev`, and its own hop re-drive can fail (or
+    # the merge can succeed and the dispatch still be refused). Recovering the
+    # hop must not depend on the run that caused it having gone green - this
+    # bridge only reads live state. The `Run PR CI Tests and Deployments` arm
+    # stays success-only so a red PR CI run does not churn the opener.
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'workflow_dispatch')
+      github.event_name == 'schedule' ||
+      (github.event.workflow_run.event != 'workflow_dispatch' &&
+       (github.event.workflow_run.conclusion == 'success' ||
+        github.event.workflow_run.name == 'Auto-approve consolidation PRs'))
     env:
       # `gh workflow run` picks the token up from GH_TOKEN; the explicit bearer
       # header below is used for the read-only API calls.
@@ -60,6 +85,8 @@ jobs:
       PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
+      TRIGGER: ${{ github.event_name }}
+      TRIGGER_RUN: ${{ github.event.workflow_run.html_url || 'not a workflow_run trigger' }}
     steps:
       - name: Re-drive the dev -> main promotion hop when it was stranded
         run: |
@@ -73,29 +100,83 @@ jobs:
               "https://api.github.com/repos/${REPOSITORY}$1"
           }
 
+          # The one place a stranded hop is allowed to surface as a failure
+          # (ci#1196 expected behaviour 2): name the state, name the trigger, and
+          # name the one supported re-drive - never a hand-made promotion PR.
+          dead_hop() {
+            local ahead_by="$1" dev_sha="$2" detail="$3"
+            echo "::error::ci#1196: dead dev -> main hop - dev is ${ahead_by} commit(s) ahead of main (dev head ${dev_sha:-unknown}) and no open [Dev promotion] PR exists; ${detail} Trigger: ${TRIGGER} (${TRIGGER_RUN}). Re-run this bridge workflow (.github/workflows/refresh-dev-promotion-pr.yaml) or dispatch \`Run PR CI Tests and Deployments\` with \`callback_action=dev_promotion_hop\`. Do not open or edit the promotion PR by hand."
+            {
+              echo "### ci#1196: dead dev -> main promotion hop"
+              echo ""
+              echo "| field | value |"
+              echo "| --- | --- |"
+              echo "| dev ahead of main by | ${ahead_by} commit(s) |"
+              echo "| dev head | \`${dev_sha:-unknown}\` |"
+              echo "| open [Dev promotion] PR | none |"
+              echo "| trigger | ${TRIGGER} |"
+              echo "| trigger run | ${TRIGGER_RUN} |"
+              echo "| detail | ${detail} |"
+              echo ""
+              echo "Re-drive: re-run \`Refresh Dev Promotion PR\`, or dispatch \`Run PR CI Tests and Deployments\` with \`callback_action=dev_promotion_hop\` (base \`dev\`, promoted sha from live state). Never open or edit the promotion PR by hand."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          promoted_pr() {
+            api "/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
+              | jq -r '.[0].number // ""'
+          }
+
           ahead_by="$(api "/compare/main...dev" | jq -r '.ahead_by // 0')"
           if [ "${ahead_by}" = "0" ]; then
             echo "dev is not ahead of main; the promotion hop has nothing to do."
             exit 0
           fi
 
-          existing_pr_number="$(
-            api "/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
-              | jq -r '.[0].number // ""'
-          )"
+          existing_pr_number="$(promoted_pr)"
           if [ -n "${existing_pr_number}" ]; then
-            echo "The [Dev promotion] PR #${existing_pr_number} is already open; nothing to re-drive."
+            echo "The [Dev promotion] PR #${existing_pr_number} is already open; the hop is represented, nothing to re-drive."
             exit 0
           fi
 
-          dev_sha="$(api "/git/ref/heads/dev" | jq -r '.object.sha')"
+          dev_sha="$(api "/git/ref/heads/dev" | jq -r '.object.sha // ""')"
           echo "dev @ ${dev_sha} is ${ahead_by} commit(s) ahead of main and no [Dev promotion] PR is open."
           echo "Re-driving only the promotion opener (callback_action=dev_promotion_hop)."
 
           # The opener resolves the promoted commit from live state, so this
           # dispatch cannot promote a stale ref. `--ref dev` selects the `dev`
           # version of the workflow (where the promotion opener lives).
-          gh workflow run run-pr-ci-tests-and-deployments.yaml \
+          if ! gh workflow run run-pr-ci-tests-and-deployments.yaml \
             --repo "${REPOSITORY}" \
             --ref dev \
-            -f callback_action=dev_promotion_hop
+            -f callback_action=dev_promotion_hop; then
+            dead_hop "${ahead_by}" "${dev_sha}" "the \`dev_promotion_hop\` dispatch was refused."
+          fi
+
+          # ci#1196 guard half: do not trust the dispatch, verify the hop is
+          # represented again. The opener creates the promotion PR from live
+          # state in its own run, so the PR appearing is the observable success
+          # condition. Bounded wait (6 min) - a queued runner is the only reason
+          # this can take a while; nothing here polls CI.
+          for attempt in $(seq 1 24); do
+            sleep 15
+            existing_pr_number="$(promoted_pr)"
+            if [ -n "${existing_pr_number}" ]; then
+              echo "::notice::ci#1196: re-drove the promotion hop for dev @ ${dev_sha}; [Dev promotion] PR #${existing_pr_number} is open (observed after ~$((attempt * 15))s, trigger ${TRIGGER})."
+              {
+                echo "### ci#1196: promotion hop re-driven"
+                echo ""
+                echo "| field | value |"
+                echo "| --- | --- |"
+                echo "| dev head | \`${dev_sha}\` |"
+                echo "| dev ahead of main by | ${ahead_by} commit(s) |"
+                echo "| [Dev promotion] PR | #${existing_pr_number} |"
+                echo "| observed after | ~$((attempt * 15))s |"
+                echo "| trigger | ${TRIGGER} |"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+
+          dead_hop "${ahead_by}" "${dev_sha}" "the \`dev_promotion_hop\` re-drive did not surface a promotion PR within 6 minutes (check that the opener job in \`Run PR CI Tests and Deployments\` can run)."
