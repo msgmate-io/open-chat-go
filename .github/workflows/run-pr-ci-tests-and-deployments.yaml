@@ -4176,6 +4176,17 @@ jobs:
     # `GITHUB_TOKEN` merge raises no push run - that case is covered by
     # `deploy-main-promotion-bridge.yaml`). `production` is deliberately absent:
     # `msgmate-io-production` stays merge-event-only.
+    # ci#1196: a merge performed by an identity whose events GitHub does not
+    # turn into workflow runs (the default `GITHUB_TOKEN`, ie
+    # `app/github-actions`, or any token without workflow-triggering rights)
+    # raises NEITHER the `pull_request: closed` event NOR the `push` event.
+    # Both arms above then stay silent and the dev -> main hop is stranded:
+    # `dev` moves on, no `[Dev promotion]` PR exists, and nothing notices.
+    # The `workflow_dispatch` arm below re-drives the hop from the live state of
+    # `dev` and is the ONLY dispatch mode that reaches the promotion opener
+    # (`refresh-dev-promotion-pr.yaml` dispatches it; an operator may do the
+    # same). Keep this scalar expression-only: a `#` line inside the `if: |`
+    # block becomes part of the expression and breaks workflow parsing.
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
@@ -4183,7 +4194,9 @@ jobs:
        (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')) ||
       (github.event_name == 'push' &&
        (github.ref_name == 'dev' || github.ref_name == 'main') &&
-       github.event.deleted != true)
+       github.event.deleted != true) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.callback_action == 'dev_promotion_hop')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -4212,6 +4225,26 @@ jobs:
           fi
           if [ -z "$TARGET_REF" ] || [ "$TARGET_REF" = "null" ]; then
             TARGET_REF="$BASE_REF"
+          fi
+
+          # ci#1196: the promotion-hop re-drive carries no event payload, so both
+          # the merge target and the promoted commit are resolved from live
+          # state. Only `dev` is reachable this way on purpose: this mode must
+          # never be able to select `main` or `production`, because that would
+          # turn a re-drive into a hand-driven deployment (ci#1173).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.callback_action }}" = "dev_promotion_hop" ]; then
+            BASE_REF="dev"
+            TARGET_REF="$(curl -fsSL \
+              -H "Authorization: Bearer ${{ secrets.BOT_TOKEN || github.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/git/ref/heads/dev" \
+              | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' | head -n1)"
+            if [ -z "$TARGET_REF" ]; then
+              echo "::error::dev_promotion_hop dispatch could not resolve the live head of dev (ci#1196)."
+              exit 1
+            fi
+            echo "ci#1196: re-driving the dev -> main promotion hop for dev @ ${TARGET_REF}."
           fi
 
           # ci#833: the deploy target is derived from the merge base ref and is
@@ -4626,7 +4659,7 @@ jobs:
           promotion_job_result="${{ needs.open-dev-to-main-promotion-pr.result }}"
 
           if [ -z "$pr_number" ]; then
-            echo "::error::Dead dev -> main hop: dev is ${ahead_by} commit(s) ahead of main (dev head ${dev_head:-unknown}) but no open [Dev promotion] PR exists. The promotion job finished as '${promotion_job_result}'. The hop must be re-opened by a push to dev - do not open the promotion PR by hand."
+            echo "::error::Dead dev -> main hop: dev is ${ahead_by} commit(s) ahead of main (dev head ${dev_head:-unknown}) but no open [Dev promotion] PR exists. The promotion job finished as '${promotion_job_result}'. Re-drive the hop with the supported automation: dispatch `Refresh Dev Promotion PR` (.github/workflows/refresh-dev-promotion-pr.yaml), which re-runs only the promotion opener via `callback_action=dev_promotion_hop` (ci#1196). Do not open or edit the promotion PR by hand."
             exit 1
           fi
 

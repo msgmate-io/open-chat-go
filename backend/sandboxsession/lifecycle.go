@@ -127,9 +127,17 @@ func AttachSandbox(ctx context.Context, reg *Registry, req Request) (Session, er
 		}
 		if SupportsWorkspaceRootProvisioning(provider) {
 			ref := SandboxRef{Provider: name, SandboxUUID: req.SandboxUUID}
+			// ci#1192: re-attaching to a per-chat temp sandbox replays the
+			// unconditional temp-root materialisation (root + `git init`/guarded
+			// clone). Both steps are idempotent, so a healthy root is untouched,
+			// and a root that could not be materialised fails closed instead of
+			// reaching a tool call.
 			spec := WorkspaceRootSpec{WorkspaceUUID: req.SandboxUUID, Root: root}
+			if req.AutoSandbox {
+				spec = TempWorkspaceRootSpec(req.SandboxUUID, root, req.Repo)
+			}
 			if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
-				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, wrapTempRootProvisionError(req.AutoSandbox, err))
 			}
 		}
 	}

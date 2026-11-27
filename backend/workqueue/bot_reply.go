@@ -84,7 +84,10 @@ func botReplyTasks(inspector *asynq.Inspector, list func(string, ...asynq.ListOp
 // never cancelled by a new message or a continuation (ci#656): the new reply is
 // queued behind it instead.
 func BotReplyIsActive(inspector *asynq.Inspector, chatUUID string) bool {
-	return len(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)) > 0
+	// ci#1195: an active listing whose tasks are all orphaned is dead work, not
+	// a live turn. Counting it as live made a dispatched native interaction
+	// report `state=active` forever with no turn and no error surface.
+	return classifyBotReplyLiveness(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)).TurnLive()
 }
 
 // BotReplyHasWork reports whether a reply is queued or running for the chat.
@@ -95,7 +98,10 @@ func BotReplyHasWork(inspector *asynq.Inspector, chatUUID string) bool {
 	if inspector == nil || chatUUID == "" {
 		return false
 	}
-	if len(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)) > 0 {
+	// ci#1195: an active listing whose tasks are all orphaned is dead work. It
+	// must not keep dispatch dedupe (or any other liveness caller) convinced that
+	// a turn is running, or the chat never gets its reply re-dispatched.
+	if classifyBotReplyLiveness(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)).TurnLive() {
 		return true
 	}
 	if len(botReplyTasks(inspector, inspector.ListPendingTasks, chatUUID)) > 0 {
