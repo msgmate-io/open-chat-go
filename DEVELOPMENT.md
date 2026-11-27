@@ -39,6 +39,19 @@ lightweight PR CI. Release hops from `main` to `production` and the private
 full-build/deployment automation are maintainer-controlled; the public workflow
 files and the application code live here.
 
+### Forgejo CI backend
+
+The CI deployment (`ci.msgmate.io`) runs from the Forgejo instance at
+`git.msgmate.io`. The `.forgejo/workflows` copies are the authoritative CI
+definitions there; the `.github/workflows` copies remain for the GitHub mirror.
+The git integration is configured with a `forgejo` bootstrap token
+(`provider: forgejo`, `base_url: https://git.msgmate.io`) so repository
+indexing, issue creation and PR sessions operate against the same backend.
+
+A read-only mirror of every repository is published at
+`git-mirror.msgmate.io`; it is populated by source-side push mirrors and has
+Actions disabled. The legacy `open-chat-go-v0` tree is intentionally excluded.
+
 ### The promotion hop is agent-closable, and verifying it is the price
 
 Merging the `[Dev promotion]` pull request is what deploys ci.msgmate.io, so
