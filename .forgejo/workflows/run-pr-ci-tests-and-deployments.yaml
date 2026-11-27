@@ -5114,8 +5114,11 @@ jobs:
     # labels and the only one whose merge deploys ci.msgmate.io. A merge to
     # `dev` refreshes this PR in place (never delete/recreate: closing it would
     # cancel its labelled CI run) and attaches the automatic label set.
-    if: |
-      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    #
+    # Forgejo cannot evaluate `needs.*.outputs` in a job-level `if` reliably
+    # (it re-evaluates after the job starts and cancels the job). Gate on the
+    # dependency result and decide from the merge target inside the step.
+    if: needs.resolve-merged-deployment.result == 'success'
     env:
       PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       REPOSITORY: ${{ github.repository }}
@@ -5159,6 +5162,10 @@ jobs:
           TRIGGER_SHA: ${{ github.event.after || github.sha }}
         run: |
           set -euo pipefail
+          if [ "${{ needs.resolve-merged-deployment.outputs.merge_target }}" != "dev" ]; then
+            echo "Not a dev merge; skipping the dev -> main promotion PR."
+            exit 0
+          fi
           api="${GITHUB_API_URL:-${{ github.server_url }}/api/v1}"
           compare_json="$(curl -fsSL \
             -H "Authorization: Bearer ${PR_TOKEN}" \
@@ -5348,9 +5355,9 @@ jobs:
     name: Dev Promotion Divergence Guard
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment, open-dev-to-main-promotion-pr]
-    if: |
-      always() &&
-      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    # Forgejo cannot evaluate `needs.*.outputs` at job level; gate on the
+    # dependency result and re-check the merge target inside the step.
+    if: always() && needs.resolve-merged-deployment.result == 'success'
     env:
       PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       REPOSITORY: ${{ github.repository }}
@@ -5385,6 +5392,10 @@ jobs:
       - name: Assert a dev/main divergence has an open promotion PR
         run: |
           set -euo pipefail
+          if [ "${{ needs.resolve-merged-deployment.outputs.merge_target }}" != "dev" ]; then
+            echo "Not a dev merge; skipping the divergence guard."
+            exit 0
+          fi
           api="${GITHUB_API_URL:-${{ github.server_url }}/api/v1}"
           auth=(-H "Authorization: Bearer ${PR_TOKEN}"
                 -H "Accept: application/vnd.github+json" -H "Content-Type: application/json"
