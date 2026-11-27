@@ -36,6 +36,14 @@ func SnapshotBotReplyActivity(inspector *asynq.Inspector) *BotReplyActivity {
 	}
 	if tasks, err := inspector.ListActiveTasks(QueueDefault, asynq.PageSize(botReplyActivityPageSize)); err == nil {
 		for _, task := range tasks {
+			// ci#1195: an active task no worker is processing (a turn orphaned by a
+			// worker restart, redeploy or evicted sandbox pod) is dead work. Marking
+			// the chat active anyway is what kept a native interaction
+			// `state=active` with no first turn and no error surface; dropping it
+			// lets the resolver fall through to its stall classification instead.
+			if task == nil || task.IsOrphaned {
+				continue
+			}
 			if chatUUID, ok := chatUUIDFromBotReplyTaskID(task.ID); ok {
 				snapshot.active[chatUUID] = true
 			}
