@@ -131,6 +131,15 @@ type Request struct {
 	SandboxUUID string
 	// Image overrides the sandbox image (optional, provider specific).
 	Image string
+	// AutoSandbox marks a per-chat temp sandbox (`auto_sandbox`, ci#1192): its
+	// workspace root is materialised UNCONDITIONALLY - created, then made a
+	// usable git checkout - even when no repository is named, so a repo-less
+	// temp workspace never opens a shell in a directory that does not exist.
+	AutoSandbox bool
+	// Repo is the git remote the workspace root is cloned from (ci#1192).
+	// Empty means an AutoSandbox root is `git init`ed instead. It is ignored
+	// for a non-temp sandbox, which keeps the pre-existing root contract.
+	Repo string
 	// Files are injected before the shell session is opened.
 	Files []FileInjection
 	// Shell describes the interactive session.
@@ -260,6 +269,7 @@ func Normalize(req *Request) error {
 	req.Template = strings.TrimSpace(req.Template)
 	req.SandboxUUID = strings.TrimSpace(req.SandboxUUID)
 	req.Image = strings.TrimSpace(req.Image)
+	req.Repo = strings.TrimSpace(req.Repo)
 
 	// Attaching to an existing sandbox and provisioning a new one from a
 	// template are mutually exclusive (ci#1060): the caller either asks for a
@@ -344,9 +354,17 @@ func Open(ctx context.Context, reg *Registry, req Request) (Session, error) {
 			return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
 		}
 		if SupportsWorkspaceRootProvisioning(provider) {
+			// ci#1192: a per-chat temp sandbox root is materialised
+			// unconditionally (root + `git init`/guarded clone) and the turn
+			// boundary fails closed with ErrWorkspaceRootProvisioning when the
+			// root is still absent, instead of the first tool call dying with
+			// `sh: cd: ... No such file or directory`.
 			spec := WorkspaceRootSpec{WorkspaceUUID: ref.SandboxUUID, Root: root}
+			if req.AutoSandbox {
+				spec = TempWorkspaceRootSpec(ref.SandboxUUID, root, req.Repo)
+			}
 			if _, err := EnsureWorkspaceRoot(ctx, provider, ref, spec); err != nil {
-				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, err)
+				return Session{}, fmt.Errorf("sandboxsession: %s: %w", name, wrapTempRootProvisionError(req.AutoSandbox, err))
 			}
 		}
 	}

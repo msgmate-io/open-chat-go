@@ -23,6 +23,27 @@ name: Deploy Main Promotion Bridge
 # change the merge identity or the `main` ruleset, and do NOT extend any arm to
 # refresh the `main` -> production promotion PR. `msgmate-io-production` stays
 # merge-event-only and is NOT deployable by anything in this file.
+#
+# ci#1198 (second responsibility of this file): the `[Dev promotion]` hop can be
+# *parked* instead of executed. When a merge performed by the repository's own
+# `GITHUB_TOKEN` (the consolidation auto-merge) advances `dev`, GitHub creates
+# the promotion PR's `pull_request` run but does not execute it: the run is
+# `completed` / `action_required` with zero jobs in the very second it is
+# created, no approval is pending (`/approvals` and `/pending_deployments` are
+# empty) and `runs/{id}/rerun` is refused because the parked attempt reports
+# `runs_rerequestable: false`. The only non-push way out is a *check-suite*
+# re-request (`POST /check-suites/{id}/rerequest`) attributed to a real member
+# identity; made with `github.token` it is suppressed exactly like the event
+# that parked the run, which is the whole point.
+#
+# The `unpark-promotion-head` job below automates exactly that call. It lives in
+# this file - and therefore must land on `main` before it can act - because
+# GitHub only dispatches `workflow_run` from workflows that exist on the default
+# branch; `workflow_run` does fire for a parked (`action_required`) completion,
+# so the parked run itself is the trigger. It never pushes, never merges, never
+# labels and never edits the promotion PR; it only re-requests the park. When no
+# real-identity token is configured it emits a named `::warning::` with the
+# one-command human escape hatch instead of silently doing nothing.
 
 on:
   workflow_run:
@@ -40,6 +61,11 @@ permissions:
   contents: read
   actions: write
   deployments: read
+  # Used only to re-request a parked promotion check suite. That call must be
+  # attributed to a real identity (`secrets.BOT_TOKEN`), never to the default
+  # `GITHUB_TOKEN`; the scope is listed here for documentation and for the
+  # non-mutating reads the job performs.
+  checks: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -166,3 +192,159 @@ jobs:
             echo "| deploy needed | ${DEPLOY_NEEDED:-unknown} |"
             echo "| trigger run | ${TRIGGER_RUN:-manual} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ci#1198: a promotion run caused by the repository's own `GITHUB_TOKEN` can be
+  # created and parked in the same second - `completed` / `action_required`,
+  # zero jobs, no pending approval, no pending deployment. `runs/{id}/rerun` is
+  # refused for it (`runs_rerequestable: false`); only a *check-suite*
+  # re-request attributed to a real member identity is accepted. This job is that
+  # call, automated, and nothing else: it never pushes, never merges, never
+  # labels, never edits the `[Dev promotion]` PR.
+  #
+  # It has to live on `main` to be able to act at all, because GitHub only
+  # dispatches `workflow_run` from workflows that exist on the default branch, and
+  # `workflow_run` does fire for a parked (`action_required`) completion. That is
+  # why this detector is here instead of in `refresh-dev-promotion-pr.yaml` (which
+  # exists on `dev` only and is inert until it is promoted).
+  unpark-promotion-head:
+    name: Re-request a parked promotion check suite (ci#1198)
+    runs-on: ubuntu-latest
+    # `workflow_dispatch` is the manual catch-up path; the other arm is exactly
+    # the parked completion shape. A successful or failed completion is not this
+    # job's business.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'action_required'
+    steps:
+      - name: Re-request the parked check suite with a real identity
+        env:
+          # Reads may use the workflow token: they are harmless and always there.
+          READ_TOKEN: ${{ github.token }}
+          # The re-request is the ONE call that must never be made with
+          # `github.token`: a park is an attribution artefact, so the un-park must
+          # come from a real member identity or GitHub suppresses it exactly like
+          # the event that caused the park. Empty secret => loud warning below.
+          REAL_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          API_ACCEPT="Accept: application/vnd.github+json"
+          API_VERSION="X-GitHub-Api-Version: 2022-11-28"
+
+          api() {
+            curl -fsSL \
+              -H "Authorization: Bearer ${READ_TOKEN}" \
+              -H "${API_ACCEPT}" \
+              -H "${API_VERSION}" \
+              "https://api.github.com/repos/${REPOSITORY}$1"
+          }
+
+          # Without a real-identity token the un-park is impossible from here, so
+          # say so loudly (named ticket + the exact one-command escape hatch)
+          # instead of leaving the hop silently parked.
+          escape_hatch() {
+            local suite="$1"
+            local hint="curl -fsS -X POST -H 'Authorization: Bearer <real-member-token>' -H 'Accept: application/vnd.github+json' https://api.github.com/repos/${REPOSITORY}/check-suites/${suite}/rerequest"
+            echo "::warning::ci#1198: the [Dev promotion] head carries a parked check suite (${suite}: completed/action_required with zero jobs) and no real-identity token is configured, so automation cannot re-request it. This is the only reason the hop is stuck."
+            echo "::warning::ci#1198: human escape hatch, one command, real member token required (never the default GITHUB_TOKEN - that is what parked it): ${hint}"
+            {
+              echo "### ci#1198: parked promotion check suite needs a human re-request"
+              echo ""
+              echo "No real-identity token (\`secrets.BOT_TOKEN\`) is configured, so the check-suite re-request was not attempted."
+              echo ""
+              echo '```'
+              echo "${hint}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # One parked run -> at most one check-suite re-request. Every guard is a
+          # live read: the zero-job shape, the promotion head, and the suite still
+          # being terminal with no check runs (so a re-run of this job is
+          # idempotent).
+          handle_run() {
+            local run_id="$1"
+            local run_json conclusion status head_branch head_sha suite jobs
+
+            run_json="$(api "/actions/runs/${run_id}")" || return 0
+            conclusion="$(jq -r '.conclusion // ""' <<< "${run_json}")"
+            status="$(jq -r '.status // ""' <<< "${run_json}")"
+            head_branch="$(jq -r '.head_branch // ""' <<< "${run_json}")"
+            head_sha="$(jq -r '.head_sha // ""' <<< "${run_json}")"
+            suite="$(jq -r '.check_suite_id // ""' <<< "${run_json}")"
+
+            if [ "${status}" != "completed" ] || [ "${conclusion}" != "action_required" ]; then
+              echo "run ${run_id}: ${status:-unknown}/${conclusion:-unknown} - not a parked completion; nothing to do."
+              return 0
+            fi
+
+            jobs="$(api "/actions/runs/${run_id}/jobs?per_page=1" | jq -r '.total_count // 0')"
+            if [ "${jobs}" != "0" ]; then
+              echo "run ${run_id}: ${conclusion} but ${jobs} job(s) exist - not the ci#1198 zero-job shape; leaving it alone."
+              return 0
+            fi
+
+            # Only a promotion head is in scope. The pairing is read from live
+            # pull-request state, never inferred from the parked run itself.
+            if [ -z "${head_branch}" ] || [ "$(api "/pulls?state=open&base=main&per_page=100" | jq -r --arg head "${head_branch}" --arg repo "${REPOSITORY}" '[.[] | select(.head.ref == $head and .head.repo.full_name == $repo)] | length')" = "0" ]; then
+              echo "run ${run_id}: head ${head_branch:-unknown} is not the head of an open dev -> main promotion PR; nothing to do."
+              return 0
+            fi
+
+            if [ -z "${suite}" ] || [ "${suite}" = "null" ]; then
+              echo "::warning::ci#1198: run ${run_id} is parked with zero jobs but exposes no check suite; it cannot be re-requested."
+              return 0
+            fi
+
+            local suite_json suite_status suite_count
+            suite_json="$(api "/check-suites/${suite}")"
+            suite_status="$(jq -r '.status // ""' <<< "${suite_json}")"
+            suite_count="$(jq -r '.latest_check_runs_count // 0' <<< "${suite_json}")"
+            if [ "${suite_status}" != "completed" ] || [ "${suite_count}" != "0" ]; then
+              echo "::notice::check suite ${suite} is already ${suite_status:-unknown} with ${suite_count} check run(s); no ci#1198 re-request needed."
+              return 0
+            fi
+
+            if [ -z "${REAL_TOKEN}" ]; then
+              escape_hatch "${suite}"
+              return 0
+            fi
+
+            local code
+            code="$(curl -sS -o /tmp/rerequest.json -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer ${REAL_TOKEN}" \
+              -H "${API_ACCEPT}" \
+              -H "${API_VERSION}" \
+              "https://api.github.com/repos/${REPOSITORY}/check-suites/${suite}/rerequest")" || code="000"
+
+            case "${code}" in
+              200|201|202)
+                echo "::notice::ci#1198: re-requested parked check suite ${suite} for promotion head ${head_sha} with a real-identity token (HTTP ${code})."
+                echo "ci#1198: re-requested parked check suite \`${suite}\` for promotion head \`${head_sha}\` (HTTP ${code})." >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              *)
+                echo "::error::ci#1198: check-suite re-request for ${suite} was refused with HTTP ${code}; the parked promotion hop still needs a human re-request."
+                sed -n 1,20p /tmp/rerequest.json 2>/dev/null || true
+                exit 1
+                ;;
+            esac
+          }
+
+          if [ -n "${RUN_ID}" ]; then
+            handle_run "${RUN_ID}"
+            exit 0
+          fi
+
+          # Manual / catch-up path: scan the newest completed runs of the promotion
+          # workflow for the ci#1198 shape and un-park every one of them.
+          candidates="$(api "/actions/workflows/run-pr-ci-tests-and-deployments.yaml/runs?status=completed&per_page=30" \
+            | jq -r '.workflow_runs[]? | select(.conclusion == "action_required") | .id')"
+          if [ -z "${candidates}" ]; then
+            echo "::notice::No parked (completed/action_required) run of the promotion workflow found; nothing to do."
+            exit 0
+          fi
+          for run_id in ${candidates}; do
+            handle_run "${run_id}"
+          done
