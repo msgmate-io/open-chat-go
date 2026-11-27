@@ -111,7 +111,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: read
+  # ci#1196: `write` (not just `read`) so the merge path can re-drive the
+  # `dev` -> `main` promotion hop with `gh workflow run` after a `dev` merge.
+  # `workflow_dispatch` is the one event GitHub still turns into a run when it
+  # is raised with the default `GITHUB_TOKEN`.
+  actions: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -766,6 +770,29 @@ jobs:
               fi
               echo "::endgroup::"
               continue
+            fi
+
+            # ci#1196: this merge is performed with the default `GITHUB_TOKEN`
+            # (`app/github-actions`), and GitHub turns neither `push` nor
+            # `pull_request: closed` into workflow runs for that actor. The
+            # `dev` -> `main` promotion opener therefore never runs and the hop
+            # is stranded: `dev` advances, no `[Dev promotion]` PR exists and
+            # nothing reports it. Re-drive the state-driven bridge explicitly -
+            # it is idempotent (it only dispatches the opener when `dev` is
+            # actually ahead of `main` with no promotion PR open) and it never
+            # merges, deploys or pushes. Only for `dev` merges: a `main` merge
+            # of the promotion PR deploys and needs no hop.
+            if [ "$base_ref" = "dev" ]; then
+              if gh workflow run refresh-dev-promotion-pr.yaml --repo "$REPO" --ref dev >/dev/null 2>&1; then
+                echo "Re-drove the dev -> main promotion hop (ci#1196): dispatched 'Refresh Dev Promotion PR'."
+              else
+                # Loud on purpose: this is exactly the ci#1192/ci#1196 stranding.
+                # The bridge also runs on this workflow's completion (it fires
+                # for any conclusion) and its scheduled sweep catches a dropped
+                # dispatch, so the hop is still recovered - but the run says so.
+                echo "::error::Merged PR #${number} into dev but could not dispatch 'Refresh Dev Promotion PR'; the dev -> main hop now relies on the bridge's workflow_run/schedule arm to recover (ci#1196)."
+                failures=$((failures + 1))
+              fi
             fi
 
             gh pr comment "$number" --repo "$REPO" \
