@@ -6136,29 +6136,16 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         run: |
           set -euo pipefail
-          missing=()
-          command -v jq >/dev/null 2>&1 || missing+=(jq)
-          python3 -c 'import ensurepip' >/dev/null 2>&1 || missing+=(python3-venv)
-          python3 -m pip --version >/dev/null 2>&1 || missing+=(python3-pip)
-          if [ "${#missing[@]}" -gt 0 ]; then
-            apt-get update -qq
-            apt-get install -y -qq "${missing[@]}"
+          # This job only dispatches and polls the CI deployment; it does not
+          # build anything. Install jq from the upstream static binary instead
+          # of apt-get: on this runner the apt step was repeatedly killed
+          # mid-unpack ("context canceled") before the dispatch could run.
+          if ! command -v jq >/dev/null 2>&1; then
+            curl -fsSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+            chmod +x /usr/local/bin/jq
           fi
-          if ! command -v docker >/dev/null 2>&1; then
-            curl -fsSL -o /tmp/docker-static.tgz https://download.docker.com/linux/static/stable/x86_64/docker-29.3.1.tgz
-            tar -xzf /tmp/docker-static.tgz -C /tmp
-            install -m 0755 /tmp/docker/docker /usr/local/bin/docker
-          fi
-          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-buildx ]; then
-            mkdir -p /usr/local/lib/docker/cli-plugins
-            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64
-            chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-          fi
-          if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
-            mkdir -p /usr/local/lib/docker/cli-plugins
-            curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64
-            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-          fi
+          jq --version
+
       - name: Cancel superseded CI deployment runs for this branch
         if: steps.guard.outputs.run == 'true'
         run: |
