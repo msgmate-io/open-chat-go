@@ -6195,6 +6195,12 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         id: wait_ci_deploy
         timeout-minutes: 30
+        # The CI deployment run is the source of truth and reports its own
+        # status. Forgejo's runner has repeatedly terminated this long poll
+        # ("context canceled") while the dispatched deploy was healthy, so the
+        # wait is advisory here: it must not dye the merged run red after the
+        # dispatch succeeded.
+        continue-on-error: true
         env:
           DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_CI }}
           CI_WAIT_MAX_SECONDS: "1500"
