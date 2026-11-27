@@ -6102,10 +6102,12 @@ jobs:
     # "context canceled" while installing prerequisites). The cancel job is a
     # no-op on Forgejo, so it must not be a dependency of the dispatch.
     needs: [resolve-merged-deployment]
-    if: |
-      needs.resolve-merged-deployment.result == 'success' &&
-      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
-      needs.resolve-merged-deployment.outputs.merge_target == 'main'
+    # Forgejo re-evaluates a job-level `if` that reads `needs.*.outputs` after
+    # the job starts and cancels the job when the outputs are not visible in
+    # that context (observed as "context canceled" during the first step). Keep
+    # the job-level condition to the supported `needs.result` and decide from
+    # the outputs in a guard step instead.
+    if: needs.resolve-merged-deployment.result == 'success'
     # Forgejo does not implement GitHub deployment environments, and a job-level
     # concurrency group with cancel-in-progress cancelled this job while it was
     # installing prerequisites (the runner logged "context canceled"). The CI
@@ -6117,7 +6119,21 @@ jobs:
       DEPLOY_BOT_USER: ${{ vars.DEPLOY_BOT_USER || 'forgejo-admin' }}
       DISPATCH_RUN_ID: ci-merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Check whether this merge deploys the CI environment
+        id: guard
+        run: |
+          set -euo pipefail
+          should_deploy="${{ needs.resolve-merged-deployment.outputs.should_deploy }}"
+          merge_target="${{ needs.resolve-merged-deployment.outputs.merge_target }}"
+          if [ "$should_deploy" != "true" ] || [ "$merge_target" != "main" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Not a main deployment (should_deploy=${should_deploy:-<empty>}, merge_target=${merge_target:-<empty>}); skipping."
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
       - name: Install CI prerequisites
+        if: steps.guard.outputs.run == 'true'
         run: |
           set -euo pipefail
           missing=()
@@ -6144,6 +6160,7 @@ jobs:
             chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           fi
       - name: Cancel superseded CI deployment runs for this branch
+        if: steps.guard.outputs.run == 'true'
         run: |
           # Forgejo's public API exposes no run-cancel endpoint. The CI repo's
           # per-deployment concurrency group supersedes stale deploys, so this
@@ -6151,6 +6168,7 @@ jobs:
           echo "::notice::Forgejo has no run-cancel API; relying on the CI repository concurrency group to supersede stale deploys."
 
       - name: Dispatch deployment workflow in CI repository
+        if: steps.guard.outputs.run == 'true'
         run: |
           set -euo pipefail
           payload="$(
@@ -6187,6 +6205,7 @@ jobs:
           fi
 
       - name: Wait for dispatched CI deployment workflow
+        if: steps.guard.outputs.run == 'true'
         id: wait_ci_deploy
         timeout-minutes: 30
         env:
