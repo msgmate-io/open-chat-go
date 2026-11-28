@@ -31,5 +31,8 @@ jobs:
             exit 1
           fi
           git remote add github https://github.com/msgmate-io/open-chat-go.git
-          git -c http.extraHeader="Authorization: token ${GH_TOKEN}" push --force github "HEAD:refs/heads/${{ github.ref_name }}"
+          # GitHub's git endpoint needs basic auth; a bare `Authorization: token`
+          # header is accepted by the REST API but rejected for git push.
+          auth="$(printf '%s' "x-access-token:${GH_TOKEN}" | base64 -w0)"
+          git -c http.extraHeader="Authorization: basic ${auth}" push --force github "HEAD:refs/heads/${{ github.ref_name }}"
           echo "Mirrored ${GITHUB_REF_NAME} to GitHub."
