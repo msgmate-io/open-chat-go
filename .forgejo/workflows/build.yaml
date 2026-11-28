@@ -548,22 +548,3 @@ jobs:
             exit 1
           fi
 
-  homebrew:
-    name: Bump Homebrew formula
-    needs: [release]
-    # Disabled until the Homebrew tap publish path can run on the Forgejo
-    # infrastructure (it needs a working GitHub tap credential and a macOS
-    # verification story). The workflow remains in .forgejo for a later fix.
-    if: false
-    uses: ./.forgejo/workflows/homebrew-formula.yaml
-    with:
-      release_tag: ${{ needs.release.outputs.tag_name }}
-      source_repository: ${{ github.repository }}
-      tap_repository: msgmate-io/homebrew-tap
-      # The Homebrew workflow comments on the *GitHub* release PR, where the
-      # author is the GitHub bot identity, not the Forgejo tims-ci account.
-      bot_user: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
-      source_pr_number: ${{ github.event.inputs.source_pr_number }}
-    secrets:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
