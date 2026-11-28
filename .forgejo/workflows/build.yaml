@@ -551,7 +551,10 @@ jobs:
   homebrew:
     name: Bump Homebrew formula
     needs: [release]
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_kind == 'production' && needs.release.outputs.tag_name != '' }}
+    # Disabled until the Homebrew tap publish path can run on the Forgejo
+    # infrastructure (it needs a working GitHub tap credential and a macOS
+    # verification story). The workflow remains in .forgejo for a later fix.
+    if: false
     uses: ./.forgejo/workflows/homebrew-formula.yaml
     with:
       release_tag: ${{ needs.release.outputs.tag_name }}
