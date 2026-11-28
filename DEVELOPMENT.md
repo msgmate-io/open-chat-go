@@ -43,7 +43,7 @@ files and the application code live here.
 
 The CI deployment (`ci.msgmate.io`) runs from the Forgejo instance at
 `git.msgmate.io`. The `.forgejo/workflows` copies are the authoritative CI
-definitions there; the `.github/workflows` copies remain for the GitHub mirror.
+definitions there. The GitHub mirror carries the application code and releases but no longer runs a duplicate GitHub Actions CI surface.
 The git integration is configured with a `forgejo` bootstrap token
 (`provider: forgejo`, `base_url: https://git.msgmate.io`) so repository
 indexing, issue creation and PR sessions operate against the same backend.
@@ -181,7 +181,7 @@ claims `active` while `rules/branches/main` answers `[]` is reported as `masked`
 Its guard is `development/ci/scripts/ci-flows/test_promotion_hop_readiness.py`.
 
 Every PR needs a line of its own, `Closes msgmate-io/open-chat-go-ci#<n>`, in
-its body (`.github/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
+its body (`.forgejo/PULL_REQUEST_TEMPLATE.md` already carries a `## Tracker`
 section for it); `PR Test Merge Requirement` reads that and nothing else.
 GitHub cannot auto-close a cross-repository issue, so the line is both the gate
 input and the closure instruction. Agent-facing working notes - including the
