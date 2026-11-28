@@ -12,7 +12,7 @@
 #   on: [pull_request, push]
 #   jobs:
 #     module:
-#       uses: msgmate-io/open-chat-go/.github/workflows/reusable-integration-module-ci.yaml@main
+#       uses: msgmate-io/open-chat-go/.forgejo/workflows/reusable-integration-module-ci.yaml@main
 #       with:
 #         # manifest path used by the workspace, e.g.
 #         workspace_path: clients/integrations/msgmate_coder_integration
