@@ -36,6 +36,15 @@ jobs:
     name: Dispatch private full build
     runs-on: ubuntu-latest
     steps:
+      - name: Install jq
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            curl -fsSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+            chmod +x /usr/local/bin/jq
+          fi
+          jq --version
+
       - name: Dispatch full build and release workflow
         env:
           CI_DISPATCH_TOKEN: ${{ secrets.GITHUB_BOT_TOKEN || secrets.BOT_TOKEN || github.token }}
