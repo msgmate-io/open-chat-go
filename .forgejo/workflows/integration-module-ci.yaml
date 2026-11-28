@@ -15,8 +15,8 @@ name: Integration module CI
 on:
   pull_request:
     paths:
-      - .github/workflows/reusable-integration-module-ci.yaml
-      - .github/workflows/integration-module-ci.yaml
+      - .forgejo/workflows/reusable-integration-module-ci.yaml
+      - .forgejo/workflows/integration-module-ci.yaml
       - development/scripts/integration_module_ci.sh
       # ci#1075: the workspace-path resolution (structure-preserving, so the
       # module's relative `replace` depth matches the monorepo layout).
@@ -112,8 +112,8 @@ jobs:
           import yaml
 
           for name in (
-              ".github/workflows/reusable-integration-module-ci.yaml",
-              ".github/workflows/integration-module-ci.yaml",
+              ".forgejo/workflows/reusable-integration-module-ci.yaml",
+              ".forgejo/workflows/integration-module-ci.yaml",
           ):
               doc = yaml.safe_load(pathlib.Path(name).read_text())
               assert doc.get("jobs"), f"{name}: no jobs"
