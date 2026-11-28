@@ -563,4 +563,4 @@ jobs:
       source_pr_number: ${{ github.event.inputs.source_pr_number }}
     secrets:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      GITHUB_BOT_TOKEN: ${{ secrets.GITHUB_BOT_TOKEN }}
+      GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
