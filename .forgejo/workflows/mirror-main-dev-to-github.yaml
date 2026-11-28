@@ -1,11 +1,11 @@
-name: Mirror main and dev to GitHub
+name: Mirror main, dev and production to GitHub
 
-# The GitHub mirror of open-chat-go keeps only the integration branches in sync.
-# GitHub's `production` branch is a protected release ref with a deployment
-# ruleset that forbids force-pushes, so it is deliberately not mirrored here.
+# The GitHub repository is a mirror of Forgejo. `production` is included so a
+# Forgejo production update also lands on GitHub; the mirror bot has an explicit
+# bypass actor on the GitHub production ruleset.
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, production]
   workflow_dispatch:
 
 permissions:
@@ -28,8 +28,8 @@ jobs:
           set -euo pipefail
           branch="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
           case "$branch" in
-            main|dev) ;;
-            *) echo "Not main/dev ($branch); nothing to mirror."; exit 0 ;;
+            main|dev|production) ;;
+            *) echo "Not main/dev/production ($branch); nothing to mirror."; exit 0 ;;
           esac
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::GH_BOT_TOKEN is empty; cannot mirror ${branch} to GitHub."
