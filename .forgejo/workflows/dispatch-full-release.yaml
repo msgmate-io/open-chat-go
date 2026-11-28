@@ -1,7 +1,7 @@
 name: Dispatch Full Build and Release
 
 # After a merge to `main` or `production`, kick off the private full-profile
-# build + release that lives in the private CI repository
+# build + release that lives in the Forgejo CI repository
 # (`msgmate-io/open-chat-go-ci`, workflow `build-full-release.yaml`).
 #
 # This public workflow references the private workflow generically only: it
@@ -38,7 +38,7 @@ jobs:
     steps:
       - name: Dispatch full build and release workflow
         env:
-          CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          CI_DISPATCH_TOKEN: ${{ secrets.GITHUB_BOT_TOKEN || secrets.BOT_TOKEN || github.token }}
           TARGET_REF: ${{ github.ref_name }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -68,10 +68,10 @@ jobs:
               }'
           )"
           if ! curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${CI_REPOSITORY}/actions/workflows/build-full-release.yaml/dispatches" \
+            -H "Authorization: token ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/json" \
+             \
+            "${{ github.server_url }}/api/v1/repos/${CI_REPOSITORY}/actions/workflows/build-full-release.yaml/dispatches" \
             -d "$payload"; then
             echo "::warning::Could not dispatch the full build (is build-full-release.yaml on ${CI_REF}?)."
             exit 0
