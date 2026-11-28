@@ -1,0 +1,43 @@
+name: Mirror main, dev and production to GitHub
+
+# The GitHub repository is a mirror of Forgejo. `production` is included so a
+# Forgejo production update also lands on GitHub; the mirror bot has an explicit
+# bypass actor on the GitHub production ruleset.
+on:
+  push:
+    branches: [main, dev, production]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror the pushed branch to GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Push the branch to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
+          case "$branch" in
+            main|dev|production) ;;
+            *) echo "Not main/dev/production ($branch); nothing to mirror."; exit 0 ;;
+          esac
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_BOT_TOKEN is empty; cannot mirror ${branch} to GitHub."
+            exit 1
+          fi
+          git remote add github https://github.com/msgmate-io/open-chat-go.git
+          # GitHub's git endpoint needs basic auth; a bare `Authorization: token`
+          # header is accepted by the REST API but rejected for git push.
+          auth="$(printf '%s' "x-access-token:${GH_TOKEN}" | base64 -w0)"
+          git -c http.extraHeader="Authorization: basic ${auth}" push --force github "HEAD:refs/heads/${branch}"
+          echo "Mirrored ${branch} to GitHub."
