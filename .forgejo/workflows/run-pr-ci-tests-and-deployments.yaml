@@ -2416,7 +2416,7 @@ jobs:
           # already proven in update-progress-comment-after-approved-dispatch.
           # `ai-real` only runs after an approved deploy, so it stays `running`
           # while the `ai-test-real` label asked for it.
-          # Shape note: .github/workflows/build.yaml scrapes this bullet verbatim
+          # Shape note: .forgejo/workflows/build.yaml scrapes this bullet verbatim
           # out of the existing comment, so it must keep the
           # '- [x] `(4) test` `go=...`' spelling.
           TPL_STEP_TEST='${{ (needs.run-pr-ci-go-tests.result != 'skipped' || needs.run-pr-ci-ai-mock-tests.result != 'skipped' || needs.run-pr-ci-e2e-tests.result != 'skipped' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '') && format('- [x] `(4) test` `go={0}` `ai-mock={1}` `ai-real={2}`', needs.run-pr-ci-go-tests.result == 'success' && 'passed' || (needs.run-pr-ci-go-tests.result == 'skipped' && 'skipped' || 'failed'), needs.run-pr-ci-ai-mock-tests.result == 'success' && (needs.run-pr-ci-ai-mock-tests.outputs.ai_mock_status || 'passed') || (needs.run-pr-ci-ai-mock-tests.result == 'skipped' && 'skipped' || 'failed'), needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
@@ -2782,7 +2782,7 @@ jobs:
               # The checkout above pins the PR head with a depth-1 fetch, so the
               # base commit is not present locally: fetch it before diffing.
               git fetch --depth=1 origin "${BASE_SHA}" >/dev/null 2>&1 || true
-              TESTONLY='^(\.github/|development/|scripts/|test/|backend/.*_test\.go|go\.mod$|go\.sum$|backend/go\.mod$|backend/go\.sum$)'
+              TESTONLY='^(\.forgejo/|\.github/|development/|scripts/|test/|backend/.*_test\.go|go\.mod$|go\.sum$|backend/go\.mod$|backend/go\.sum$)'
               FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" 2>/dev/null || \
                 git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...${HEAD_SHA}" 2>/dev/null || true)"
               if printf '%s\n' "$FILES" | grep -qE "$TESTONLY"; then
@@ -3929,7 +3929,7 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
+              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.forgejo/workflows/build.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
               return 1
             fi
@@ -4001,7 +4001,7 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
+              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.forgejo/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
               return 1
             fi
@@ -5762,7 +5762,7 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
+              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.forgejo/workflows/build.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
               return 1
             fi
@@ -5872,7 +5872,7 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
+              "${{ github.server_url }}/api/v1/repos/${SOURCE_REPO}/contents/.forgejo/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
             if [ "$status_code" != "200" ]; then
               return 1
             fi
@@ -6372,14 +6372,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
-          # ci#1117: `.github/actions` must be materialised too, or the local
+          # ci#1117: `.forgejo/actions` must be materialised too, or the local
           # `./.forgejo/actions/profile-setup` action below cannot be resolved
           # ("Can't find 'action.yml'") and the job dies before the closer
           # runs. `development/scripts` carries the `build_tools.sh` that the
           # profile setup itself invokes.
           sparse-checkout: |
             development/scripts
-            .github/actions
+            .forgejo/actions
           sparse-checkout-cone-mode: false
 
       # ci#1117: the profile setup only materialises the private

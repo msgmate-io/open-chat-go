@@ -6,7 +6,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - "nix/**"
-      - ".github/workflows/nix-build.yaml"
+      - ".forgejo/workflows/nix-build.yaml"
   push:
     branches:
       - main
@@ -14,7 +14,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - "nix/**"
-      - ".github/workflows/nix-build.yaml"
+      - ".forgejo/workflows/nix-build.yaml"
   workflow_dispatch:
 
 permissions:
