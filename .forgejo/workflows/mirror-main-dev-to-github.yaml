@@ -1,0 +1,35 @@
+name: Mirror main and dev to GitHub
+
+# The GitHub mirror of open-chat-go keeps only the integration branches in sync.
+# GitHub's `production` branch is a protected release ref with a deployment
+# ruleset that forbids force-pushes, so it is deliberately not mirrored here.
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror ${{ github.ref_name }} to GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Push the branch to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_BOT_TOKEN is empty; cannot mirror ${GITHUB_REF_NAME} to GitHub."
+            exit 1
+          fi
+          git remote add github https://github.com/msgmate-io/open-chat-go.git
+          git -c http.extraHeader="Authorization: token ${GH_TOKEN}" push --force github "HEAD:refs/heads/${{ github.ref_name }}"
+          echo "Mirrored ${GITHUB_REF_NAME} to GitHub."
