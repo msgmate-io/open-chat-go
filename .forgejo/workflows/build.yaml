@@ -557,7 +557,10 @@ jobs:
       release_tag: ${{ needs.release.outputs.tag_name }}
       source_repository: ${{ github.repository }}
       tap_repository: msgmate-io/homebrew-tap
-      bot_user: ${{ github.event.inputs.bot_user || 'tims-ci' }}
+      # The Homebrew workflow comments on the *GitHub* release PR, where the
+      # author is the GitHub bot identity, not the Forgejo tims-ci account.
+      bot_user: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
       source_pr_number: ${{ github.event.inputs.source_pr_number }}
     secrets:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      GITHUB_BOT_TOKEN: ${{ secrets.GITHUB_BOT_TOKEN }}
