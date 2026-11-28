@@ -1,7 +1,7 @@
 # Pin freshness policy (public, reviewable).
 #
 # The final "Pin Freshness Gate" job in
-# .github/workflows/run-pr-ci-tests-and-deployments.yaml compares every tracked
+# .forgejo/workflows/run-pr-ci-tests-and-deployments.yaml compares every tracked
 # component against the tip of its upstream ref (default: `main`) and fails the
 # pull request when a pin is stale.
 #

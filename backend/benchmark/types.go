@@ -11,7 +11,7 @@
 //   - The expensive full-matrix sweep is NOT a unit test. It is launched only
 //     by the explicitly-triggered CLI subcommand `dispatch` in
 //     ./cmd/benchmark, which hands off to the existing private workflow
-//     .github/workflows/private-sandbox-tests.yaml (see
+//     .forgejo/workflows/private-sandbox-tests.yaml (see
 //     development/ci893-free-model-capability-harness.md).
 package benchmark
 
