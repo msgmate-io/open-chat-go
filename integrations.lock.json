@@ -1,29 +1,29 @@
 {
-  "version": 1,
-  "integrations": {
-    "community_coder": {
-      "repo": "https://github.com/msgmate-io/open-chat-go-community-coder-integration",
-      "ref": "main",
-      "commit": "df77ab41b9266bf494e2206b3ee14b9ab0fd87e1",
-      "source": "git"
-    },
-    "go_client": {
-      "repo": "https://github.com/msgmate-io/open-chat-go-golang-client",
-      "ref": "main",
-      "commit": "79b39a1ef14103d8aca2cf434aefcd19cb6b1789",
-      "source": "git"
-    },
-    "mcp": {
-      "repo": "https://github.com/msgmate-io/open-chat-go-mcp-integration",
-      "ref": "main",
-      "commit": "03adb215846f892a30babb50cea13b27d5549ef2",
-      "source": "git"
-    },
-    "rest_api_tool": {
-      "repo": "https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration",
-      "ref": "main",
-      "commit": "a79d3ad9901f14fc142e4dcccd912e9d031a5867",
-      "source": "git"
+    "version": 1,
+    "integrations": {
+        "community_coder": {
+            "repo": "https://github.com/msgmate-io/open-chat-go-community-coder-integration",
+            "ref": "main",
+            "commit": "214414621a97cfb1b803ea2fd14a112bf8acd10c",
+            "source": "git"
+        },
+        "go_client": {
+            "repo": "https://github.com/msgmate-io/open-chat-go-golang-client",
+            "ref": "main",
+            "commit": "f55617bd1fa2ef156aec93895ea96a40fda4d416",
+            "source": "git"
+        },
+        "mcp": {
+            "repo": "https://github.com/msgmate-io/open-chat-go-mcp-integration",
+            "ref": "main",
+            "commit": "f92ce4269ee09795898f753c3f2118a1dc5f4465",
+            "source": "git"
+        },
+        "rest_api_tool": {
+            "repo": "https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration",
+            "ref": "main",
+            "commit": "59fadaad6a731ffb05c70ad801547347b55f15a1",
+            "source": "git"
+        }
     }
-  }
 }
