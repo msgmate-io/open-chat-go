@@ -11,16 +11,15 @@ services:
       HOST: "0.0.0.0"
       PORT: 1984
       REDIS_URL: "redis://redis:6379/0"
-      LITELLM_API_HOST: ${LITELLM_API_HOST}
-      LITELLM_API_KEY: ${LITELLM_API_KEY}
+      # One generic model-gateway pair. The value currently points at
+      # OpenRouter; the backend maps it to the OpenRouter provider.
+      OPENROUTER_API_HOST: ${AI_API_HOST:-}
+      OPENROUTER_API_KEY: ${AI_API_KEY:-}
       MSGMATE_CLUSTER_API_KEY: ${MSGMATE_CLUSTER_API_KEY}
       MSGMATE_CLUSTER_HOST: ${MSGMATE_CLUSTER_HOST}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      IONOS_API_KEY: ${IONOS_API_KEY:-}
       OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
       # ci#645: keep the CI logs readable; set LOG_LEVEL=debug for full tracing.
       LOG_LEVEL: ${LOG_LEVEL:-info}

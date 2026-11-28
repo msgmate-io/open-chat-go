@@ -198,6 +198,8 @@ esac
 echo "== case 3/3: off-PATH toolchain is repaired, never re-downloaded =="
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.24.13)"
 rc=$?
 [ "$rc" -eq 0 ] || fail "a repaired off-PATH toolchain must end ready (exit 0, got $rc); got: $out"
@@ -226,6 +228,8 @@ esac
 #    is only possible because the harness - not the runner - owns the toolchain.
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.24.13 \
         STUB_GO_GOTOOLCHAIN=auto)"
 rc=$?
@@ -238,6 +242,8 @@ esac
 mkdir -p "$tmp/cold-cache"
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.24.13 \
         STUB_GO_GOMODCACHE="$tmp/cold-cache")"
 rc=$?
@@ -287,6 +293,8 @@ fi
 echo "== ci#1038 ii: stale toolchain -> MISS + exit 1 =="
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.20.0)"
 rc=$?
 [ "$rc" -eq 1 ] || fail "a toolchain older than backend/go.mod must exit 1 (got $rc); got: $out"
@@ -299,6 +307,8 @@ esac
 echo "== ci#1038 iii: GOTOOLCHAIN != local -> MISS + exit 1 =="
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.24.13 \
         STUB_GO_GOTOOLCHAIN=auto)"
 rc=$?
@@ -312,6 +322,8 @@ esac
 echo "== ci#1038 iv: no \$GOMODCACHE/cache/download -> MISS + exit 1 =="
 out="$(run_check repair \
         OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
+        OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
         STUB_GO_VERSION=1.24.13 \
         STUB_GO_GOMODCACHE="$tmp/cold-cache")"
 rc=$?
@@ -340,6 +352,7 @@ run_install() {
     GOMODCACHE="$sandbox_modcache" \
     TMPDIR="$tmp" \
     OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
     OPENCHAT_SANDBOX_GO_PROFILE_DIR="$profile_dir" \
     STUB_GO_VERSION=1.26.0 \
     bash "$fixture_root/repair/development/scripts/install_sandbox_go_toolchain.sh" \
@@ -440,6 +453,7 @@ out="$(env -i \
   GOMODCACHE="$sandbox_modcache" \
   TMPDIR="$tmp" \
   OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
   STUB_GO_VERSION=1.20.0 \
   STUB_GO_GOTOOLCHAIN=auto \
   STUB_GO_GOMODCACHE="$tmp/cold-cache-plan" \
@@ -461,6 +475,7 @@ out="$(env -i \
   GOMODCACHE="$sandbox_modcache" \
   TMPDIR="$tmp" \
   OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
   STUB_GO_VERSION=1.24.13 \
   bash "$SCRIPT" --plan "$fixture_root/repair" 2>&1)"
 rc=$?
@@ -485,6 +500,7 @@ out="$(env -i \
   GOMODCACHE="$sandbox_modcache" \
   TMPDIR="$tmp" \
   OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
   STUB_GO_VERSION=1.24.13 \
   bash "$SCRIPT" --verify="touch verify-ran && echo VERIFY-OUTPUT" "$fixture_root/repair" 2>&1)"
 rc=$?
@@ -510,6 +526,7 @@ out="$(env -i \
   GOMODCACHE="$sandbox_modcache" \
   TMPDIR="$tmp" \
   OPENCHAT_SANDBOX_GO_HINT_DIR="$stub_root/bin" \
+  OPENCHAT_SANDBOX_DEFAULT_PATH="$stub_root/bin:/usr/bin:/bin" \
   STUB_GO_VERSION=1.24.13 \
   bash "$SCRIPT" --verify="exit 7" "$fixture_root/repair" 2>&1)"
 rc=$?
