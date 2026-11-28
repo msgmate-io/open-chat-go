@@ -75,7 +75,10 @@ jobs:
         uses: ./.forgejo/actions/profile-setup
         with:
           profile: full-ci
-          token: ${{ secrets.GH_BOT_TOKEN || secrets.BOT_TOKEN || github.token }}
+          # The profile setup clones the private Forgejo repositories, so it
+          # needs the Forgejo automation token; the GitHub credential below is
+          # only for the Homebrew tap / source-PR API.
+          token: ${{ secrets.BOT_TOKEN || github.token }}
 
       - name: Resolve inputs
         id: inputs
